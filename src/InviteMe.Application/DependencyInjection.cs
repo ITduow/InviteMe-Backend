@@ -1,0 +1,22 @@
+using FluentValidation;
+using InviteMe.Application.Abstractions.Authorization;
+using InviteMe.Application.Common.Authorization;
+using InviteMe.Application.Common.Behaviors;
+using InviteMe.Application.Features.System.GetApplicationHealth;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+
+namespace InviteMe.Application;
+
+public static class DependencyInjection
+{
+    public static IServiceCollection AddApplication(this IServiceCollection services)
+    {
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddValidatorsFromAssemblyContaining<GetApplicationHealthHandler>();
+        services.AddScoped(typeof(RequestValidation<>));
+        services.AddScoped<GetApplicationHealthHandler>();
+        services.AddScoped<IWeddingPermissionService, WeddingPermissionService>();
+        return services;
+    }
+}

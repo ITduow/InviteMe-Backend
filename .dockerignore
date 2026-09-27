@@ -1,0 +1,8 @@
+**/bin
+**/obj
+.git
+.dotnet
+.nuget
+.local
+.env
+TestResults
