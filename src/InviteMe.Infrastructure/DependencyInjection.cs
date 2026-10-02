@@ -1,5 +1,5 @@
-using InviteMe.Application.Abstractions.Authorization;
-using InviteMe.Infrastructure.Authorization;
+using InviteMe.Application.Ports.Authorization;
+using InviteMe.Infrastructure.Persistence.Adapters;
 using InviteMe.Infrastructure.Identity;
 using InviteMe.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Identity;

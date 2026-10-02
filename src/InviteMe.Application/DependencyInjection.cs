@@ -1,5 +1,5 @@
 using FluentValidation;
-using InviteMe.Application.Abstractions.Authorization;
+using InviteMe.Application.Ports.Authorization;
 using InviteMe.Application.Common.Authorization;
 using InviteMe.Application.Common.Behaviors;
 using InviteMe.Application.Features.System.GetApplicationHealth;

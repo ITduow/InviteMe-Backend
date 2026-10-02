@@ -23,6 +23,906 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("InviteMe.Domain.AI.AiGeneration", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("InputJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("input_json");
+
+                    b.Property<string>("InputRef")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("input_ref");
+
+                    b.Property<string>("Model")
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("model");
+
+                    b.Property<string>("OutputJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("output_json");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("PENDING")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("varchar(50)")
+                        .HasColumnName("type");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("ai_generations_pkey");
+
+                    b.HasIndex(new[] { "Type" }, "ix_ai_generations_type")
+                        .HasDatabaseName("ix_ai_generations_type");
+
+                    b.HasIndex(new[] { "WeddingId" }, "ix_ai_generations_wedding_id")
+                        .HasDatabaseName("ix_ai_generations_wedding_id");
+
+                    b.ToTable("ai_generations", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_ai_generations_status", "status IN ('PENDING', 'SUCCEEDED', 'FAILED')");
+
+                            t.HasCheckConstraint("ck_ai_generations_type", "type IN ( 'GUEST_CLASSIFICATION', 'SEATING_SUGGESTION', 'CONTENT_GENERATION', 'THANK_YOU' )");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Audit.AuditLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("action");
+
+                    b.Property<Guid?>("ActorGuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("actor_guest_id");
+
+                    b.Property<string>("ActorType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("actor_type");
+
+                    b.Property<Guid?>("ActorUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("actor_user_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid?>("EntityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("entity_id");
+
+                    b.Property<string>("EntityType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("entity_type");
+
+                    b.Property<string>("Metadata")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("metadata");
+
+                    b.Property<Guid?>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("audit_logs_pkey");
+
+                    b.HasIndex(new[] { "CreatedAt" }, "ix_audit_logs_created_at")
+                        .HasDatabaseName("ix_audit_logs_created_at");
+
+                    b.HasIndex(new[] { "EntityType", "EntityId" }, "ix_audit_logs_entity")
+                        .HasDatabaseName("ix_audit_logs_entity");
+
+                    b.HasIndex(new[] { "WeddingId" }, "ix_audit_logs_wedding_id")
+                        .HasDatabaseName("ix_audit_logs_wedding_id");
+
+                    b.ToTable("audit_logs", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_audit_logs_actor_shape", "( actor_type = 'USER' AND actor_user_id IS NOT NULL AND actor_guest_id IS NULL ) OR ( actor_type = 'WEDDING_GUEST' AND actor_guest_id IS NOT NULL AND actor_user_id IS NULL ) OR ( actor_type IN ('SYSTEM', 'AI') AND actor_user_id IS NULL AND actor_guest_id IS NULL )");
+
+                            t.HasCheckConstraint("ck_audit_logs_actor_type", "actor_type IN ('USER', 'WEDDING_GUEST', 'SYSTEM', 'AI')");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Billing.Plan", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("BillingPeriod")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("ONE_TIME")
+                        .HasColumnName("billing_period");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("varchar(50)")
+                        .HasColumnName("code");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(3)
+                        .HasColumnType("char(3)")
+                        .HasDefaultValue("VND")
+                        .HasColumnName("currency");
+
+                    b.Property<string>("LimitsJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("limits_json");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("name");
+
+                    b.Property<decimal>("Price")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("price");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("ACTIVE")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.HasKey("Id")
+                        .HasName("plans_pkey");
+
+                    b.HasIndex(new[] { "Code" }, "plans_code_key")
+                        .IsUnique()
+                        .HasDatabaseName("plans_code_key");
+
+                    b.ToTable("plans", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_plans_billing_period", "billing_period IN ('ONE_TIME', 'MONTHLY', 'YEARLY')");
+
+                            t.HasCheckConstraint("ck_plans_currency", "currency ~ '^[A-Z]{3}$'");
+
+                            t.HasCheckConstraint("ck_plans_price", "price >= 0");
+
+                            t.HasCheckConstraint("ck_plans_status", "status IN ('ACTIVE', 'INACTIVE')");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Billing.Subscription", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<DateTimeOffset?>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<Guid>("PlanId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("plan_id");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("ACTIVE")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id")
+                        .HasName("subscriptions_pkey");
+
+                    b.HasIndex(new[] { "PlanId" }, "ix_subscriptions_plan_id")
+                        .HasDatabaseName("ix_subscriptions_plan_id");
+
+                    b.HasIndex(new[] { "UserId" }, "ix_subscriptions_user_id")
+                        .HasDatabaseName("ix_subscriptions_user_id");
+
+                    b.ToTable("subscriptions", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_subscriptions_dates", "expires_at IS NULL OR expires_at >= started_at");
+
+                            t.HasCheckConstraint("ck_subscriptions_status", "status IN ('ACTIVE', 'EXPIRED', 'CANCELLED', 'SUSPENDED')");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.CheckIn.CheckInRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset>("CheckedInAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("checked_in_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid>("CheckedInBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("checked_in_by");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid?>("ParticipantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("participant_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("CHECKED_IN")
+                        .HasColumnName("status");
+
+                    b.Property<Guid?>("WalkinId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("walkin_id");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("check_ins_pkey");
+
+                    b.HasIndex(new[] { "CheckedInAt" }, "ix_checkins_checked_in_at")
+                        .HasDatabaseName("ix_checkins_checked_in_at");
+
+                    b.HasIndex(new[] { "WeddingId" }, "ix_checkins_wedding_id")
+                        .HasDatabaseName("ix_checkins_wedding_id");
+
+                    b.HasIndex(new[] { "WeddingId", "ParticipantId" }, "uq_checkins_participant")
+                        .IsUnique()
+                        .HasDatabaseName("uq_checkins_participant")
+                        .HasFilter("participant_id IS NOT NULL");
+
+                    b.HasIndex(new[] { "WeddingId", "WalkinId" }, "uq_checkins_walkin")
+                        .IsUnique()
+                        .HasDatabaseName("uq_checkins_walkin")
+                        .HasFilter("walkin_id IS NOT NULL");
+
+                    b.ToTable("check_ins", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_checkins_status", "status IN ('CHECKED_IN', 'VOID')");
+
+                            t.HasCheckConstraint("ck_checkins_target_xor", "(participant_id IS NOT NULL AND walkin_id IS NULL) OR (participant_id IS NULL AND walkin_id IS NOT NULL)");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.CheckIn.WalkIn", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("FullName")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("varchar(150)")
+                        .HasColumnName("full_name");
+
+                    b.Property<string>("Note")
+                        .HasColumnType("text")
+                        .HasColumnName("note");
+
+                    b.Property<int>("PartySize")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1)
+                        .HasColumnName("party_size");
+
+                    b.Property<string>("Phone")
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("phone");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("walk_ins_pkey");
+
+                    b.HasIndex(new[] { "WeddingId" }, "ix_walkins_wedding_id")
+                        .HasDatabaseName("ix_walkins_wedding_id");
+
+                    b.ToTable("walk_ins", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_walkins_party_size", "party_size > 0");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Gifts.Gift", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<decimal>("Amount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("amount");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(3)
+                        .HasColumnType("char(3)")
+                        .HasDefaultValue("VND")
+                        .HasColumnName("currency");
+
+                    b.Property<Guid?>("GuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("guest_id");
+
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(150)
+                        .HasColumnType("varchar(150)")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("method");
+
+                    b.Property<string>("Provider")
+                        .HasMaxLength(50)
+                        .HasColumnType("varchar(50)")
+                        .HasColumnName("provider");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("received_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid?>("ReceivedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("received_by");
+
+                    b.Property<string>("TransactionRef")
+                        .HasMaxLength(150)
+                        .HasColumnType("varchar(150)")
+                        .HasColumnName("transaction_ref");
+
+                    b.Property<string>("TransactionStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasDefaultValue("COMPLETED")
+                        .HasColumnName("transaction_status");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid?>("WalkinId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("walkin_id");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("gifts_pkey");
+
+                    b.HasIndex(new[] { "GuestId" }, "ix_gifts_guest_id")
+                        .HasDatabaseName("ix_gifts_guest_id");
+
+                    b.HasIndex(new[] { "ReceivedAt" }, "ix_gifts_received_at")
+                        .HasDatabaseName("ix_gifts_received_at");
+
+                    b.HasIndex(new[] { "WeddingId" }, "ix_gifts_wedding_id")
+                        .HasDatabaseName("ix_gifts_wedding_id");
+
+                    b.HasIndex(new[] { "IdempotencyKey" }, "uq_gifts_idempotency")
+                        .IsUnique()
+                        .HasDatabaseName("uq_gifts_idempotency")
+                        .HasFilter("idempotency_key IS NOT NULL");
+
+                    b.HasIndex(new[] { "WeddingId", "Provider", "TransactionRef" }, "uq_gifts_transaction")
+                        .IsUnique()
+                        .HasDatabaseName("uq_gifts_transaction")
+                        .HasFilter("provider IS NOT NULL AND transaction_ref IS NOT NULL");
+
+                    b.ToTable("gifts", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_gifts_amount", "amount >= 0");
+
+                            t.HasCheckConstraint("ck_gifts_currency", "currency ~ '^[A-Z]{3}$'");
+
+                            t.HasCheckConstraint("ck_gifts_method", "method IN ('CASH', 'BANK_QR', 'BANK_TRANSFER', 'OTHER')");
+
+                            t.HasCheckConstraint("ck_gifts_source_xor", "(guest_id IS NOT NULL AND walkin_id IS NULL) OR (guest_id IS NULL AND walkin_id IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_gifts_transaction_status", "transaction_status IN ( 'PENDING', 'COMPLETED', 'FAILED', 'REFUNDED' )");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Gifts.GiftMessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid>("GiftId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("gift_id");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("message");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("Visibility")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("PRIVATE")
+                        .HasColumnName("visibility");
+
+                    b.HasKey("Id")
+                        .HasName("gift_messages_pkey");
+
+                    b.HasIndex(new[] { "GiftId" }, "gift_messages_gift_id_key")
+                        .IsUnique()
+                        .HasDatabaseName("gift_messages_gift_id_key");
+
+                    b.ToTable("gift_messages", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_gift_messages_visibility", "visibility IN ('PRIVATE', 'PUBLIC', 'HIDDEN')");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Guests.GuestGroup", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("text")
+                        .HasColumnName("description");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("varchar(150)")
+                        .HasColumnName("name");
+
+                    b.Property<string>("Side")
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("side");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("guest_groups_pkey");
+
+                    b.HasIndex(new[] { "WeddingId" }, "ix_guest_groups_wedding_id")
+                        .HasDatabaseName("ix_guest_groups_wedding_id");
+
+                    b.HasIndex(new[] { "WeddingId", "Name" }, "uq_guest_groups_name")
+                        .IsUnique()
+                        .HasDatabaseName("uq_guest_groups_name");
+
+                    b.ToTable("guest_groups", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_guest_groups_side", "side IS NULL OR side IN ('BRIDE', 'GROOM', 'MUTUAL', 'OTHER')");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Guests.GuestNote", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("content");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<Guid>("GuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("guest_id");
+
+                    b.Property<string>("NoteType")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasDefaultValue("GENERAL")
+                        .HasColumnName("note_type");
+
+                    b.Property<Guid?>("ParticipantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("participant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.HasKey("Id")
+                        .HasName("guest_notes_pkey");
+
+                    b.HasIndex(new[] { "GuestId" }, "ix_guest_notes_guest_id")
+                        .HasDatabaseName("ix_guest_notes_guest_id");
+
+                    b.HasIndex(new[] { "ParticipantId" }, "ix_guest_notes_participant_id")
+                        .HasDatabaseName("ix_guest_notes_participant_id");
+
+                    b.ToTable("guest_notes", "inviteme");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Guests.GuestParticipant", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("AttendanceStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("PENDING")
+                        .HasColumnName("attendance_status");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("DietaryNote")
+                        .HasColumnType("text")
+                        .HasColumnName("dietary_note");
+
+                    b.Property<string>("FullName")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("varchar(150)")
+                        .HasColumnName("full_name");
+
+                    b.Property<Guid>("GuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("guest_id");
+
+                    b.Property<string>("ParticipantType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("participant_type");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.HasKey("Id")
+                        .HasName("guest_participants_pkey");
+
+                    b.HasAlternateKey("Id", "GuestId")
+                        .HasName("uq_guest_participants_id_guest");
+
+                    b.HasIndex(new[] { "AttendanceStatus" }, "ix_guest_participants_attendance")
+                        .HasDatabaseName("ix_guest_participants_attendance");
+
+                    b.HasIndex(new[] { "GuestId" }, "ix_guest_participants_guest_id")
+                        .HasDatabaseName("ix_guest_participants_guest_id");
+
+                    b.HasIndex(new[] { "GuestId" }, "uq_guest_primary_participant")
+                        .IsUnique()
+                        .HasDatabaseName("uq_guest_primary_participant")
+                        .HasFilter("participant_type = 'PRIMARY'");
+
+                    b.ToTable("guest_participants", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_guest_participant_attendance", "attendance_status IN ( 'PENDING', 'ATTENDING', 'DECLINED', 'WAITLISTED' )");
+
+                            t.HasCheckConstraint("ck_guest_participant_type", "participant_type IN ( 'PRIMARY', 'SPOUSE', 'CHILD', 'PLUS_ONE', 'OTHER' )");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Guests.WeddingGuest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<bool>("AllowedPlusOne")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("allowed_plus_one");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("Email")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("email");
+
+                    b.Property<int>("ExpectedCompanionCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("expected_companion_count");
+
+                    b.Property<string>("FullName")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("varchar(150)")
+                        .HasColumnName("full_name");
+
+                    b.Property<Guid?>("GroupId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("group_id");
+
+                    b.Property<string>("GuestCode")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("varchar(50)")
+                        .HasColumnName("guest_code");
+
+                    b.Property<int>("MaxPlusOne")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("max_plus_one");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("text")
+                        .HasColumnName("notes");
+
+                    b.Property<string>("Phone")
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("phone");
+
+                    b.Property<string>("RecordStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("ACTIVE")
+                        .HasColumnName("record_status");
+
+                    b.Property<string>("Relationship")
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("relationship");
+
+                    b.Property<string>("Side")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("MUTUAL")
+                        .HasColumnName("side");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("guests_pkey");
+
+                    b.HasIndex(new[] { "GroupId" }, "ix_guests_group_id")
+                        .HasDatabaseName("ix_guests_group_id");
+
+                    b.HasIndex(new[] { "Phone" }, "ix_guests_phone")
+                        .HasDatabaseName("ix_guests_phone");
+
+                    b.HasIndex(new[] { "WeddingId" }, "ix_guests_wedding_id")
+                        .HasDatabaseName("ix_guests_wedding_id");
+
+                    b.HasIndex(new[] { "WeddingId", "GuestCode" }, "uq_guests_guest_code")
+                        .IsUnique()
+                        .HasDatabaseName("uq_guests_guest_code");
+
+                    b.ToTable("guests", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_guests_expected_companion_count", "expected_companion_count >= 0");
+
+                            t.HasCheckConstraint("ck_guests_plus_one", "max_plus_one >= 0 AND (allowed_plus_one OR max_plus_one = 0)");
+
+                            t.HasCheckConstraint("ck_guests_record_status", "record_status IN ('ACTIVE', 'ARCHIVED')");
+
+                            t.HasCheckConstraint("ck_guests_side", "side IN ('BRIDE', 'GROOM', 'MUTUAL', 'OTHER')");
+                        });
+                });
+
             modelBuilder.Entity("InviteMe.Domain.Identity.Permission", b =>
                 {
                     b.Property<Guid>("Id")
@@ -98,6 +998,990 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.ToTable("role_permissions", "inviteme");
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Invitations.Invitation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset?>("ApprovedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("approved_at");
+
+                    b.Property<Guid?>("ApprovedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("approved_by");
+
+                    b.Property<string>("Configuration")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("configuration");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<DateTimeOffset?>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<Guid>("GuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("guest_id");
+
+                    b.Property<DateTimeOffset?>("PreviewedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("previewed_at");
+
+                    b.Property<DateTimeOffset?>("PublishedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("published_at");
+
+                    b.Property<DateTimeOffset?>("SentAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("sent_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("DRAFT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("char(64)")
+                        .HasColumnName("token_hash");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("invitations_pkey");
+
+                    b.HasIndex(new[] { "TokenHash" }, "invitations_token_hash_key")
+                        .IsUnique()
+                        .HasDatabaseName("invitations_token_hash_key");
+
+                    b.HasIndex(new[] { "GuestId" }, "ix_invitations_guest_id")
+                        .HasDatabaseName("ix_invitations_guest_id");
+
+                    b.HasIndex(new[] { "WeddingId" }, "ix_invitations_wedding_id")
+                        .HasDatabaseName("ix_invitations_wedding_id");
+
+                    b.HasIndex(new[] { "WeddingId", "GuestId" }, "uq_invitations_guest")
+                        .IsUnique()
+                        .HasDatabaseName("uq_invitations_guest");
+
+                    b.ToTable("invitations", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_invitations_status", "status IN ( 'DRAFT', 'IN_REVIEW', 'APPROVED', 'PUBLISHED', 'SENT', 'OPENED', 'REVOKED', 'EXPIRED' )");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Invitations.InvitationDelivery", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("channel");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<DateTimeOffset?>("DeliveredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("delivered_at");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text")
+                        .HasColumnName("error_message");
+
+                    b.Property<DateTimeOffset?>("FailedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("failed_at");
+
+                    b.Property<Guid>("InvitationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("invitation_id");
+
+                    b.Property<string>("ProviderMessageId")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("provider_message_id");
+
+                    b.Property<string>("Recipient")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("recipient");
+
+                    b.Property<DateTimeOffset?>("SentAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("sent_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("PENDING")
+                        .HasColumnName("status");
+
+                    b.HasKey("Id")
+                        .HasName("invitation_deliveries_pkey");
+
+                    b.HasIndex(new[] { "InvitationId" }, "ix_invitation_deliveries_invitation_id")
+                        .HasDatabaseName("ix_invitation_deliveries_invitation_id");
+
+                    b.HasIndex(new[] { "Status" }, "ix_invitation_deliveries_status")
+                        .HasDatabaseName("ix_invitation_deliveries_status");
+
+                    b.ToTable("invitation_deliveries", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_invitation_delivery_channel", "channel IN ('EMAIL', 'SMS')");
+
+                            t.HasCheckConstraint("ck_invitation_delivery_status", "status IN ('PENDING', 'SENT', 'DELIVERED', 'FAILED')");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Invitations.InvitationTemplate", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("Configuration")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("configuration");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("varchar(150)")
+                        .HasColumnName("name");
+
+                    b.Property<string>("PreviewUrl")
+                        .HasColumnType("text")
+                        .HasColumnName("preview_url");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("varchar(160)")
+                        .HasColumnName("slug");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("ACTIVE")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Theme")
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("theme");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.HasKey("Id")
+                        .HasName("templates_pkey");
+
+                    b.HasIndex(new[] { "Slug" }, "templates_slug_key")
+                        .IsUnique()
+                        .HasDatabaseName("templates_slug_key");
+
+                    b.ToTable("templates", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_templates_status", "status IN ('ACTIVE', 'INACTIVE', 'DRAFT')");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Invitations.TemplateSection", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("ConfigJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("config_json");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("SectionKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("section_key");
+
+                    b.Property<int>("SortOrder")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("sort_order");
+
+                    b.Property<Guid>("TemplateId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("template_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.HasKey("Id")
+                        .HasName("template_sections_pkey");
+
+                    b.HasIndex(new[] { "TemplateId" }, "ix_template_sections_template_id")
+                        .HasDatabaseName("ix_template_sections_template_id");
+
+                    b.HasIndex(new[] { "TemplateId", "SectionKey" }, "uq_template_sections")
+                        .IsUnique()
+                        .HasDatabaseName("uq_template_sections");
+
+                    b.ToTable("template_sections", "inviteme");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Notifications.Notification", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<int>("AttemptCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("attempt_count");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("channel");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("content");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text")
+                        .HasColumnName("last_error");
+
+                    b.Property<string>("NotificationType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("notification_type");
+
+                    b.Property<Guid?>("RecipientGuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("recipient_guest_id");
+
+                    b.Property<Guid?>("RecipientUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("recipient_user_id");
+
+                    b.Property<DateTimeOffset?>("ScheduledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("scheduled_at");
+
+                    b.Property<DateTimeOffset?>("SentAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("sent_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("PENDING")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Template")
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("template");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("notifications_pkey");
+
+                    b.HasIndex(new[] { "RecipientGuestId" }, "ix_notifications_recipient_guest")
+                        .HasDatabaseName("ix_notifications_recipient_guest");
+
+                    b.HasIndex(new[] { "RecipientUserId" }, "ix_notifications_recipient_user")
+                        .HasDatabaseName("ix_notifications_recipient_user");
+
+                    b.HasIndex(new[] { "Status", "ScheduledAt" }, "ix_notifications_status_schedule")
+                        .HasDatabaseName("ix_notifications_status_schedule");
+
+                    b.HasIndex(new[] { "WeddingId" }, "ix_notifications_wedding_id")
+                        .HasDatabaseName("ix_notifications_wedding_id");
+
+                    b.ToTable("notifications", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_notifications_attempt_count", "attempt_count >= 0");
+
+                            t.HasCheckConstraint("ck_notifications_channel", "channel IN ('IN_APP', 'EMAIL', 'SMS')");
+
+                            t.HasCheckConstraint("ck_notifications_recipient_xor", "( recipient_user_id IS NOT NULL AND recipient_guest_id IS NULL ) OR ( recipient_user_id IS NULL AND recipient_guest_id IS NOT NULL )");
+
+                            t.HasCheckConstraint("ck_notifications_status", "status IN ( 'PENDING', 'SCHEDULED', 'SENT', 'FAILED', 'CANCELLED' )");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.Rsvp", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<int>("ConfirmedPartySize")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("confirmed_party_size");
+
+                    b.Property<Guid>("InvitationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("invitation_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("PENDING")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset?>("SubmittedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("submitted_at");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.HasKey("Id")
+                        .HasName("rsvps_pkey");
+
+                    b.HasIndex(new[] { "InvitationId" }, "rsvps_invitation_id_key")
+                        .IsUnique()
+                        .HasDatabaseName("rsvps_invitation_id_key");
+
+                    b.ToTable("rsvps", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_rsvps_confirmed_party_size", "confirmed_party_size >= 0");
+
+                            t.HasCheckConstraint("ck_rsvps_status", "status IN ('PENDING', 'ATTENDING', 'DECLINED')");
+
+                            t.HasCheckConstraint("ck_rsvps_status_party_size", "(status IN ('PENDING', 'DECLINED') AND confirmed_party_size = 0) OR (status = 'ATTENDING' AND confirmed_party_size >= 1)");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.RsvpHistory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset>("ChangedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("changed_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid?>("ChangedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("changed_by");
+
+                    b.Property<int>("NewConfirmedPartySize")
+                        .HasColumnType("integer")
+                        .HasColumnName("new_confirmed_party_size");
+
+                    b.Property<string>("NewSnapshot")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("new_snapshot");
+
+                    b.Property<string>("NewStatus")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("new_status");
+
+                    b.Property<int?>("OldConfirmedPartySize")
+                        .HasColumnType("integer")
+                        .HasColumnName("old_confirmed_party_size");
+
+                    b.Property<string>("OldSnapshot")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("old_snapshot");
+
+                    b.Property<string>("OldStatus")
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("old_status");
+
+                    b.Property<string>("Reason")
+                        .HasColumnType("text")
+                        .HasColumnName("reason");
+
+                    b.Property<Guid>("RsvpId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("rsvp_id");
+
+                    b.HasKey("Id")
+                        .HasName("rsvp_history_pkey");
+
+                    b.HasIndex(new[] { "ChangedAt" }, "ix_rsvp_history_changed_at")
+                        .HasDatabaseName("ix_rsvp_history_changed_at");
+
+                    b.HasIndex(new[] { "RsvpId" }, "ix_rsvp_history_rsvp_id")
+                        .HasDatabaseName("ix_rsvp_history_rsvp_id");
+
+                    b.ToTable("rsvp_history", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_rsvp_history_confirmed_party_sizes", "(old_confirmed_party_size IS NULL OR old_confirmed_party_size >= 0) AND new_confirmed_party_size >= 0");
+
+                            t.HasCheckConstraint("ck_rsvp_history_new_status", "new_status IN ('PENDING', 'ATTENDING', 'DECLINED')");
+
+                            t.HasCheckConstraint("ck_rsvp_history_old_status", "old_status IS NULL OR old_status IN ('PENDING', 'ATTENDING', 'DECLINED')");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.WaitlistEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("cancelled_at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid>("GuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("guest_id");
+
+                    b.Property<Guid?>("ParticipantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("participant_id");
+
+                    b.Property<int?>("Priority")
+                        .HasColumnType("integer")
+                        .HasColumnName("priority");
+
+                    b.Property<DateTimeOffset?>("PromotedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("promoted_at");
+
+                    b.Property<string>("Reason")
+                        .HasColumnType("text")
+                        .HasColumnName("reason");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("requested_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<int>("RequestedSlots")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1)
+                        .HasColumnName("requested_slots");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("WAITING")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("waitlist_entries_pkey");
+
+                    b.HasIndex(new[] { "GuestId" }, "ix_waitlist_guest_id")
+                        .HasDatabaseName("ix_waitlist_guest_id");
+
+                    b.HasIndex(new[] { "WeddingId", "Status" }, "ix_waitlist_wedding_status")
+                        .HasDatabaseName("ix_waitlist_wedding_status");
+
+                    b.HasIndex(new[] { "WeddingId", "ParticipantId" }, "uq_waitlist_active_participant")
+                        .IsUnique()
+                        .HasDatabaseName("uq_waitlist_active_participant")
+                        .HasFilter("participant_id IS NOT NULL AND status = 'WAITING'");
+
+                    b.HasIndex(new[] { "WeddingId", "GuestId" }, "uq_waitlist_active_party")
+                        .IsUnique()
+                        .HasDatabaseName("uq_waitlist_active_party")
+                        .HasFilter("participant_id IS NULL AND status = 'WAITING'");
+
+                    b.ToTable("waitlist_entries", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_waitlist_requested_slots", "requested_slots > 0");
+
+                            t.HasCheckConstraint("ck_waitlist_status", "status IN ('WAITING', 'PROMOTED', 'CANCELLED', 'EXPIRED')");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Seating.ReceptionTable", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset?>("ActivatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("activated_at");
+
+                    b.Property<int>("Capacity")
+                        .HasColumnType("integer")
+                        .HasColumnName("capacity");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("PLANNED")
+                        .HasColumnName("status");
+
+                    b.Property<string>("TableNumber")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("table_number");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1)
+                        .HasColumnName("version");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("tables_pkey");
+
+                    b.HasIndex(new[] { "WeddingId" }, "ix_tables_wedding_id")
+                        .HasDatabaseName("ix_tables_wedding_id");
+
+                    b.HasIndex(new[] { "WeddingId", "TableNumber" }, "uq_tables_number")
+                        .IsUnique()
+                        .HasDatabaseName("uq_tables_number");
+
+                    b.ToTable("tables", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_tables_capacity", "capacity > 0");
+
+                            t.HasCheckConstraint("ck_tables_status", "status IN ('PLANNED', 'ACTIVE', 'BACKUP', 'INACTIVE')");
+
+                            t.HasCheckConstraint("ck_tables_version", "version >= 1");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Seating.Seat", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<int>("SeatNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("seat_number");
+
+                    b.Property<Guid>("TableId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("table_id");
+
+                    b.HasKey("Id")
+                        .HasName("seats_pkey");
+
+                    b.HasIndex(new[] { "TableId" }, "ix_seats_table_id")
+                        .HasDatabaseName("ix_seats_table_id");
+
+                    b.HasIndex(new[] { "TableId", "SeatNumber" }, "uq_seats_number")
+                        .IsUnique()
+                        .HasDatabaseName("uq_seats_number");
+
+                    b.ToTable("seats", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_seats_number", "seat_number > 0");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Seating.SeatingAssignment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<Guid>("AssignedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("assigned_by");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid>("ParticipantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("participant_id");
+
+                    b.Property<Guid?>("SeatId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("seat_id");
+
+                    b.Property<Guid>("TableId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("table_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1)
+                        .HasColumnName("version");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("seating_assignments_pkey");
+
+                    b.HasIndex(new[] { "TableId" }, "ix_seating_assignments_table_id")
+                        .HasDatabaseName("ix_seating_assignments_table_id");
+
+                    b.HasIndex(new[] { "WeddingId" }, "ix_seating_assignments_wedding_id")
+                        .HasDatabaseName("ix_seating_assignments_wedding_id");
+
+                    b.HasIndex(new[] { "ParticipantId" }, "seating_assignments_participant_id_key")
+                        .IsUnique()
+                        .HasDatabaseName("seating_assignments_participant_id_key");
+
+                    b.HasIndex(new[] { "SeatId" }, "uq_seating_assignment_seat")
+                        .IsUnique()
+                        .HasDatabaseName("uq_seating_assignment_seat")
+                        .HasFilter("seat_id IS NOT NULL");
+
+                    b.ToTable("seating_assignments", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_seating_assignment_version", "version >= 1");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Seating.SeatingChangeLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("action");
+
+                    b.Property<Guid>("ActorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("actor_id");
+
+                    b.Property<Guid?>("AssignmentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("assignment_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid?>("FromSeatId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("from_seat_id");
+
+                    b.Property<Guid?>("FromTableId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("from_table_id");
+
+                    b.Property<Guid>("ParticipantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("participant_id");
+
+                    b.Property<Guid?>("ToSeatId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("to_seat_id");
+
+                    b.Property<Guid?>("ToTableId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("to_table_id");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("seating_change_logs_pkey");
+
+                    b.HasIndex(new[] { "CreatedAt" }, "ix_seating_change_logs_created_at")
+                        .HasDatabaseName("ix_seating_change_logs_created_at");
+
+                    b.HasIndex(new[] { "ParticipantId" }, "ix_seating_change_logs_participant_id")
+                        .HasDatabaseName("ix_seating_change_logs_participant_id");
+
+                    b.HasIndex(new[] { "WeddingId" }, "ix_seating_change_logs_wedding_id")
+                        .HasDatabaseName("ix_seating_change_logs_wedding_id");
+
+                    b.ToTable("seating_change_logs", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_seating_logs_action", "action IN ('ASSIGN', 'MOVE', 'UNASSIGN', 'SEAT_CHANGE')");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Weddings.LoveStory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("content");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)")
+                        .HasColumnName("title");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("Visibility")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("VISIBLE")
+                        .HasColumnName("visibility");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("love_stories_pkey");
+
+                    b.HasIndex(new[] { "WeddingId" }, "ix_love_stories_wedding_id")
+                        .HasDatabaseName("ix_love_stories_wedding_id");
+
+                    b.ToTable("love_stories", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_love_stories_visibility", "visibility IN ('VISIBLE', 'HIDDEN', 'PRIVATE')");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Weddings.Venue", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("Address")
+                        .HasColumnType("text")
+                        .HasColumnName("address");
+
+                    b.Property<int?>("Capacity")
+                        .HasColumnType("integer")
+                        .HasColumnName("capacity");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<decimal?>("Latitude")
+                        .HasColumnType("numeric(9,6)")
+                        .HasColumnName("latitude");
+
+                    b.Property<decimal?>("Longitude")
+                        .HasColumnType("numeric(9,6)")
+                        .HasColumnName("longitude");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)")
+                        .HasColumnName("name");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("venues_pkey");
+
+                    b.HasIndex(new[] { "WeddingId" }, "ix_venues_wedding_id")
+                        .HasDatabaseName("ix_venues_wedding_id");
+
+                    b.ToTable("venues", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_venues_capacity", "capacity IS NULL OR capacity > 0");
+
+                            t.HasCheckConstraint("ck_venues_latitude", "latitude IS NULL OR latitude BETWEEN -90 AND 90");
+
+                            t.HasCheckConstraint("ck_venues_longitude", "longitude IS NULL OR longitude BETWEEN -180 AND 180");
+                        });
+                });
+
             modelBuilder.Entity("InviteMe.Domain.Weddings.Wedding", b =>
                 {
                     b.Property<Guid>("Id")
@@ -160,6 +2044,150 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("ck_weddings_max_capacity", "max_capacity IS NULL OR max_capacity > 0");
 
                             t.HasCheckConstraint("ck_weddings_status", "status IN ('DRAFT', 'PUBLISHED', 'CANCELLED', 'ARCHIVED')");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Weddings.WeddingEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<int?>("CapacityLimit")
+                        .HasColumnType("integer")
+                        .HasColumnName("capacity_limit");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("text")
+                        .HasColumnName("description");
+
+                    b.Property<DateTimeOffset?>("EndAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("end_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)")
+                        .HasColumnName("name");
+
+                    b.Property<int>("SortOrder")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("sort_order");
+
+                    b.Property<DateTimeOffset>("StartAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("start_at");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid?>("VenueId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("venue_id");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("wedding_events_pkey");
+
+                    b.HasIndex(new[] { "VenueId" }, "ix_wedding_events_venue_id")
+                        .HasDatabaseName("ix_wedding_events_venue_id");
+
+                    b.HasIndex(new[] { "WeddingId" }, "ix_wedding_events_wedding_id")
+                        .HasDatabaseName("ix_wedding_events_wedding_id");
+
+                    b.ToTable("wedding_events", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_wedding_events_capacity", "capacity_limit IS NULL OR capacity_limit > 0");
+
+                            t.HasCheckConstraint("ck_wedding_events_dates", "end_at IS NULL OR end_at >= start_at");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Weddings.WeddingMedia", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("Caption")
+                        .HasColumnType("text")
+                        .HasColumnName("caption");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("MediaType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("media_type");
+
+                    b.Property<string>("MediaUrl")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("media_url");
+
+                    b.Property<int>("SortOrder")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("sort_order");
+
+                    b.Property<string>("StorageKey")
+                        .HasColumnType("text")
+                        .HasColumnName("storage_key");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("Visibility")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("VISIBLE")
+                        .HasColumnName("visibility");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("wedding_media_pkey");
+
+                    b.HasIndex(new[] { "WeddingId" }, "ix_wedding_media_wedding_id")
+                        .HasDatabaseName("ix_wedding_media_wedding_id");
+
+                    b.ToTable("wedding_media", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_wedding_media_type", "media_type IN ('IMAGE', 'VIDEO', 'OTHER')");
+
+                            t.HasCheckConstraint("ck_wedding_media_visibility", "visibility IN ('VISIBLE', 'HIDDEN', 'PRIVATE')");
                         });
                 });
 
@@ -254,6 +2282,65 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_wedding_member_permissions_permission_id");
 
                     b.ToTable("wedding_member_permissions", "inviteme");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Weddings.WeddingSettings", b =>
+                {
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<DateTimeOffset?>("RsvpDeadline")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("rsvp_deadline");
+
+                    b.Property<short>("RsvpReminderDaysBefore")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("smallint")
+                        .HasDefaultValue((short)2)
+                        .HasColumnName("rsvp_reminder_days_before");
+
+                    b.Property<string>("SettingsJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("settings_json");
+
+                    b.Property<string>("Timezone")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasDefaultValue("Asia/Ho_Chi_Minh")
+                        .HasColumnName("timezone");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("Visibility")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("PRIVATE")
+                        .HasColumnName("visibility");
+
+                    b.HasKey("WeddingId")
+                        .HasName("wedding_settings_pkey");
+
+                    b.ToTable("wedding_settings", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_wedding_settings_reminder_days", "rsvp_reminder_days_before >= 0");
+
+                            t.HasCheckConstraint("ck_wedding_settings_visibility", "visibility IN ('PRIVATE', 'UNLISTED', 'PUBLIC')");
+                        });
                 });
 
             modelBuilder.Entity("InviteMe.Infrastructure.Identity.ApplicationRole", b =>
@@ -437,6 +2524,133 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("InviteMe.Infrastructure.Persistence.ReadModels.GuestRsvpSummary", b =>
+                {
+                    b.Property<long>("AttendingParticipants")
+                        .HasColumnType("bigint")
+                        .HasColumnName("attending_participants");
+
+                    b.Property<int?>("ConfirmedPartySize")
+                        .HasColumnType("integer")
+                        .HasColumnName("confirmed_party_size");
+
+                    b.Property<int>("EstimatedPartySize")
+                        .HasColumnType("integer")
+                        .HasColumnName("estimated_party_size");
+
+                    b.Property<string>("FullName")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("full_name");
+
+                    b.Property<string>("GuestCode")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("guest_code");
+
+                    b.Property<Guid>("GuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("guest_id");
+
+                    b.Property<Guid?>("InvitationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("invitation_id");
+
+                    b.Property<string>("InvitationStatus")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("invitation_status");
+
+                    b.Property<Guid?>("RsvpId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("rsvp_id");
+
+                    b.Property<string>("RsvpStatus")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("rsvp_status");
+
+                    b.Property<long>("WaitlistedParticipants")
+                        .HasColumnType("bigint")
+                        .HasColumnName("waitlisted_participants");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.ToTable((string)null);
+
+                    b.ToView("v_guest_rsvp_summary", "inviteme");
+                });
+
+            modelBuilder.Entity("InviteMe.Infrastructure.Persistence.ReadModels.TableOccupancy", b =>
+                {
+                    b.Property<int>("Capacity")
+                        .HasColumnType("integer")
+                        .HasColumnName("capacity");
+
+                    b.Property<long>("Occupied")
+                        .HasColumnType("bigint")
+                        .HasColumnName("occupied");
+
+                    b.Property<long>("Remaining")
+                        .HasColumnType("bigint")
+                        .HasColumnName("remaining");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TableId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("table_id");
+
+                    b.Property<string>("TableNumber")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("table_number");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.ToTable((string)null);
+
+                    b.ToView("v_table_occupancy", "inviteme");
+                });
+
+            modelBuilder.Entity("InviteMe.Infrastructure.Persistence.ReadModels.WeddingHeadcount", b =>
+                {
+                    b.Property<long>("ConfirmedHeadcount")
+                        .HasColumnType("bigint")
+                        .HasColumnName("confirmed_headcount");
+
+                    b.Property<long>("DeclinedParticipants")
+                        .HasColumnType("bigint")
+                        .HasColumnName("declined_participants");
+
+                    b.Property<long>("PendingParticipants")
+                        .HasColumnType("bigint")
+                        .HasColumnName("pending_participants");
+
+                    b.Property<long>("WaitlistedParticipants")
+                        .HasColumnType("bigint")
+                        .HasColumnName("waitlisted_participants");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.ToTable((string)null);
+
+                    b.ToView("v_wedding_headcount", "inviteme");
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<System.Guid>", b =>
                 {
                     b.Property<int>("Id")
@@ -577,6 +2791,203 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.ToTable("user_tokens", "inviteme");
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.AI.AiGeneration", b =>
+                {
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedBy")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_ai_generations_created_by");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_ai_generations_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Audit.AuditLog", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Guests.WeddingGuest", null)
+                        .WithMany()
+                        .HasForeignKey("ActorGuestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_audit_logs_actor_guest");
+
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ActorUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_audit_logs_actor_user");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_audit_logs_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Billing.Subscription", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Billing.Plan", null)
+                        .WithMany()
+                        .HasForeignKey("PlanId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_subscriptions_plan");
+
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_subscriptions_user");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.CheckIn.CheckInRecord", b =>
+                {
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("CheckedInBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_checkins_checked_in_by");
+
+                    b.HasOne("InviteMe.Domain.Guests.GuestParticipant", null)
+                        .WithMany()
+                        .HasForeignKey("ParticipantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_checkins_participant");
+
+                    b.HasOne("InviteMe.Domain.CheckIn.WalkIn", null)
+                        .WithMany()
+                        .HasForeignKey("WalkinId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_checkins_walkin");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_checkins_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.CheckIn.WalkIn", b =>
+                {
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_walkins_created_by");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_walkins_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Gifts.Gift", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Guests.WeddingGuest", null)
+                        .WithMany()
+                        .HasForeignKey("GuestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_gifts_guest");
+
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ReceivedBy")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_gifts_received_by");
+
+                    b.HasOne("InviteMe.Domain.CheckIn.WalkIn", null)
+                        .WithMany()
+                        .HasForeignKey("WalkinId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_gifts_walkin");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_gifts_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Gifts.GiftMessage", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Gifts.Gift", null)
+                        .WithMany()
+                        .HasForeignKey("GiftId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_gift_messages_gift");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Guests.GuestGroup", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_guest_groups_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Guests.GuestNote", b =>
+                {
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedBy")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_guest_notes_created_by");
+
+                    b.HasOne("InviteMe.Domain.Guests.WeddingGuest", null)
+                        .WithMany()
+                        .HasForeignKey("GuestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_guest_notes_guest");
+
+                    b.HasOne("InviteMe.Domain.Guests.GuestParticipant", null)
+                        .WithMany()
+                        .HasForeignKey("ParticipantId", "GuestId")
+                        .HasPrincipalKey("Id", "GuestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .HasConstraintName("fk_guest_notes_participant_same_guest");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Guests.GuestParticipant", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Guests.WeddingGuest", null)
+                        .WithMany()
+                        .HasForeignKey("GuestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_guest_participants_guest");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Guests.WeddingGuest", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Guests.GuestGroup", null)
+                        .WithMany()
+                        .HasForeignKey("GroupId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_guests_group");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_guests_wedding");
+                });
+
             modelBuilder.Entity("InviteMe.Domain.Identity.RolePermission", b =>
                 {
                     b.HasOne("InviteMe.Domain.Identity.Permission", null)
@@ -594,6 +3005,251 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_role_permissions_role");
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Invitations.Invitation", b =>
+                {
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ApprovedBy")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_invitations_approved_by");
+
+                    b.HasOne("InviteMe.Domain.Guests.WeddingGuest", null)
+                        .WithMany()
+                        .HasForeignKey("GuestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_invitations_guest");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_invitations_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Invitations.InvitationDelivery", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Invitations.Invitation", null)
+                        .WithMany()
+                        .HasForeignKey("InvitationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_invitation_deliveries_invitation");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Invitations.TemplateSection", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Invitations.InvitationTemplate", null)
+                        .WithMany()
+                        .HasForeignKey("TemplateId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_template_sections_template");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Notifications.Notification", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Guests.WeddingGuest", null)
+                        .WithMany()
+                        .HasForeignKey("RecipientGuestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .HasConstraintName("fk_notifications_guest");
+
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("RecipientUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .HasConstraintName("fk_notifications_user");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_notifications_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.Rsvp", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Invitations.Invitation", null)
+                        .WithMany()
+                        .HasForeignKey("InvitationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_rsvps_invitation");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.RsvpHistory", b =>
+                {
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ChangedBy")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_rsvp_history_changed_by");
+
+                    b.HasOne("InviteMe.Domain.Rsvps.Rsvp", null)
+                        .WithMany()
+                        .HasForeignKey("RsvpId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_rsvp_history_rsvp");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.WaitlistEntry", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Guests.WeddingGuest", null)
+                        .WithMany()
+                        .HasForeignKey("GuestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_waitlist_guest");
+
+                    b.HasOne("InviteMe.Domain.Guests.GuestParticipant", null)
+                        .WithMany()
+                        .HasForeignKey("ParticipantId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_waitlist_participant");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_waitlist_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Seating.ReceptionTable", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_tables_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Seating.Seat", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Seating.ReceptionTable", null)
+                        .WithMany()
+                        .HasForeignKey("TableId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_seats_table");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Seating.SeatingAssignment", b =>
+                {
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("AssignedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_seating_assignment_assigned_by");
+
+                    b.HasOne("InviteMe.Domain.Guests.GuestParticipant", null)
+                        .WithMany()
+                        .HasForeignKey("ParticipantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_seating_assignment_participant");
+
+                    b.HasOne("InviteMe.Domain.Seating.Seat", null)
+                        .WithMany()
+                        .HasForeignKey("SeatId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_seating_assignment_seat");
+
+                    b.HasOne("InviteMe.Domain.Seating.ReceptionTable", null)
+                        .WithMany()
+                        .HasForeignKey("TableId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_seating_assignment_table");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_seating_assignment_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Seating.SeatingChangeLog", b =>
+                {
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ActorId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_seating_logs_actor");
+
+                    b.HasOne("InviteMe.Domain.Seating.SeatingAssignment", null)
+                        .WithMany()
+                        .HasForeignKey("AssignmentId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_seating_logs_assignment");
+
+                    b.HasOne("InviteMe.Domain.Seating.Seat", null)
+                        .WithMany()
+                        .HasForeignKey("FromSeatId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_seating_logs_from_seat");
+
+                    b.HasOne("InviteMe.Domain.Seating.ReceptionTable", null)
+                        .WithMany()
+                        .HasForeignKey("FromTableId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_seating_logs_from_table");
+
+                    b.HasOne("InviteMe.Domain.Guests.GuestParticipant", null)
+                        .WithMany()
+                        .HasForeignKey("ParticipantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_seating_logs_participant");
+
+                    b.HasOne("InviteMe.Domain.Seating.Seat", null)
+                        .WithMany()
+                        .HasForeignKey("ToSeatId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_seating_logs_to_seat");
+
+                    b.HasOne("InviteMe.Domain.Seating.ReceptionTable", null)
+                        .WithMany()
+                        .HasForeignKey("ToTableId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_seating_logs_to_table");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_seating_logs_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Weddings.LoveStory", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_love_stories_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Weddings.Venue", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_venues_wedding");
+                });
+
             modelBuilder.Entity("InviteMe.Domain.Weddings.Wedding", b =>
                 {
                     b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
@@ -602,6 +3258,32 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_weddings_owner");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Weddings.WeddingEvent", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Venue", null)
+                        .WithMany()
+                        .HasForeignKey("VenueId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_wedding_events_venue");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_wedding_events_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Weddings.WeddingMedia", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_wedding_media_wedding");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Weddings.WeddingMember", b =>
@@ -636,6 +3318,16 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_wmp_permission");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Weddings.WeddingSettings", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_wedding_settings_wedding");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<System.Guid>", b =>

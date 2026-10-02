@@ -1,4 +1,4 @@
-using InviteMe.Infrastructure.Authorization;
+using InviteMe.Infrastructure.Persistence.Adapters;
 using InviteMe.Infrastructure.Identity;
 using InviteMe.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -21,7 +21,8 @@ public sealed class PersistenceModelTests
         Assert.Equal("password_hash", user.FindProperty(nameof(ApplicationUser.PasswordHash))!.GetColumnName());
         Assert.Equal("full_name", user.FindProperty(nameof(ApplicationUser.FullName))!.GetColumnName());
         Assert.Equal("weddings", context.Model.FindEntityType(typeof(InviteMe.Domain.Weddings.Wedding))!.GetTableName());
-        Assert.All(context.Model.GetEntityTypes(), entity => Assert.Equal("inviteme", entity.GetSchema()));
+        Assert.All(context.Model.GetEntityTypes(), entity =>
+            Assert.Equal("inviteme", entity.GetViewName() is null ? entity.GetSchema() : entity.GetViewSchema()));
     }
 
     [Fact]

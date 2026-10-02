@@ -1,4 +1,4 @@
-namespace InviteMe.Application.Abstractions.Authentication;
+namespace InviteMe.Application.Ports.Authentication;
 
 public interface ICurrentUser
 {

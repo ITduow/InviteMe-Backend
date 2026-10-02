@@ -1,9 +1,9 @@
-using InviteMe.Application.Abstractions.Authorization;
+using InviteMe.Application.Ports.Authorization;
 using InviteMe.Domain.Weddings;
 using InviteMe.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
-namespace InviteMe.Infrastructure.Authorization;
+namespace InviteMe.Infrastructure.Persistence.Adapters;
 
 public sealed class WeddingAccessReader(InviteMeDbContext db) : IWeddingAccessReader
 {
