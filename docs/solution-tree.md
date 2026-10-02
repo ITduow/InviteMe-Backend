@@ -1,30 +1,17 @@
 # Complete solution tree
 
-Generated build outputs, local SDK and NuGet caches are omitted.
+Local SDK, IDE state, build outputs, secrets, obsolete empty directories and disposable database files are omitted.
 
 ```text
 BE_InviteMe/
     +-- .config/
         +-- dotnet-tools.json
-    +-- .vs/
-        +-- InviteMe/
-            +-- CopilotIndices/
-                +-- 17.14.1204.46620/
-                    +-- CodeChunks.db
-                    +-- SemanticSymbols.db
-            +-- FileContentIndex/
-                +-- cbea4d22-df78-40d4-84a2-3d190e7fbc2e.vsidx
-            +-- v17/
-                +-- .futdcache.v2
-                +-- .suo
-                +-- DocumentLayout.json
-        +-- ProjectEvaluation/
-            +-- inviteme.metadata.v9.bin
-            +-- inviteme.projects.v9.bin
-            +-- inviteme.strings.v9.bin
+    +-- .github/
+        +-- workflows/
     +-- artifacts/
         +-- migrations.sql
     +-- docs/
+        +-- architecture-diagram-alignment.md
         +-- architecture.md
         +-- database.md
         +-- solution-tree.md
@@ -52,12 +39,6 @@ BE_InviteMe/
             +-- InviteMe.Api.csproj
             +-- Program.cs
         +-- InviteMe.Application/
-            +-- Abstractions/
-                +-- Authentication/
-                    +-- ICurrentUser.cs
-                +-- Authorization/
-                    +-- IWeddingAccessReader.cs
-                    +-- IWeddingPermissionService.cs
             +-- Common/
                 +-- Authorization/
                     +-- WeddingPermissionService.cs
@@ -72,42 +53,126 @@ BE_InviteMe/
                 +-- System/
                     +-- GetApplicationHealth/
                         +-- GetApplicationHealthHandler.cs
+            +-- Ports/
+                +-- Authentication/
+                    +-- ICurrentUser.cs
+                +-- Authorization/
+                    +-- IWeddingAccessReader.cs
+                    +-- IWeddingPermissionService.cs
             +-- DependencyInjection.cs
             +-- InviteMe.Application.csproj
         +-- InviteMe.Domain/
+            +-- AI/
+                +-- AiGeneration.cs
+            +-- Audit/
+                +-- AuditLog.cs
+            +-- Billing/
+                +-- Plan.cs
+                +-- Subscription.cs
+            +-- CheckIn/
+                +-- CheckInRecord.cs
+                +-- WalkIn.cs
+            +-- Gifts/
+                +-- Gift.cs
+                +-- GiftMessage.cs
+            +-- Guests/
+                +-- GuestGroup.cs
+                +-- GuestNote.cs
+                +-- GuestParticipant.cs
+                +-- WeddingGuest.cs
             +-- Identity/
                 +-- Permission.cs
                 +-- PlatformRoles.cs
+            +-- Invitations/
+                +-- Invitation.cs
+                +-- InvitationDelivery.cs
+                +-- InvitationTemplate.cs
+                +-- TemplateSection.cs
+            +-- Notifications/
+                +-- Notification.cs
+            +-- Rsvps/
+                +-- Rsvp.cs
+                +-- RsvpHistory.cs
+                +-- WaitlistEntry.cs
+            +-- Seating/
+                +-- ReceptionTable.cs
+                +-- Seat.cs
+                +-- SeatingAssignment.cs
+                +-- SeatingChangeLog.cs
             +-- Weddings/
+                +-- LoveStory.cs
+                +-- Venue.cs
                 +-- Wedding.cs
                 +-- WeddingAccess.cs
+                +-- WeddingEvent.cs
+                +-- WeddingMedia.cs
                 +-- WeddingMember.cs
                 +-- WeddingMemberPermission.cs
                 +-- WeddingPermission.cs
+                +-- WeddingSettings.cs
             +-- InviteMe.Domain.csproj
         +-- InviteMe.Infrastructure/
             +-- Authentication/
                 +-- InvitationToken.cs
-            +-- Authorization/
-                +-- WeddingAccessReader.cs
             +-- Identity/
                 +-- ApplicationRole.cs
                 +-- ApplicationUser.cs
             +-- Persistence/
+                +-- Adapters/
+                    +-- WeddingAccessReader.cs
                 +-- Configurations/
+                    +-- AiGenerationConfiguration.cs
+                    +-- AuditLogConfiguration.cs
+                    +-- CheckInRecordConfiguration.cs
+                    +-- GiftConfiguration.cs
+                    +-- GiftMessageConfiguration.cs
+                    +-- GuestGroupConfiguration.cs
+                    +-- GuestNoteConfiguration.cs
+                    +-- GuestParticipantConfiguration.cs
                     +-- IdentityConfigurations.cs
+                    +-- InvitationConfiguration.cs
+                    +-- InvitationDeliveryConfiguration.cs
+                    +-- InvitationTemplateConfiguration.cs
+                    +-- LoveStoryConfiguration.cs
+                    +-- NotificationConfiguration.cs
                     +-- PermissionConfigurations.cs
+                    +-- PlanConfiguration.cs
+                    +-- ReceptionTableConfiguration.cs
+                    +-- RsvpConfiguration.cs
+                    +-- RsvpHistoryConfiguration.cs
+                    +-- SeatConfiguration.cs
+                    +-- SeatingAssignmentConfiguration.cs
+                    +-- SeatingChangeLogConfiguration.cs
+                    +-- SubscriptionConfiguration.cs
+                    +-- TemplateSectionConfiguration.cs
+                    +-- VenueConfiguration.cs
+                    +-- WaitlistEntryConfiguration.cs
+                    +-- WalkInConfiguration.cs
                     +-- WeddingConfigurations.cs
+                    +-- WeddingEventConfiguration.cs
+                    +-- WeddingGuestConfiguration.cs
+                    +-- WeddingMediaConfiguration.cs
+                    +-- WeddingReadModelConfigurations.cs
+                    +-- WeddingSettingsConfiguration.cs
                 +-- Migrations/
                     +-- 20260924000100_ExistingSchemaBaseline.cs
                     +-- 20260924151913_AddIdentitySupport.cs
                     +-- 20260924151913_AddIdentitySupport.Designer.cs
+                    +-- 20261002000100_AlignBusinessSchemaV2.cs
+                    +-- 20261002141849_AdoptV2EntityMappings.cs
+                    +-- 20261002141849_AdoptV2EntityMappings.Designer.cs
                     +-- InviteMeDbContextModelSnapshot.cs
+                +-- ReadModels/
+                    +-- WeddingReadModels.cs
                 +-- Schema/
                     +-- Baseline.sql
+                    +-- BaselineV2.sql
                     +-- IdentitySupport.sql
+                    +-- InspectSchemaVersion.sql
                     +-- MarkExistingBaseline.sql
+                    +-- MarkExistingV2.sql
                     +-- SchemaResources.cs
+                    +-- UpgradeToV2.sql
                 +-- DatabaseOptions.cs
                 +-- InviteMeDbContext.cs
                 +-- InviteMeDbContextFactory.cs
@@ -119,10 +184,13 @@ BE_InviteMe/
     +-- tests/
         +-- InviteMe.IntegrationTests/
             +-- ApiFactory.cs
+            +-- ArchitectureBoundaryTests.cs
+            +-- BusinessMappingTests.cs
             +-- ErrorHandlingTests.cs
             +-- HttpFoundationTests.cs
             +-- InviteMe.IntegrationTests.csproj
             +-- PostgreSqlFoundationTests.cs
+            +-- SchemaV2MigrationTests.cs
         +-- InviteMe.UnitTests/
             +-- AuthorizationTests.cs
             +-- InviteMe.UnitTests.csproj
@@ -140,4 +208,3 @@ BE_InviteMe/
     +-- InviteMe.sln
     +-- README.md
 ```
-

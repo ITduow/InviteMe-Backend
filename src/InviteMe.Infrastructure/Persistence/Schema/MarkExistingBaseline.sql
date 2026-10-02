@@ -25,6 +25,10 @@ BEGIN
     IF missing IS NOT NULL THEN
         RAISE EXCEPTION 'Cannot mark InviteMe baseline; missing tables: %', missing;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'inviteme' AND table_name = 'guests' AND column_name = 'status')
+       OR NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'inviteme' AND table_name = 'gifts' AND column_name = 'participant_id') THEN
+        RAISE EXCEPTION 'Expected v1 schema; use MarkExistingV2.sql for an existing v2 database';
+    END IF;
 END;
 $$;
 

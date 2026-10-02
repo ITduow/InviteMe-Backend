@@ -1,15 +1,17 @@
 # Architecture and implementation contracts
 
+The supplied Review 1 detailed architecture diagram is the structural reference. See [architecture-diagram-alignment.md](architecture-diagram-alignment.md) for component locations, request flow and implementation status. Provider-independent ports are mandatory; Application must not expose EF types.
+
 ## Module map
 
-Only System/GetApplicationHealth is implemented. Add feature folders when there is code; do not create empty placeholders.
+Only System/GetApplicationHealth is implemented as an application feature. Domain persistence models and EF configurations now cover the complete v2 schema; they do not imply the feature APIs are implemented. Add application feature folders when there is code; do not create empty placeholders.
 
 | Application feature | Domain ownership | Infrastructure dependencies |
 | --- | --- | --- |
 | Identity | PlatformRoles | Identity stores, token issuer |
 | Weddings | Wedding, membership and permissions | EF mappings, scoped access reader |
 | WeddingContent | Stories, venues, events, media metadata | Storage adapter |
-| Guests | Guest contact/party and GuestParticipant people | EF, ClosedXML/CsvHelper import parsing |
+| Guests | WeddingGuest contact/party and GuestParticipant people | EF, ClosedXML/CsvHelper import parsing |
 | Invitations | Invitations and token scope | Delivery, hashed token lookup, QRCoder |
 | RSVP | Current response and immutable history | Transactional updates |
 | Waitlist | Explicit promotion and state changes | Capacity locking |
@@ -35,15 +37,15 @@ Application/Features/Guests/CreateGuest/
   CreateGuestHandler.cs
   CreateGuestValidator.cs
   CreateGuestResponse.cs
-Domain/Guests/Guest.cs
-Infrastructure/Persistence/Configurations/GuestConfiguration.cs
+Domain/Guests/WeddingGuest.cs
+Infrastructure/Persistence/Configurations/WeddingGuestConfiguration.cs
 ```
 
 Use fewer files for small slices. Endpoint binds input and delegates. Handler validates input, checks wedding permissions, queries scoped data, calls domain behavior, saves within the required transaction, and returns a typed DTO. No framework-mediated CQRS dispatch, generic repository or pass-through service layer is needed.
 
 The implemented health slice has one response/handler file and one endpoint file. `RequestValidation<T>` is explicitly called by handlers with input. Validators run sequentially so future scoped EF-dependent validators do not share a DbContext concurrently.
 
-Do not create storage/AI/provider interfaces without an implementing feature. Introduce `IInviteMeDbContext` when the first persisted handler needs it. Keep infrastructure construction in DI and database mapping outside Domain.
+Application-owned ports live in `Application/Ports`; EF persistence implementations live in `Infrastructure/Persistence/Adapters`. Application and Domain have no EF Core/Npgsql/provider SDK dependency. Do not expose DbContext, DbSet, IQueryable or provider types through a port. A persisted slice introduces a use-case-specific store (for example IRsvpStore) and, when necessary, a transaction/outbox contract. Keep those contracts focused on domain records and application results; implement SQL, row locking and EF tracking inside the adapter. Do not create storage/AI/provider interfaces without an implementing feature. Keep infrastructure construction in DI and database mapping outside Domain.
 
 ## Transaction and concurrency contracts
 

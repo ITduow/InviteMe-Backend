@@ -1,6 +1,6 @@
 using InviteMe.Domain.Weddings;
 
-namespace InviteMe.Application.Abstractions.Authorization;
+namespace InviteMe.Application.Ports.Authorization;
 
 public interface IWeddingPermissionService
 {

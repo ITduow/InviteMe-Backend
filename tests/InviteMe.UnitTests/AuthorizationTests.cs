@@ -1,5 +1,5 @@
-using InviteMe.Application.Abstractions.Authentication;
-using InviteMe.Application.Abstractions.Authorization;
+using InviteMe.Application.Ports.Authentication;
+using InviteMe.Application.Ports.Authorization;
 using InviteMe.Application.Common.Authorization;
 using InviteMe.Application.Common.Errors;
 using InviteMe.Domain.Weddings;

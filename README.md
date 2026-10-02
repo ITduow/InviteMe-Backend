@@ -2,7 +2,7 @@
 
 Milestone 1: a .NET 10 modular monolith with vertical slices, PostgreSQL/EF Core 10, Identity, JWT validation, SignalR, and two test projects. One business-independent slice is implemented: `GET /api/health/application`.
 
-**Scope:** registration/login/token issuance, wedding workflows, delivery workers, and business concurrency operations remain future milestones. The supplied 37-table PostgreSQL schema is now the checked-in baseline. Identity persistence and schema-backed wedding permission lookup are mapped, but no migration runs automatically at API startup.
+**Scope:** EF now maps all 37 v2 business tables, four Identity support tables and three reporting views. Wedding Guest, RSVP, seating, check-in, gift, notification, audit, templates and subscription records are persistence models with private setters; workflow mutations and APIs remain future work. Seating tables/assignments use version concurrency tokens advanced by EF SaveChanges. Registration/login/token issuance, capacity locking, delivery workers and business endpoints are still pending. No migration runs automatically at API startup.
 
 ## Architecture
 
@@ -23,7 +23,9 @@ flowchart TD
 | UnitTests | Isolated permission, validation and token behavior |
 | IntegrationTests | Actual ASP.NET pipeline and opt-in PostgreSQL Testcontainers |
 
-Infrastructure can use Domain through Application's reference. Application has no Infrastructure reference and currently needs no EF dependency. When the first persisted slice arrives, introduce a narrow `IInviteMeDbContext` exposing the required sets and save/transaction capability, with EF Core in Application if justified. Do not introduce generic repositories or a service/manager/unit-of-work chain.
+Application owns provider-independent contracts in `Ports/`. Infrastructure implements persistence ports in `Persistence/Adapters/` using EF Core/Npgsql; API supplies the request-scoped current-user port and wires dependencies at the composition root. Application and Domain must not reference EF Core, Npgsql, Infrastructure or provider SDKs. Future persisted slices introduce use-case-specific ports such as `IRsvpStore`; expose domain data/application results, never DbContext, DbSet, IQueryable or SDK types. Introduce transaction/outbox ports only with an implementing workflow. Do not introduce generic repositories or a service/manager/unit-of-work chain.
+
+The supplied Review 1 architecture diagram is the structural reference; see [component alignment](docs/architecture-diagram-alignment.md) for implemented and planned components. Frontend deployment, external adapters, background processing and AWS deployment are still planned capabilities.
 
 See [full source tree](docs/solution-tree.md), [architecture and module ownership](docs/architecture.md), and [database baseline decisions](docs/database.md).
 
@@ -104,7 +106,7 @@ JSON console logs include a server-generated correlation scope and response head
 
 ## Database migrations
 
-See [database.md](docs/database.md) before running these commands. Two migrations are checked in: `ExistingSchemaBaseline` creates the exact supplied business schema on a fresh database, then `AddIdentitySupport` adds the minimum columns and auxiliary tables required by ASP.NET Core Identity.
+See [database.md](docs/database.md) before running these commands. Four migrations are checked in: the frozen v1 `ExistingSchemaBaseline`, additive `AddIdentitySupport`, `AlignBusinessSchemaV2`, and the metadata-only `AdoptV2EntityMappings`. The last migration records existing tables/views in the EF snapshot without creating them again. A fresh database finishes on schema v2 plus Identity and legacy gift provenance. The authoritative v2 source is `Persistence/Schema/BaselineV2.sql`; historical migrations remain unchanged.
 
 After reconciliation and review:
 
@@ -114,7 +116,7 @@ dotnet ef migrations script --idempotent --project src/InviteMe.Infrastructure -
 dotnet ef database update --project src/InviteMe.Infrastructure --startup-project src/InviteMe.Api
 ```
 
-Create the `artifacts` directory before requesting the script output. The design-time factory only needs `ConnectionStrings__PostgreSQL`; it does not require JWT configuration or a live connection for script generation. Review SQL before applying it. `database update` is correct for a fresh database. If all baseline tables already exist, follow the existing-database baseline procedure in `docs/database.md` and review `MarkExistingBaseline.sql`; running the first migration directly would attempt to recreate them. Production migrations are a separate deployment step. Never call `EnsureCreated` in application startup or delete existing data to repair a migration.
+Create the `artifacts` directory before requesting the script output. The design-time factory only needs `ConnectionStrings__PostgreSQL`; it does not require JWT configuration or a live connection for script generation. Review SQL before applying it. For externally installed v1 use `MarkExistingBaseline.sql`; for externally installed v2 use `MarkExistingV2.sql`, after comparing the entire live schema with its reference. Databases with valid EF history apply only pending migrations. Follow `docs/database.md` for preflight failures and data conversion. Production migrations are a separate deployment step. Never call `EnsureCreated` in application startup or delete existing data to repair a migration.
 
 ## Transactions, concurrency and realtime
 

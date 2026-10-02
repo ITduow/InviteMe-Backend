@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Options;
 using InviteMe.Api.Authentication;
 using InviteMe.Api.Configuration;
-using InviteMe.Application.Abstractions.Authentication;
+using InviteMe.Application.Ports.Authentication;
 using InviteMe.Domain.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;

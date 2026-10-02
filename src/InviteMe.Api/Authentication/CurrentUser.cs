@@ -1,4 +1,4 @@
-using InviteMe.Application.Abstractions.Authentication;
+using InviteMe.Application.Ports.Authentication;
 
 namespace InviteMe.Api.Authentication;
 

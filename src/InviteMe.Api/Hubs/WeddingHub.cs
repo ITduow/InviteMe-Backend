@@ -1,4 +1,4 @@
-using InviteMe.Application.Abstractions.Authorization;
+using InviteMe.Application.Ports.Authorization;
 using InviteMe.Application.Common.Errors;
 using InviteMe.Domain.Weddings;
 using Microsoft.AspNetCore.Authorization;

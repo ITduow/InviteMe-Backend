@@ -1,5 +1,5 @@
 using InviteMe.Domain.Weddings;
-using InviteMe.Infrastructure.Authorization;
+using InviteMe.Infrastructure.Persistence.Adapters;
 using InviteMe.Infrastructure.Identity;
 using InviteMe.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -36,7 +36,8 @@ public sealed class PostgreSqlFoundationTests
         try
         {
             var services = new ServiceCollection()
-                .AddDbContext<InviteMeDbContext>(options => options.UseNpgsql(connectionString))
+                .AddDbContext<InviteMeDbContext>(options => options.UseNpgsql(connectionString,
+                    o => o.MigrationsHistoryTable("__EFMigrationsHistory", "inviteme")))
                 .BuildServiceProvider();
             await using var scope = services.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<InviteMeDbContext>();
