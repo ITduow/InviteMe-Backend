@@ -35,6 +35,7 @@ public static class DependencyInjection
         services.AddScoped<IWeddingAccessReader, WeddingAccessReader>();
         services.AddScoped<InviteMe.Application.Ports.Authentication.IAccountStore, InviteMe.Infrastructure.Authentication.AccountStore>();
         services.AddScoped<InviteMe.Application.Ports.Weddings.IWorkspaceStore, WorkspaceStore>();
+        services.AddScoped<InviteMe.Application.Ports.Guests.IWeddingGuestReader, WeddingGuestReader>();
         services.AddDataProtection().SetApplicationName("InviteMe")
             .PersistKeysToFileSystem(new DirectoryInfo(configuration["Invitations:KeyDirectory"] ??
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "InviteMe", "DataProtectionKeys")));
