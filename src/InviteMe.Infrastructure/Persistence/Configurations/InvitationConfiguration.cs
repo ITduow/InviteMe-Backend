@@ -24,6 +24,11 @@ public sealed class InvitationConfiguration : IEntityTypeConfiguration<Invitatio
         builder.HasIndex(x => x.TokenHash, "invitations_token_hash_key").HasDatabaseName("invitations_token_hash_key").IsUnique();
         builder.Property(x => x.Status).HasColumnName("status").HasColumnType("varchar(20)").HasMaxLength(20).IsRequired().HasDefaultValue("DRAFT");
         builder.Property(x => x.Configuration).HasColumnName("configuration").HasColumnType("jsonb");
+        builder.Property(x => x.Version).HasColumnName("version").HasDefaultValue(1).IsConcurrencyToken();
+        builder.Property(x => x.PublishedConfiguration).HasColumnName("published_configuration").HasColumnType("jsonb");
+        builder.Property(x => x.ProtectedToken).HasColumnName("protected_token").HasColumnType("text");
+        builder.Property(x => x.ReviewedAt).HasColumnName("reviewed_at").HasColumnType("timestamp with time zone");
+        builder.Property(x => x.OpenedAt).HasColumnName("opened_at").HasColumnType("timestamp with time zone");
         builder.Property(x => x.PreviewedAt).HasColumnName("previewed_at").HasColumnType("timestamp with time zone");
         builder.Property(x => x.ApprovedBy).HasColumnName("approved_by").HasColumnType("uuid");
         builder.Property(x => x.ApprovedAt).HasColumnName("approved_at").HasColumnType("timestamp with time zone");

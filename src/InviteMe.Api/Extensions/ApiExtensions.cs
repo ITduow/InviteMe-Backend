@@ -12,6 +12,9 @@ internal static class ApiExtensions
         services.AddRateLimiter(options =>
         {
             options.RejectionStatusCode = 429;
+            options.AddPolicy("PublicInvitation", context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
             options.AddPolicy("auth", context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
                 context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
                 _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
@@ -32,7 +35,7 @@ internal static class ApiExtensions
             options.AddDocumentTransformer((document, _, _) =>
             {
                 document.Info.Title = "InviteMe API";
-                document.Info.Description = "InviteMe Accounts and Wedding Workspace API. Sign in to obtain a bearer JWT.";
+                document.Info.Description = "InviteMe Accounts, Wedding Workspace and Invitation Lifecycle API. Invitation delivery uses a sandbox.";
                 document.Components ??= new OpenApiComponents();
                 document.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
                 document.Components.SecuritySchemes["Bearer"] = new OpenApiSecurityScheme

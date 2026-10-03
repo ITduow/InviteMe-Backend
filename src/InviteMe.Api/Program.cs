@@ -36,6 +36,7 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check 
 app.MapApplicationHealth();
 app.MapAccounts();
 app.MapWorkspaces();
+app.MapInvitations();
 app.MapHub<WeddingHub>("/hubs/weddings", options => options.CloseOnAuthenticationExpiration = true)
     .RequireAuthorization();
 app.Run();

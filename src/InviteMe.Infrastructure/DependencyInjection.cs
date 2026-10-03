@@ -6,6 +6,9 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.DataProtection;
+using InviteMe.Application.Ports.Invitations;
+using InviteMe.Infrastructure.Notifications;
 
 namespace InviteMe.Infrastructure;
 
@@ -32,6 +35,14 @@ public static class DependencyInjection
         services.AddScoped<IWeddingAccessReader, WeddingAccessReader>();
         services.AddScoped<InviteMe.Application.Ports.Authentication.IAccountStore, InviteMe.Infrastructure.Authentication.AccountStore>();
         services.AddScoped<InviteMe.Application.Ports.Weddings.IWorkspaceStore, WorkspaceStore>();
+        services.AddDataProtection().SetApplicationName("InviteMe")
+            .PersistKeysToFileSystem(new DirectoryInfo(configuration["Invitations:KeyDirectory"] ??
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "InviteMe", "DataProtectionKeys")));
+        services.AddScoped<InvitationStore>();
+        services.AddScoped<IInvitationStore>(p => p.GetRequiredService<InvitationStore>());
+        services.AddScoped<IInvitationDeliveryQueue>(p => p.GetRequiredService<InvitationStore>());
+        services.AddScoped<IInvitationSender, SandboxInvitationSender>();
+        services.AddHostedService<InvitationDeliveryWorker>();
         services.AddHealthChecks().AddCheck<PostgreSqlHealthCheck>("postgresql", tags: ["ready"]);
         return services;
     }

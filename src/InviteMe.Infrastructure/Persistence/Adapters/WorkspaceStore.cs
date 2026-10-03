@@ -43,8 +43,7 @@ public sealed class WorkspaceStore(InviteMeDbContext db) : IWorkspaceStore
         if (wedding.Slug != input.Slug) throw Error(ProblemKind.BusinessRule, "SLUG_IMMUTABLE", "Workspace slug cannot change.");
         var confirmed = await db.WeddingHeadcounts.Where(x => x.WeddingId == id).Select(x => x.ConfirmedHeadcount).SingleOrDefaultAsync(ct);
         if (!Wedding.CanSetCapacity(input.MaxCapacity, confirmed)) throw Error(ProblemKind.BusinessRule, "CAPACITY_BELOW_CONFIRMED", "Capacity cannot be removed or reduced below confirmed attendance.");
-        // Published invitation snapshots/revision workflows are not available yet.
-        // Prevent silent changes to public schedules until the lifecycle slice exists.
+        // Reopen all affected invitations before editing; published snapshots stay readable.
         if (await db.Invitations.AnyAsync(x => x.WeddingId == id && (x.Status == "APPROVED" || x.Status == "PUBLISHED" || x.Status == "SENT" || x.Status == "OPENED"), ct))
             throw Error(ProblemKind.BusinessRule, "INVITATION_REVIEW_REQUIRED", "Review existing invitations before changing wedding settings.");
         wedding.Update(input.Title, input.MaxCapacity);
