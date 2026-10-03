@@ -25,6 +25,13 @@ public sealed class InvitationDeliveryConfiguration : IEntityTypeConfiguration<I
         builder.Property(x => x.FailedAt).HasColumnName("failed_at").HasColumnType("timestamp with time zone");
         builder.Property(x => x.ErrorMessage).HasColumnName("error_message").HasColumnType("text");
         builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasColumnType("timestamp with time zone").IsRequired().HasDefaultValueSql("NOW()");
+        builder.Property(x => x.RequestKey).HasColumnName("request_key").HasColumnType("varchar(32)").HasMaxLength(32);
+        builder.Property(x => x.IsSandbox).HasColumnName("is_sandbox").HasDefaultValue(false);
+        builder.Property(x => x.PublicationHash).HasColumnName("publication_hash").HasColumnType("char(64)").HasMaxLength(64);
+        builder.Property(x => x.LeaseId).HasColumnName("lease_id").HasColumnType("uuid");
+        builder.Property(x => x.LeaseUntil).HasColumnName("lease_until").HasColumnType("timestamp with time zone");
+        builder.Property(x => x.AttemptCount).HasColumnName("attempt_count").HasDefaultValue(0);
+        builder.HasIndex(x => new { x.InvitationId, x.RequestKey }).HasDatabaseName("uq_invitation_delivery_request").IsUnique().HasFilter("request_key IS NOT NULL");
         builder.HasOne<Invitation>().WithMany().HasForeignKey(x => x.InvitationId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_invitation_deliveries_invitation");
         builder.HasIndex(x => x.InvitationId, "ix_invitation_deliveries_invitation_id").HasDatabaseName("ix_invitation_deliveries_invitation_id");
         builder.HasIndex(x => x.Status, "ix_invitation_deliveries_status").HasDatabaseName("ix_invitation_deliveries_status");
