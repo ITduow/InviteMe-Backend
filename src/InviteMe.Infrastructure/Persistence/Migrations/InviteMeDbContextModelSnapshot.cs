@@ -1032,13 +1032,29 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("guest_id");
 
+                    b.Property<DateTimeOffset?>("OpenedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("opened_at");
+
                     b.Property<DateTimeOffset?>("PreviewedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("previewed_at");
 
+                    b.Property<string>("ProtectedToken")
+                        .HasColumnType("text")
+                        .HasColumnName("protected_token");
+
                     b.Property<DateTimeOffset?>("PublishedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("published_at");
+
+                    b.Property<string>("PublishedConfiguration")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("published_configuration");
+
+                    b.Property<DateTimeOffset?>("ReviewedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("reviewed_at");
 
                     b.Property<DateTimeOffset?>("SentAt")
                         .HasColumnType("timestamp with time zone")
@@ -1063,6 +1079,13 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at")
                         .HasDefaultValueSql("NOW()");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1)
+                        .HasColumnName("version");
 
                     b.Property<Guid>("WeddingId")
                         .HasColumnType("uuid")
@@ -1099,6 +1122,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnName("id")
                         .HasDefaultValueSql("gen_random_uuid()");
 
+                    b.Property<int>("AttemptCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("attempt_count");
+
                     b.Property<string>("Channel")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -1127,16 +1156,40 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("invitation_id");
 
+                    b.Property<bool>("IsSandbox")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_sandbox");
+
+                    b.Property<Guid?>("LeaseId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("lease_id");
+
+                    b.Property<DateTimeOffset?>("LeaseUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("lease_until");
+
                     b.Property<string>("ProviderMessageId")
                         .HasMaxLength(255)
                         .HasColumnType("varchar(255)")
                         .HasColumnName("provider_message_id");
+
+                    b.Property<string>("PublicationHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("char(64)")
+                        .HasColumnName("publication_hash");
 
                     b.Property<string>("Recipient")
                         .IsRequired()
                         .HasMaxLength(255)
                         .HasColumnType("varchar(255)")
                         .HasColumnName("recipient");
+
+                    b.Property<string>("RequestKey")
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)")
+                        .HasColumnName("request_key");
 
                     b.Property<DateTimeOffset?>("SentAt")
                         .HasColumnType("timestamp with time zone")
@@ -1152,6 +1205,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id")
                         .HasName("invitation_deliveries_pkey");
+
+                    b.HasIndex("InvitationId", "RequestKey")
+                        .IsUnique()
+                        .HasDatabaseName("uq_invitation_delivery_request")
+                        .HasFilter("request_key IS NOT NULL");
 
                     b.HasIndex(new[] { "InvitationId" }, "ix_invitation_deliveries_invitation_id")
                         .HasDatabaseName("ix_invitation_deliveries_invitation_id");
