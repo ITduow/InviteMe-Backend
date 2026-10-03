@@ -1,8 +1,8 @@
 # InviteMe backend
 
-Milestone 1: a .NET 10 modular monolith with vertical slices, PostgreSQL/EF Core 10, Identity, JWT validation, SignalR, and two test projects. One business-independent slice is implemented: `GET /api/health/application`.
+InviteMe is a .NET 10 modular monolith with vertical slices, PostgreSQL/EF Core 10, Identity, JWT, SignalR and two test projects. Accounts and Wedding Workspace APIs are implemented alongside `GET /api/health/application`.
 
-**Scope:** EF now maps all 37 v2 business tables, four Identity support tables and three reporting views. Wedding Guest, RSVP, seating, check-in, gift, notification, audit, templates and subscription records are persistence models with private setters; workflow mutations and APIs remain future work. Seating tables/assignments use version concurrency tokens advanced by EF SaveChanges. Registration/login/token issuance, capacity locking, delivery workers and business endpoints are still pending. No migration runs automatically at API startup.
+**Scope:** EF maps all 37 v2 business tables, four Identity support tables and three reporting views. Register/login/current-user/logout and wedding create/list/get/settings/access are available. Workspace edits use version checks, wedding row locking, capacity validation and atomic audit/settings/event/venue writes. RSVP, invitation lifecycle, seating/check-in/gift APIs and delivery workers remain pending. No migration runs automatically at API startup. See [implemented API and evidence](docs/workspace-api.md).
 
 ## Architecture
 
@@ -31,7 +31,7 @@ See [full source tree](docs/solution-tree.md), [architecture and module ownershi
 
 ## Prerequisites and startup
 
-Install the .NET 10 SDK and Docker with a running engine. `global.json` permits newer .NET 10 feature bands. The workspace-local SDK used during initialization is ignored by Git. To use it in PowerShell:
+Install the .NET 10 SDK and use an installed PostgreSQL server or Docker Compose. `global.json` permits newer .NET 10 feature bands. The workspace-local SDK used during initialization is ignored by Git. To use it in PowerShell:
 
 ```powershell
 $env:DOTNET_ROOT = Join-Path $PWD '.dotnet'

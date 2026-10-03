@@ -2030,6 +2030,13 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnName("updated_at")
                         .HasDefaultValueSql("NOW()");
 
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1)
+                        .HasColumnName("version");
+
                     b.HasKey("Id")
                         .HasName("weddings_pkey");
 
@@ -2073,6 +2080,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("end_at");
 
+                    b.Property<bool>("IsMain")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_main");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -2111,6 +2124,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.HasIndex(new[] { "WeddingId" }, "ix_wedding_events_wedding_id")
                         .HasDatabaseName("ix_wedding_events_wedding_id");
+
+                    b.HasIndex(new[] { "WeddingId" }, "uq_wedding_main_event")
+                        .IsUnique()
+                        .HasDatabaseName("uq_wedding_main_event")
+                        .HasFilter("is_main");
 
                     b.ToTable("wedding_events", "inviteme", t =>
                         {

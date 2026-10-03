@@ -17,6 +17,7 @@ internal static class AuthenticationExtensions
             .Validate(x => x.IsValid(), "Invalid JWT configuration.").ValidateOnStart();
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUser, CurrentUser>();
+        services.AddScoped<IAccessTokenIssuer, AccessTokenIssuer>();
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();
         services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
             .Configure<IOptions<JwtOptions>>((options, configuredJwt) =>
@@ -51,11 +52,15 @@ internal static class AuthenticationExtensions
                         context.Token = context.Request.Query["access_token"];
                     return Task.CompletedTask;
                 },
-                OnTokenValidated = context =>
+                OnTokenValidated = async context =>
                 {
                     if (!Guid.TryParse(context.Principal?.FindFirst("sub")?.Value, out var id) || id == Guid.Empty)
-                        context.Fail("Invalid subject.");
-                    return Task.CompletedTask;
+                    { context.Fail("Invalid subject."); return; }
+                    if (context.Principal?.FindFirst("session_stamp")?.Value is { } stamp)
+                    {
+                        var account = await context.HttpContext.RequestServices.GetRequiredService<IAccountStore>().GetAsync(id, context.HttpContext.RequestAborted);
+                        if (account is null || !string.Equals(account.SessionStamp, stamp, StringComparison.Ordinal)) context.Fail("Session revoked.");
+                    }
                 }
             };
         });
