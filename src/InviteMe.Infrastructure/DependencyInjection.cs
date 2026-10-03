@@ -30,6 +30,8 @@ public static class DependencyInjection
           .AddDefaultTokenProviders();
 
         services.AddScoped<IWeddingAccessReader, WeddingAccessReader>();
+        services.AddScoped<InviteMe.Application.Ports.Authentication.IAccountStore, InviteMe.Infrastructure.Authentication.AccountStore>();
+        services.AddScoped<InviteMe.Application.Ports.Weddings.IWorkspaceStore, WorkspaceStore>();
         services.AddHealthChecks().AddCheck<PostgreSqlHealthCheck>("postgresql", tags: ["ready"]);
         return services;
     }

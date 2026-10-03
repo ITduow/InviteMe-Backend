@@ -102,6 +102,7 @@ public sealed class SchemaV2MigrationTests
         {
             await ExecuteScript(db, "BaselineV2.sql");
             await ExecuteScript(db, "IdentitySupport.sql");
+            await ExecuteScript(db, "WorkspaceSupport.sql");
             await db.Database.ExecuteSqlRawAsync("SET search_path TO inviteme, pg_temp");
             expected = await Scalar<string>(db, SchemaSignature);
         });

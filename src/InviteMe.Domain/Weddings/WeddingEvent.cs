@@ -12,6 +12,12 @@ public sealed class WeddingEvent
     public DateTimeOffset? EndAt { get; private set; }
     public int? CapacityLimit { get; private set; }
     public int SortOrder { get; private set; } = 0;
+    public bool IsMain { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
+
+    public static WeddingEvent CreateMain(Guid weddingId, DateTimeOffset start) => new()
+    { Id = Guid.NewGuid(), WeddingId = weddingId, Name = "Main wedding reception", StartAt = start.ToUniversalTime(), IsMain = true };
+    public void Configure(DateTimeOffset start, DateTimeOffset? end, Guid? venueId)
+    { StartAt = start.ToUniversalTime(); EndAt = end?.ToUniversalTime(); VenueId = venueId; }
 }
