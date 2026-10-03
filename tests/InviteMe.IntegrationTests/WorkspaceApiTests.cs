@@ -124,7 +124,7 @@ public sealed class WorkspaceApiTests
     }
 }
 
-internal sealed class WorkspaceApiFactory(string connection) : WebApplicationFactory<Program>
+internal sealed class WorkspaceApiFactory(string connection, bool dispatchEnabled = false) : WebApplicationFactory<Program>
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -132,7 +132,7 @@ internal sealed class WorkspaceApiFactory(string connection) : WebApplicationFac
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ConnectionStrings:PostgreSQL"] = connection, ["Jwt:Issuer"] = "InviteMe.Tests", ["Jwt:Audience"] = "InviteMe.Tests.Web",
-            ["Jwt:SigningKey"] = Convert.ToBase64String(ApiFactory.SigningKey), ["Frontend:Url"] = "http://localhost:3000"
+            ["Jwt:SigningKey"] = Convert.ToBase64String(ApiFactory.SigningKey), ["Frontend:Url"] = "http://localhost:3000", ["Invitations:DispatchEnabled"] = dispatchEnabled.ToString()
         }));
     }
     public HttpClient CreateHttpsClient() => CreateClient(new() { BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false });
