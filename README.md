@@ -42,6 +42,20 @@ $env:PATH = "$env:DOTNET_ROOT;$env:PATH"
 2. Start PostgreSQL: `docker compose up -d postgres`.
 3. Set API configuration using the environment or user secrets. Compose's `.env` is **not** automatically loaded by `dotnet run`.
 
+`appsettings.json` and `appsettings.example.json` show the configuration shape for an installed local PostgreSQL server: host `localhost`, port `5432`, database `InviteMe`, username `postgres`, frontend `http://localhost:3000`. The password and signing key are placeholders, so a clone requires personal configuration before startup. Change database/user names to match your installation. The Compose database instead uses `inviteme` for both database and username; use the connection string below when starting PostgreSQL through Compose.
+
+For an installed local PostgreSQL server, save your own settings without changing shared files:
+
+```powershell
+dotnet user-secrets set "ConnectionStrings:PostgreSQL" "Host=localhost;Port=5432;Database=InviteMe;Username=postgres;Password=<your-postgresql-password>" --project src/InviteMe.Api
+$localJwtKey = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+dotnet user-secrets set "Jwt:SigningKey" $localJwtKey --project src/InviteMe.Api
+# Only if your frontend uses another origin:
+dotnet user-secrets set "Frontend:Url" "http://localhost:5173" --project src/InviteMe.Api
+```
+
+Replace the password placeholder before running the first command. Development User Secrets override the shared JSON; environment variables override both. User Secrets are machine-local and are not distributed by Git. A configured connection does not create or upgrade the schema; follow `docs/database.md` for a fresh or existing database.
+
 ```powershell
 # Generate a signing key in memory; do not put real values in source control.
 $env:Jwt__SigningKey = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
