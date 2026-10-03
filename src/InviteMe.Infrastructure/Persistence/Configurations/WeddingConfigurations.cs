@@ -23,6 +23,8 @@ public sealed class WeddingConfiguration : IEntityTypeConfiguration<Wedding>
         builder.HasAlternateKey(x => x.Slug).HasName("weddings_slug_key");
         builder.Property(x => x.Status).HasColumnName("status").HasMaxLength(20).HasDefaultValue("DRAFT").IsRequired();
         builder.Property(x => x.MaxCapacity).HasColumnName("max_capacity");
+        builder.Property(x => x.Version).HasColumnName("version").HasDefaultValue(1).IsConcurrencyToken();
+        builder.Ignore(x => x.CanEdit);
         builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("NOW()");
         var updated = builder.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("NOW()").ValueGeneratedOnAddOrUpdate();
         updated.Metadata.SetBeforeSaveBehavior(PropertySaveBehavior.Ignore);

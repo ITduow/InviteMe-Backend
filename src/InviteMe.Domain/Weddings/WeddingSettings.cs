@@ -11,4 +11,10 @@ public sealed class WeddingSettings
     public string? SettingsJson { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
+
+    public static WeddingSettings Create(Guid weddingId) => new() { WeddingId = weddingId };
+    public void Configure(string timezone, string visibility, DateTimeOffset? deadline, short reminderDays)
+    {
+        Timezone = timezone; Visibility = visibility; RsvpDeadline = deadline?.ToUniversalTime(); RsvpReminderDaysBefore = reminderDays;
+    }
 }

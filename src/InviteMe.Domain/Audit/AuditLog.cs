@@ -13,4 +13,7 @@ public sealed class AuditLog
     public Guid? EntityId { get; private set; }
     public string? Metadata { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
+
+    public static AuditLog ForWedding(Guid weddingId, Guid actorId, string action) => new()
+    { Id = Guid.NewGuid(), WeddingId = weddingId, ActorType = "USER", ActorUserId = actorId, Action = action, EntityType = "weddings", EntityId = weddingId };
 }

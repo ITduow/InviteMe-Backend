@@ -16,6 +16,8 @@ public static class DependencyInjection
         services.AddValidatorsFromAssemblyContaining<GetApplicationHealthHandler>();
         services.AddScoped(typeof(RequestValidation<>));
         services.AddScoped<GetApplicationHealthHandler>();
+        services.AddScoped<InviteMe.Application.Features.Identity.Accounts.AccountHandler>();
+        services.AddScoped<InviteMe.Application.Features.Weddings.Workspace.WorkspaceHandler>();
         services.AddScoped<IWeddingPermissionService, WeddingPermissionService>();
         return services;
     }

@@ -12,4 +12,8 @@ public sealed class Venue
     public int? Capacity { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
+
+    public static Venue Create(Guid weddingId) => new() { Id = Guid.NewGuid(), WeddingId = weddingId };
+    public void Configure(string name, string? address)
+    { Name = name.Trim(); Address = string.IsNullOrWhiteSpace(address) ? null : address.Trim(); }
 }

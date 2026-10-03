@@ -8,6 +8,14 @@ internal static class ApiExtensions
     public static IServiceCollection AddApi(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddApiAuthentication(configuration);
+        services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new InviteMe.Api.Serialization.OffsetDateTimeConverter()));
+        services.AddRateLimiter(options =>
+        {
+            options.RejectionStatusCode = 429;
+            options.AddPolicy("auth", context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+        });
         services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
         {
             context.ProblemDetails.Extensions.TryAdd("code", context.ProblemDetails.Status switch
@@ -19,18 +27,29 @@ internal static class ApiExtensions
         });
         services.AddExceptionHandler<ApiExceptionHandler>();
         services.AddSignalR(options => options.EnableDetailedErrors = false);
-        services.AddOpenApi(options => options.AddDocumentTransformer((document, _, _) =>
+        services.AddOpenApi(options =>
         {
-            document.Info.Title = "InviteMe API";
-            document.Info.Description = "Foundation API. Protected endpoints use an HS256 bearer JWT with sub (UUID) and role claims.";
-            document.Components ??= new OpenApiComponents();
-            document.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
-            document.Components.SecuritySchemes["Bearer"] = new OpenApiSecurityScheme
+            options.AddDocumentTransformer((document, _, _) =>
             {
-                Type = SecuritySchemeType.Http, Scheme = "bearer", BearerFormat = "JWT"
-            };
-            return Task.CompletedTask;
-        }));
+                document.Info.Title = "InviteMe API";
+                document.Info.Description = "InviteMe Accounts and Wedding Workspace API. Sign in to obtain a bearer JWT.";
+                document.Components ??= new OpenApiComponents();
+                document.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
+                document.Components.SecuritySchemes["Bearer"] = new OpenApiSecurityScheme
+                {
+                    Type = SecuritySchemeType.Http, Scheme = "bearer", BearerFormat = "JWT"
+                };
+                return Task.CompletedTask;
+            });
+            options.AddOperationTransformer((operation, context, _) =>
+            {
+                var metadata = context.Description.ActionDescriptor.EndpointMetadata;
+                if (metadata.OfType<Microsoft.AspNetCore.Authorization.IAuthorizeData>().Any() &&
+                    !metadata.OfType<Microsoft.AspNetCore.Authorization.IAllowAnonymous>().Any())
+                    operation.Security = [new OpenApiSecurityRequirement { [new OpenApiSecuritySchemeReference("Bearer", context.Document)] = [] }];
+                return Task.CompletedTask;
+            });
+        });
         var frontend = configuration["Frontend:Url"];
         if (!Uri.TryCreate(frontend, UriKind.Absolute, out var frontendUri) ||
             (frontendUri.Scheme != "https" && frontendUri.Scheme != "http") ||
