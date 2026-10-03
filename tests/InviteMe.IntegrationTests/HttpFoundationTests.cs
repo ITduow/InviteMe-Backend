@@ -12,6 +12,14 @@ namespace InviteMe.IntegrationTests;
 public sealed class HttpFoundationTests(ApiFactory factory) : IClassFixture<ApiFactory>
 {
     [Fact]
+    public async Task DevelopmentSwaggerAndOpenApiAreAccessibleWithoutSigningIn()
+    {
+        using var client = factory.CreateHttpsClient();
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/swagger/index.html")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/openapi/v1.json")).StatusCode);
+    }
+
+    [Fact]
     public async Task ApplicationSliceAndLivenessWorkWithoutDatabase()
     {
         using var client = factory.CreateHttpsClient();
