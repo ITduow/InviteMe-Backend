@@ -28,11 +28,14 @@ if (app.Environment.IsDevelopment())
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 app.MapHealthChecks("/health", new HealthCheckOptions { Predicate = _ => false }).AllowAnonymous();
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false }).AllowAnonymous();
 app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") }).AllowAnonymous();
 app.MapApplicationHealth();
+app.MapAccounts();
+app.MapWorkspaces();
 app.MapHub<WeddingHub>("/hubs/weddings", options => options.CloseOnAuthenticationExpiration = true)
     .RequireAuthorization();
 app.Run();

@@ -24,6 +24,8 @@ public sealed class WeddingEventConfiguration : IEntityTypeConfiguration<Wedding
         builder.Property(x => x.EndAt).HasColumnName("end_at").HasColumnType("timestamp with time zone");
         builder.Property(x => x.CapacityLimit).HasColumnName("capacity_limit").HasColumnType("integer");
         builder.Property(x => x.SortOrder).HasColumnName("sort_order").HasColumnType("integer").IsRequired().HasDefaultValue(0);
+        builder.Property(x => x.IsMain).HasColumnName("is_main").HasDefaultValue(false);
+        builder.HasIndex(x => x.WeddingId, "uq_wedding_main_event").IsUnique().HasFilter("is_main").HasDatabaseName("uq_wedding_main_event");
         builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasColumnType("timestamp with time zone").IsRequired().HasDefaultValueSql("NOW()");
         builder.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasColumnType("timestamp with time zone").IsRequired().HasDefaultValueSql("NOW()");
         builder.Property(x => x.UpdatedAt).ValueGeneratedOnAddOrUpdate();

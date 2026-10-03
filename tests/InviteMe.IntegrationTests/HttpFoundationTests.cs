@@ -77,6 +77,9 @@ public sealed class HttpFoundationTests(ApiFactory factory) : IClassFixture<ApiF
         using var client = factory.CreateHttpsClient();
         var document = await client.GetFromJsonAsync<JsonElement>("/openapi/v1.json");
         Assert.True(document.GetProperty("paths").TryGetProperty("/api/health/application", out _));
+        Assert.True(document.GetProperty("paths").GetProperty("/api/weddings").GetProperty("get").GetProperty("security")[0].TryGetProperty("Bearer", out _));
+        var login = document.GetProperty("paths").GetProperty("/api/auth/login").GetProperty("post");
+        Assert.True(!login.TryGetProperty("security", out var security) || security.GetArrayLength() == 0);
         Assert.Equal("bearer", document.GetProperty("components").GetProperty("securitySchemes")
             .GetProperty("Bearer").GetProperty("scheme").GetString());
     }
