@@ -9,4 +9,5 @@ public sealed class GiftMessage
     public string Visibility { get; private set; } = "PRIVATE";
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
+    public static GiftMessage Create(Guid giftId, string text) => new() { Id = Guid.NewGuid(), GiftId = giftId, Message = text.Trim() };
 }

@@ -14,4 +14,8 @@ public sealed class SeatingChangeLog
     public Guid? ToSeatId { get; private set; }
     public string Action { get; private set; } = "";
     public DateTimeOffset CreatedAt { get; private set; }
+    public static SeatingChangeLog Record(Guid weddingId, Guid participantId, Guid actor, Guid? assignmentId,
+        Guid? fromTable, Guid? fromSeat, Guid? toTable, Guid? toSeat, string action) => new()
+    { Id = Guid.NewGuid(), WeddingId = weddingId, ParticipantId = participantId, ActorId = actor, AssignmentId = assignmentId,
+        FromTableId = fromTable, FromSeatId = fromSeat, ToTableId = toTable, ToSeatId = toSeat, Action = action };
 }
