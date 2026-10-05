@@ -16,4 +16,8 @@ public sealed class WaitlistEntry
     public DateTimeOffset? CancelledAt { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
+    public static WaitlistEntry Create(Guid weddingId, Guid guestId, int slots) => new()
+    { Id = Guid.NewGuid(), WeddingId = weddingId, GuestId = guestId, RequestedSlots = slots, Reason = "CAPACITY_FULL" };
+    public void Cancel(DateTimeOffset now) { Status = "CANCELLED"; CancelledAt = now; }
+    public void Promote(DateTimeOffset now) { Status = "PROMOTED"; PromotedAt = now; }
 }

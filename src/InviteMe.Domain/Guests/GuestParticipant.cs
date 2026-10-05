@@ -11,4 +11,11 @@ public sealed class GuestParticipant
     public string? DietaryNote { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
+    public static GuestParticipant Create(Guid guestId, string name, string type) => new()
+    { Id = Guid.NewGuid(), GuestId = guestId, FullName = name.Trim(), ParticipantType = type };
+    public void SetAttendance(string status)
+    {
+        if (status is not ("PENDING" or "ATTENDING" or "DECLINED" or "WAITLISTED")) throw new ArgumentException("Invalid attendance.");
+        AttendanceStatus = status;
+    }
 }

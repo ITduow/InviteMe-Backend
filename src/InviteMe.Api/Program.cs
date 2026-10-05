@@ -38,6 +38,7 @@ app.MapAccounts();
 app.MapWorkspaces();
 app.MapInvitations();
 app.MapWeddingGuests();
+app.MapWeddingWorkflow();
 app.MapHub<WeddingHub>("/hubs/weddings", options => options.CloseOnAuthenticationExpiration = true)
     .RequireAuthorization();
 app.Run();

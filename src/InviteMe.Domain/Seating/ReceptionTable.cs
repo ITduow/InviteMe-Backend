@@ -12,4 +12,8 @@ public sealed class ReceptionTable
     public DateTimeOffset? ActivatedAt { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
+    public static ReceptionTable Create(Guid weddingId, string number, int capacity, string status) => new()
+    { Id = Guid.NewGuid(), WeddingId = weddingId, TableNumber = number.Trim(), Capacity = capacity, Status = status };
+    public void Configure(int capacity, string status) { Capacity = capacity; Status = status; Version++; }
+    public void Touch() => Version++;
 }

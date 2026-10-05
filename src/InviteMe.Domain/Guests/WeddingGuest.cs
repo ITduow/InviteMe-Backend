@@ -19,4 +19,12 @@ public sealed class WeddingGuest
     public string? Notes { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
+
+    public static WeddingGuest Create(Guid weddingId, string code, string name, string? email, string? phone,
+        string side, int expectedCompanions, int maxPlusOne) => new()
+    {
+        Id = Guid.NewGuid(), WeddingId = weddingId, GuestCode = code.Trim().ToUpperInvariant(), FullName = name.Trim(),
+        Email = string.IsNullOrWhiteSpace(email) ? null : email.Trim(), Phone = string.IsNullOrWhiteSpace(phone) ? null : phone.Trim(),
+        Side = side, ExpectedCompanionCount = expectedCompanions, AllowedPlusOne = maxPlusOne > 0, MaxPlusOne = maxPlusOne
+    };
 }

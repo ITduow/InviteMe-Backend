@@ -62,4 +62,5 @@ public sealed class Invitation
     { if (OpenedAt is not null) return; OpenedAt = now; if (Status is "PUBLISHED" or "SENT") Status = "OPENED"; Version++; }
     private void Require(string action)
     { if (!CanTransition(action)) throw new InvalidOperationException("Invalid invitation transition."); }
+    public void AdvanceRsvpVersion() => Version++;
 }
