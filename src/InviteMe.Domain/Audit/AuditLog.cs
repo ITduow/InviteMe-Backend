@@ -19,4 +19,9 @@ public sealed class AuditLog
     public static AuditLog ForInvitation(Guid weddingId, Guid invitationId, Guid? actorId, string action, string? metadata = null) => new()
     { Id = Guid.NewGuid(), WeddingId = weddingId, ActorType = actorId is null ? "SYSTEM" : "USER", ActorUserId = actorId,
       Action = action, EntityType = "invitations", EntityId = invitationId, Metadata = metadata };
+    public static AuditLog ForEntity(Guid weddingId, string entityType, Guid entityId, string action,
+        Guid? actorUserId, Guid? actorGuestId = null, string? metadata = null) => new()
+    { Id = Guid.NewGuid(), WeddingId = weddingId, EntityType = entityType, EntityId = entityId, Action = action,
+        ActorType = actorUserId is not null ? "USER" : actorGuestId is not null ? "WEDDING_GUEST" : "SYSTEM",
+        ActorUserId = actorUserId, ActorGuestId = actorGuestId, Metadata = metadata };
 }

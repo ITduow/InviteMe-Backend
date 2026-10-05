@@ -9,4 +9,11 @@ public sealed class Rsvp
     public int ConfirmedPartySize { get; private set; } = 0;
     public DateTimeOffset? SubmittedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
+    public static Rsvp Create(Guid invitationId) => new() { Id = Guid.NewGuid(), InvitationId = invitationId };
+    public void Submit(string status, int size, DateTimeOffset now)
+    {
+        if (status is not ("PENDING" or "ATTENDING" or "DECLINED") || size < 0 || (status == "ATTENDING" ? size < 1 : size != 0))
+            throw new ArgumentException("Invalid RSVP state/headcount.");
+        Status = status; ConfirmedPartySize = size; SubmittedAt = now;
+    }
 }

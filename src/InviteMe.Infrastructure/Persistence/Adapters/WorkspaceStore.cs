@@ -41,7 +41,7 @@ public sealed class WorkspaceStore(InviteMeDbContext db) : IWorkspaceStore
         if (wedding.Version != input.ExpectedVersion) throw Error(ProblemKind.Conflict, "CONCURRENCY_CONFLICT", "Data changed. Refresh and retry.");
         if (!wedding.CanEdit) throw Error(ProblemKind.BusinessRule, "WEDDING_CLOSED", "Closed weddings cannot be edited.");
         if (wedding.Slug != input.Slug) throw Error(ProblemKind.BusinessRule, "SLUG_IMMUTABLE", "Workspace slug cannot change.");
-        var confirmed = await db.WeddingHeadcounts.Where(x => x.WeddingId == id).Select(x => x.ConfirmedHeadcount).SingleOrDefaultAsync(ct);
+        var confirmed = await WorkflowPersistence.Occupied(db, id, ct);
         if (!Wedding.CanSetCapacity(input.MaxCapacity, confirmed)) throw Error(ProblemKind.BusinessRule, "CAPACITY_BELOW_CONFIRMED", "Capacity cannot be removed or reduced below confirmed attendance.");
         // Reopen all affected invitations before editing; published snapshots stay readable.
         if (await db.Invitations.AnyAsync(x => x.WeddingId == id && (x.Status == "APPROVED" || x.Status == "PUBLISHED" || x.Status == "SENT" || x.Status == "OPENED"), ct))
