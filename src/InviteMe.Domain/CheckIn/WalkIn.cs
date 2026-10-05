@@ -12,4 +12,6 @@ public sealed class WalkIn
     public Guid CreatedBy { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
+    public static WalkIn Create(Guid weddingId, string name, int partySize, Guid actor) => new()
+    { Id = Guid.NewGuid(), WeddingId = weddingId, FullName = name.Trim(), PartySize = partySize, CreatedBy = actor };
 }

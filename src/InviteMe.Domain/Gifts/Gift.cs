@@ -18,4 +18,9 @@ public sealed class Gift
     public DateTimeOffset ReceivedAt { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
+    public static Gift Create(Guid weddingId, Guid? guestId, Guid? walkinId, decimal amount, string currency,
+        string method, string key, Guid? actor) => new()
+    { Id = Guid.NewGuid(), WeddingId = weddingId, GuestId = guestId, WalkinId = walkinId, Amount = amount,
+        Currency = currency, Method = method, IdempotencyKey = key, ReceivedBy = actor, TransactionStatus = actor is null ? "PENDING" : "COMPLETED" };
+    public void Confirm(Guid actor, DateTimeOffset now) { TransactionStatus = "COMPLETED"; ReceivedBy = actor; ReceivedAt = now; }
 }

@@ -11,4 +11,6 @@ public sealed class CheckInRecord
     public string Status { get; private set; } = "CHECKED_IN";
     public DateTimeOffset CheckedInAt { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
+    public static CheckInRecord Create(Guid weddingId, Guid? participantId, Guid? walkinId, Guid actor) => new()
+    { Id = Guid.NewGuid(), WeddingId = weddingId, ParticipantId = participantId, WalkinId = walkinId, CheckedInBy = actor };
 }
