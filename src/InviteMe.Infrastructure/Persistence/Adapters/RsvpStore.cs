@@ -6,6 +6,7 @@ using InviteMe.Application.Ports.Workflows;
 using InviteMe.Domain.Guests;
 using InviteMe.Domain.Invitations;
 using InviteMe.Domain.Rsvps;
+using InviteMe.Domain.Seating;
 using InviteMe.Domain.Weddings;
 using Microsoft.EntityFrameworkCore;
 using static InviteMe.Infrastructure.Persistence.Adapters.WorkflowPersistence;
@@ -66,9 +67,17 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
             await Occupied(db, wedding.Id, ct) - participants.Count(p => p.AttendanceStatus == "ATTENDING"), selected.Count);
         var targetStatus = input.Decision == "DECLINED" ? "DECLINED" : fits ? "ATTENDING" : "WAITLISTED";
         var removed = participants.Where(p => p.AttendanceStatus == "ATTENDING" && (!selected.Contains(p) || !fits)).Select(p => p.Id).ToArray();
-        if (await db.SeatingAssignments.AnyAsync(x => removed.Contains(x.ParticipantId), ct) ||
-            await db.CheckIns.AnyAsync(x => x.WeddingId == wedding.Id && x.Status == "CHECKED_IN" && x.ParticipantId != null && removed.Contains(x.ParticipantId.Value), ct))
-            throw Rule("ATTENDANCE_LOCKED", "Unassign seated participants before changing attendance; checked-in attendance cannot be removed.");
+        if (await db.CheckIns.AnyAsync(x => x.WeddingId == wedding.Id && x.Status == "CHECKED_IN" && x.ParticipantId != null && removed.Contains(x.ParticipantId.Value), ct))
+            throw Rule("ATTENDANCE_LOCKED", "Checked-in attendance cannot be removed.");
+        // RSVP-01/GOV-04: declining or reducing the party is always accepted; seats are released and the table shows as underfilled.
+        foreach (var seat in await db.SeatingAssignments.Where(x => x.WeddingId == wedding.Id && removed.Contains(x.ParticipantId)).ToListAsync(ct))
+        {
+            var table = await db.Tables.FromSqlInterpolated($"SELECT * FROM inviteme.tables WHERE id={seat.TableId} AND wedding_id={wedding.Id} FOR UPDATE").SingleAsync(ct);
+            // A guest-initiated change has no staff actor; the owner is recorded and the audit row names the guest.
+            db.SeatingChangeLogs.Add(SeatingChangeLog.Record(wedding.Id, seat.ParticipantId, actor ?? wedding.OwnerUserId, null, seat.TableId, seat.SeatId, null, null, "UNASSIGN"));
+            db.SeatingAssignments.Remove(seat); table.Touch();
+            Audit(db, wedding.Id, "seating_assignments", seat.Id, "SEAT_RELEASED_BY_RSVP", actor, actor is null ? guest.Id : null);
+        }
         foreach (var p in participants) p.SetAttendance(input.Decision == "ATTENDING" && selected.Contains(p) ? targetStatus : "DECLINED");
         var waiting = await db.WaitlistEntries.Where(x => x.WeddingId == wedding.Id && x.GuestId == guest.Id && x.Status == "WAITING").ToListAsync(ct);
         foreach (var entry in waiting) entry.Cancel(clock.GetUtcNow());

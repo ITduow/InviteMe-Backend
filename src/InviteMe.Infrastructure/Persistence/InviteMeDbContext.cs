@@ -52,6 +52,7 @@ public sealed class InviteMeDbContext(DbContextOptions<InviteMeDbContext> option
     public DbSet<Seat> Seats => Set<Seat>();
     public DbSet<SeatingAssignment> SeatingAssignments => Set<SeatingAssignment>();
     public DbSet<SeatingChangeLog> SeatingChangeLogs => Set<SeatingChangeLog>();
+    public DbSet<TableStatusHistory> TableStatusHistory => Set<TableStatusHistory>();
     public DbSet<WalkIn> WalkIns => Set<WalkIn>();
     public DbSet<CheckInRecord> CheckIns => Set<CheckInRecord>();
     public DbSet<Gift> Gifts => Set<Gift>();

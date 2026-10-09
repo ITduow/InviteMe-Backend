@@ -7,7 +7,8 @@ public static class SchemaResources
         using var stream = typeof(SchemaResources).Assembly.GetManifestResourceStream($"InviteMe.Schema.{name}")
             ?? throw new InvalidOperationException($"Missing schema resource: {name}");
         using var reader = new StreamReader(stream);
-        return reader.ReadToEnd();
+        // Git may check SQL out with CRLF on Windows; installed function bodies must not depend on the build machine.
+        return reader.ReadToEnd().Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
     public static string BaselineForMigration() => Read("Baseline.sql")

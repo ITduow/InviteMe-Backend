@@ -30,6 +30,7 @@ internal static class ApiExtensions
         });
         services.AddExceptionHandler<ApiExceptionHandler>();
         services.AddSignalR(options => options.EnableDetailedErrors = false);
+        services.AddScoped<InviteMe.Application.Ports.Realtime.IWeddingChangePublisher, InviteMe.Api.Hubs.SignalRWeddingChangePublisher>();
         services.AddOpenApi(options =>
         {
             options.AddDocumentTransformer((document, _, _) =>

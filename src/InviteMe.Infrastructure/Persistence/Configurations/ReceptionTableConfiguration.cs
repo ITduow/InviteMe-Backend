@@ -15,6 +15,8 @@ public sealed class ReceptionTableConfiguration : IEntityTypeConfiguration<Recep
             table.HasCheckConstraint("ck_tables_capacity", "capacity > 0");
             table.HasCheckConstraint("ck_tables_status", "status IN ('PLANNED', 'ACTIVE', 'BACKUP', 'INACTIVE')");
             table.HasCheckConstraint("ck_tables_version", "version >= 1");
+            table.HasCheckConstraint("ck_tables_kind", "table_kind IN ('PRIMARY', 'BACKUP')");
+            table.HasCheckConstraint("ck_tables_kind_status", "(table_kind = 'PRIMARY' AND status IN ('PLANNED', 'ACTIVE', 'INACTIVE')) OR (table_kind = 'BACKUP' AND status IN ('BACKUP', 'ACTIVE', 'INACTIVE'))");
         });
         builder.HasKey(x => x.Id).HasName("tables_pkey");
         builder.Property(x => x.Id).HasColumnName("id").HasColumnType("uuid").IsRequired().HasDefaultValueSql("gen_random_uuid()");
@@ -22,6 +24,7 @@ public sealed class ReceptionTableConfiguration : IEntityTypeConfiguration<Recep
         builder.Property(x => x.TableNumber).HasColumnName("table_number").HasColumnType("varchar(100)").HasMaxLength(100).IsRequired();
         builder.Property(x => x.Capacity).HasColumnName("capacity").HasColumnType("integer").IsRequired();
         builder.Property(x => x.Status).HasColumnName("status").HasColumnType("varchar(20)").HasMaxLength(20).IsRequired().HasDefaultValue("PLANNED");
+        builder.Property(x => x.TableKind).HasColumnName("table_kind").HasColumnType("varchar(20)").HasMaxLength(20).IsRequired().HasDefaultValue("PRIMARY");
         builder.Property(x => x.Version).HasColumnName("version").HasColumnType("integer").IsRequired().HasDefaultValue(1).IsConcurrencyToken();
         builder.Property(x => x.ActivatedAt).HasColumnName("activated_at").HasColumnType("timestamp with time zone");
         builder.Property(x => x.ActivatedAt).ValueGeneratedOnAddOrUpdate();
