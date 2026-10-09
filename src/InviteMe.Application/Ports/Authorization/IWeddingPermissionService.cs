@@ -4,5 +4,13 @@ namespace InviteMe.Application.Ports.Authorization;
 
 public interface IWeddingPermissionService
 {
-    Task RequireAsync(Guid weddingId, WeddingPermission permission, CancellationToken cancellationToken);
+    Task RequireAsync(
+        Guid weddingId,
+        WeddingPermission permission,
+        CancellationToken cancellationToken);
+
+    Task<bool> HasPermissionAsync(
+        Guid weddingId,
+        WeddingPermission permission,
+        CancellationToken cancellationToken);
 }
