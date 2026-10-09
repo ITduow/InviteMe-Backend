@@ -46,6 +46,9 @@ internal static class WorkflowPersistence
     public static async Task<long> Occupied(InviteMeDbContext db, Guid id, CancellationToken ct) =>
         await db.WeddingHeadcounts.Where(x => x.WeddingId == id).Select(x => x.ConfirmedHeadcount).SingleOrDefaultAsync(ct)
         + await WalkinHeadcount(db, id, ct);
+    // Seated participants plus seated walk-in parties; the same function guards both seating triggers.
+    public static async Task<int> OccupiedSeats(InviteMeDbContext db, Guid tableId, Guid? exceptAssignment, CancellationToken ct) =>
+        (await db.Database.SqlQuery<int>($"SELECT inviteme.table_occupied_seats({tableId}, {exceptAssignment}::uuid, NULL) AS \"Value\"").ToListAsync(ct)).Single();
     public static void Audit(InviteMeDbContext db, Guid weddingId, string type, Guid id, string action, Guid? actor, Guid? guest = null) =>
         db.AuditLogs.Add(AuditLog.ForEntity(weddingId, type, id, action, actor, guest));
 }

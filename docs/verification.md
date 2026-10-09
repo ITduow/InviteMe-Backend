@@ -1,5 +1,16 @@
 # Foundation verification
 
+## Seating lifecycle and reception extensions — 2026-10-07
+
+- Builds on the PR #4 seating/reception workflow without changing its routes or request contracts; new request fields are optional.
+- Migration `AddSeatingCheckInWorkflows` (`SeatingCheckInWorkflows.sql`): `tables.table_kind` (backfilled from BACKUP status), venue table limits on `wedding_settings`, `table_status_history`, check-in method/void columns, unique check-in indexes limited to effective rows, walk-in side/related guest/table, `table_occupied_seats()` shared by both seating triggers and `v_table_occupancy`, and the `unaccent` extension. Only ACTIVE tables seat people (GOV-01 R1-08).
+- Fixed: a voided check-in made the participant impossible to check in again (unique index and `SingleOrDefault` both counted the VOID row).
+- `SchemaResources.Read` normalizes CRLF to LF; before this, Windows checkouts failed `FreshMigrationsMatchAuthoritativeV2BusinessSchema`.
+- Against disposable PostgreSQL 17: 56 unit + 62 integration passed, zero skipped (118). Without a database: 56 unit + 19 integration passed, 43 PostgreSQL tests skipped. Build zero warnings/errors; EF reports no pending model changes. Regenerated `artifacts/migrations.sql` applied twice to a fresh database (BOM stripped for psql) with seven history rows.
+- On-site override admits DECLINED/PENDING/WAITLISTED participants with a matching reason, audit action CHECKED_IN_OVERRIDE and the walk-in capacity rule; RSVP status/history stay unchanged (RSVP-01 attendance layer). RSVP capacity does not yet count override arrivals.
+- Arrival policy: walk-ins and on-site overrides beyond wedding capacity are admitted with `overCapacity: true` unless `wedding_settings.block_arrivals_over_capacity` is set (strict venues). Declining or reducing an RSVP now releases the seat (UNASSIGN log, audit SEAT_RELEASED_BY_RSVP); checked-in attendance still returns ATTENDANCE_LOCKED. Two PR #4 tests were adjusted: the walk-in capacity test now opts into strict mode, and the seated-decline 422 assertion was removed.
+- Not implemented: check-in time window, scan rate limiting, realtime membership revocation.
+
 ## Architecture diagram alignment — 2026-10-02
 
 - Contracts moved to Application/Ports; WeddingAccessReader moved to Infrastructure/Persistence/Adapters. DI, hub, authentication and tests use the new namespaces.

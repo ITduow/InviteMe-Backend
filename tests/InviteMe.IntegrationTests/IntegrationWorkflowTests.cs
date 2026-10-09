@@ -145,7 +145,7 @@ public sealed class IntegrationWorkflowTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await owner.PutAsJsonAsync(root + $"/tables/{table.Id}", new UpdateTable(table.Version, 1, "INACTIVE"))).StatusCode);
         var invitation = assignment.ParticipantId == aid ? pa : pb;
         var state = (await owner.GetFromJsonAsync<RsvpDto>(root + $"/invitations/{invitation.Invitation.Id}/rsvp"))!;
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await owner.PutAsJsonAsync(root + $"/invitations/{state.InvitationId}/rsvp", new SubmitRsvp(state.Version, "DECLINED", []))).StatusCode);
+        // A seated guest may decline (their seat is released); see SeatingCheckInApiTests. Checked-in attendance stays locked below.
         var second = await Read<TableDto>(await owner.PostAsJsonAsync(root + "/tables", new CreateTable("T2", 2, "ACTIVE")));
         assignment = await Read<AssignmentDto>(await owner.PutAsJsonAsync(root + $"/seating/{assignment.ParticipantId}", new AssignSeat(second.Id, second.Seats[0].Id, second.Version, assignment.Version)));
         Assert.Equal(2, assignment.Version);
@@ -162,6 +162,8 @@ public sealed class IntegrationWorkflowTests
     public Task WalkinsReserveCapacityOnlyOnCheckInAndProtectWorkspaceCapacity() => WithApi(async (db, factory, owner) =>
     {
         var w = await Wedding(owner, "walkins", 2); var root = Root(w);
+        // Strict venue: arrivals beyond capacity are rejected (the default only warns).
+        await Read<SeatingSettingsDto>(await owner.PutAsJsonAsync(root + "/seating/settings", new SeatingSettings(null, 0, 10, true)));
         var walk = await Read<WalkinDto>(await owner.PostAsJsonAsync(root + "/walk-ins", new WalkinInput("Walk in", 2)));
         Assert.Equal(0, await db.WeddingGuests.CountAsync());
         await Read<CheckInDto>(await owner.PostAsJsonAsync(root + "/check-ins", new CheckInInput(WalkinId: walk.Id)));
