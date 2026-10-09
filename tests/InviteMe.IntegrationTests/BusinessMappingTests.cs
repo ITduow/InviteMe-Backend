@@ -35,7 +35,7 @@ public sealed class BusinessMappingTests
             while (await reader.ReadAsync()) indexes[reader.GetString(0) + "." + reader.GetString(1)] = reader.GetString(2);
 
         var tables = db.Model.GetEntityTypes().Where(e => e.GetTableName() is not null).ToList();
-        Assert.Equal(41, tables.Count); // 37 business tables + 4 Identity support tables.
+        Assert.Equal(42, tables.Count); // 38 business tables (incl. table_status_history) + 4 Identity support tables.
         foreach (var entity in db.Model.GetEntityTypes())
         {
             var view = entity.GetViewName();

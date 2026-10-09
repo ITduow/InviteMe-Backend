@@ -28,7 +28,8 @@ public sealed class SchemaV2MigrationTests
 
         await db.Database.ExecuteSqlRawAsync("UPDATE inviteme.tables SET status = 'ACTIVE'");
         var activated = await Scalar<DateTime>(db, "SELECT activated_at FROM inviteme.tables");
-        await db.Database.ExecuteSqlRawAsync("UPDATE inviteme.tables SET status = 'BACKUP'; UPDATE inviteme.tables SET status = 'ACTIVE'");
+        // Only a BACKUP-kind table may return to BACKUP status (ck_tables_kind_status).
+        await db.Database.ExecuteSqlRawAsync("UPDATE inviteme.tables SET table_kind = 'BACKUP'; UPDATE inviteme.tables SET status = 'BACKUP'; UPDATE inviteme.tables SET status = 'ACTIVE'");
         Assert.Equal(activated, await Scalar<DateTime>(db, "SELECT activated_at FROM inviteme.tables"));
         var error = await Assert.ThrowsAsync<PostgresException>(() => db.Database.ExecuteSqlRawAsync("UPDATE inviteme.rsvps SET status = 'DECLINED'"));
         Assert.Equal("23514", error.SqlState);
@@ -104,6 +105,7 @@ public sealed class SchemaV2MigrationTests
             await ExecuteScript(db, "IdentitySupport.sql");
             await ExecuteScript(db, "WorkspaceSupport.sql");
             await ExecuteScript(db, "InvitationLifecycleSupport.sql");
+            await ExecuteScript(db, "SeatingCheckInWorkflows.sql");
             await db.Database.ExecuteSqlRawAsync("SET search_path TO inviteme, pg_temp");
             expected = await Scalar<string>(db, SchemaSignature);
         });

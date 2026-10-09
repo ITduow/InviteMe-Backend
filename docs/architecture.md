@@ -75,9 +75,9 @@ Do not enable automatic provider retries around arbitrary explicit transactions.
 
 Hub group names are server-derived and joins require a fresh schema-backed authorization query. A caller cannot supply arbitrary group names. Only an active owner or active co-host with `WEDDING_VIEW` can join.
 
-Publish only after commit. Future wedding-group messages should be minimal invalidations (event type, entity ID and version), with sensitive data fetched under the relevant permission. WEDDING_VIEW must not imply GIFT_VIEW, GUEST_VIEW or CHECKIN_MANAGE.
+Publish only after commit. Seating and reception mutations publish `weddingChanged { type, entityId, version }` through `IWeddingChangePublisher` after the store commits. Wedding-group messages must stay minimal invalidations (event type, entity ID and version), with sensitive data fetched under the relevant permission. WEDDING_VIEW must not imply GIFT_VIEW, GUEST_VIEW or CHECKIN_MANAGE.
 
-Groups are not a permanent authorization cache. Before introducing broadcasts, implement membership-revocation/disconnect behavior or per-delivery authorization, including reconnect tests. Token expiration closes connections but does not revoke permissions immediately. Reconnect must rejoin through authorization. Clients refetch state after reconnect or missed messages.
+Groups are not a permanent authorization cache. Membership-revocation/disconnect behavior or per-delivery authorization, including reconnect tests, is still outstanding: current payloads carry no guest data, but a revoked co-host keeps receiving invalidations until reconnect. Token expiration closes connections but does not revoke permissions immediately. Reconnect must rejoin through authorization. Clients refetch state after reconnect or missed messages.
 
 SignalR failure cannot roll back an already committed mutation. Initially clients recover by refetching; if guaranteed dispatch becomes necessary, propose a transactional outbox. PostgreSQL remains authoritative. Redis is not required for one application instance.
 
