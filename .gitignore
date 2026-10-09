@@ -8,4 +8,5 @@
 TestResults/
 .env
 **/appsettings.Local.json
+**/appsettings.Development.json
 *.user
