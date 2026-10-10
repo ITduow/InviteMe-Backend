@@ -112,7 +112,7 @@ public sealed class SchemaV2MigrationTests
             await db.Database.MigrateAsync();
             await db.Database.OpenConnectionAsync();
             await db.Database.ExecuteSqlRawAsync("SET search_path TO inviteme, pg_temp");
-            Assert.Equal(expected, await Scalar<string>(db, SchemaSignature));
+            Assert.Equal(expected?.Replace("\r\n", "\n"), (await Scalar<string>(db, SchemaSignature))?.Replace("\r\n", "\n"));
         });
     }
 
