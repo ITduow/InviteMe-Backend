@@ -1,3 +1,4 @@
+using System.Text.Json;
 using InviteMe.Application.Common.Errors;
 using InviteMe.Application.Features.Weddings.CoHosts;
 using InviteMe.Application.Ports.Weddings;
@@ -9,6 +10,12 @@ namespace InviteMe.Infrastructure.Persistence.Adapters;
 
 public sealed class CoHostStore(InviteMeDbContext db) : ICoHostStore
 {
+    private static readonly JsonSerializerOptions AuditJson = new(JsonSerializerDefaults.Web);
+
+    private sealed record AuditState(string Status, IReadOnlyList<string> Permissions);
+
+    private sealed record GrantChange(IReadOnlyList<string> Before, IReadOnlyList<string> After);
+
     public async Task<Guid?> GetWeddingOwnerIdAsync(Guid weddingId, CancellationToken ct) =>
         await db.Weddings.AsNoTracking()
             .Where(x => x.Id == weddingId)
@@ -100,6 +107,7 @@ public sealed class CoHostStore(InviteMeDbContext db) : ICoHostStore
 
         WeddingMember member;
         var isReactivation = false;
+        var previousStatus = existing?.Status;
 
         if (existing is not null)
         {
@@ -116,9 +124,11 @@ public sealed class CoHostStore(InviteMeDbContext db) : ICoHostStore
             db.WeddingMembers.Add(member);
         }
 
-        await ApplyGrantsAsync(member.Id, permissions, ct);
+        var change = await ApplyGrantsAsync(member.Id, permissions, ct);
 
-        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "wedding_members", member.Id, isReactivation ? "COHOST_REACTIVATED" : "COHOST_ADDED", actorId));
+        var beforeState = isReactivation ? new AuditState(previousStatus!, change.Before) : null;
+        var metadata = AuditMetadata(targetUserId, beforeState, new AuditState("ACTIVE", change.After));
+        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "wedding_members", member.Id, isReactivation ? "COHOST_REACTIVATED" : "COHOST_ADDED", actorId, metadata: metadata));
 
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
@@ -136,9 +146,10 @@ public sealed class CoHostStore(InviteMeDbContext db) : ICoHostStore
         if (member.Status != "ACTIVE")
             throw new ApplicationProblemException(ProblemKind.Conflict, "COHOST_NOT_ACTIVE", "Cannot update permissions for an inactive co-host.");
 
-        await ApplyGrantsAsync(member.Id, permissions, ct);
+        var change = await ApplyGrantsAsync(member.Id, permissions, ct);
 
-        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "wedding_members", member.Id, "COHOST_PERMISSIONS_UPDATED", actorId));
+        var metadata = AuditMetadata(coHostUserId, new AuditState(member.Status, change.Before), new AuditState(member.Status, change.After));
+        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "wedding_members", member.Id, "COHOST_PERMISSIONS_UPDATED", actorId, metadata: metadata));
 
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
@@ -156,12 +167,16 @@ public sealed class CoHostStore(InviteMeDbContext db) : ICoHostStore
         if (member.Status == "REVOKED")
             return;
 
+        var previousStatus = member.Status;
+        var previousPermissions = await GrantCodesAsync(member.Id, ct);
+
         member.Revoke();
 
         var grants = await db.WeddingMemberPermissions.Where(x => x.MemberId == member.Id).ToListAsync(ct);
         db.WeddingMemberPermissions.RemoveRange(grants);
 
-        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "wedding_members", member.Id, "COHOST_REVOKED", actorId));
+        var metadata = AuditMetadata(coHostUserId, new AuditState(previousStatus, previousPermissions), new AuditState(member.Status, []));
+        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "wedding_members", member.Id, "COHOST_REVOKED", actorId, metadata: metadata));
 
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
@@ -172,8 +187,24 @@ public sealed class CoHostStore(InviteMeDbContext db) : ICoHostStore
             .FromSqlInterpolated($"SELECT * FROM inviteme.wedding_members WHERE wedding_id={weddingId} AND user_id={userId} AND member_role='CO_HOST' FOR UPDATE")
             .SingleOrDefaultAsync(ct);
 
-    private async Task ApplyGrantsAsync(Guid memberId, IReadOnlyList<WeddingPermission> permissions, CancellationToken ct)
+    private static string AuditMetadata(Guid targetUserId, AuditState? before, AuditState after) =>
+        JsonSerializer.Serialize(new { targetUserId, before, after }, AuditJson);
+
+    private async Task<IReadOnlyList<string>> GrantCodesAsync(Guid memberId, CancellationToken ct)
     {
+        var codes = await (
+            from g in db.WeddingMemberPermissions.AsNoTracking()
+            join p in db.Permissions.AsNoTracking() on g.PermissionId equals p.Id
+            where g.MemberId == memberId && p.Scope == "WEDDING"
+            select p.Code
+        ).ToListAsync(ct);
+
+        return codes.Order(StringComparer.Ordinal).ToList();
+    }
+
+    private async Task<GrantChange> ApplyGrantsAsync(Guid memberId, IReadOnlyList<WeddingPermission> permissions, CancellationToken ct)
+    {
+        var before = await GrantCodesAsync(memberId, ct);
         var permCodes = permissions.Select(x => x.ToString()).ToHashSet(StringComparer.Ordinal);
         var matchedPermissions = await db.Permissions
             .Where(x => x.Scope == "WEDDING" && permCodes.Contains(x.Code))
@@ -191,5 +222,7 @@ public sealed class CoHostStore(InviteMeDbContext db) : ICoHostStore
         {
             db.WeddingMemberPermissions.Add(WeddingMemberPermission.Create(memberId, p.Id));
         }
+
+        return new GrantChange(before, matchedPermissions.Select(x => x.Code).Order(StringComparer.Ordinal).ToList());
     }
 }
