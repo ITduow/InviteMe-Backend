@@ -96,8 +96,7 @@ public sealed class CoHostStore(InviteMeDbContext db) : ICoHostStore
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
-        var existing = await db.WeddingMembers
-            .SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.UserId == targetUserId, ct);
+        var existing = await FindMemberForUpdateAsync(weddingId, targetUserId, ct);
 
         WeddingMember member;
         var isReactivation = false;
@@ -110,9 +109,6 @@ public sealed class CoHostStore(InviteMeDbContext db) : ICoHostStore
             existing.Activate();
             member = existing;
             isReactivation = true;
-
-            var oldGrants = await db.WeddingMemberPermissions.Where(x => x.MemberId == member.Id).ToListAsync(ct);
-            db.WeddingMemberPermissions.RemoveRange(oldGrants);
         }
         else
         {
@@ -120,15 +116,7 @@ public sealed class CoHostStore(InviteMeDbContext db) : ICoHostStore
             db.WeddingMembers.Add(member);
         }
 
-        var permCodes = permissions.Select(x => x.ToString()).ToHashSet(StringComparer.Ordinal);
-        var matchedPermissions = await db.Permissions
-            .Where(x => x.Scope == "WEDDING" && permCodes.Contains(x.Code))
-            .ToListAsync(ct);
-
-        foreach (var p in matchedPermissions)
-        {
-            db.WeddingMemberPermissions.Add(WeddingMemberPermission.Create(member.Id, p.Id));
-        }
+        await ApplyGrantsAsync(member.Id, permissions, ct);
 
         db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "wedding_members", member.Id, isReactivation ? "COHOST_REACTIVATED" : "COHOST_ADDED", actorId));
 
@@ -142,25 +130,13 @@ public sealed class CoHostStore(InviteMeDbContext db) : ICoHostStore
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
-        var member = await db.WeddingMembers
-            .SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.UserId == coHostUserId && x.MemberRole == "CO_HOST", ct)
+        var member = await FindMemberForUpdateAsync(weddingId, coHostUserId, ct)
             ?? throw new ApplicationProblemException(ProblemKind.NotFound, "COHOST_NOT_FOUND", "Co-host not found.");
 
         if (member.Status != "ACTIVE")
             throw new ApplicationProblemException(ProblemKind.Conflict, "COHOST_NOT_ACTIVE", "Cannot update permissions for an inactive co-host.");
 
-        var currentGrants = await db.WeddingMemberPermissions.Where(x => x.MemberId == member.Id).ToListAsync(ct);
-        db.WeddingMemberPermissions.RemoveRange(currentGrants);
-
-        var permCodes = permissions.Select(x => x.ToString()).ToHashSet(StringComparer.Ordinal);
-        var matchedPermissions = await db.Permissions
-            .Where(x => x.Scope == "WEDDING" && permCodes.Contains(x.Code))
-            .ToListAsync(ct);
-
-        foreach (var p in matchedPermissions)
-        {
-            db.WeddingMemberPermissions.Add(WeddingMemberPermission.Create(member.Id, p.Id));
-        }
+        await ApplyGrantsAsync(member.Id, permissions, ct);
 
         db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "wedding_members", member.Id, "COHOST_PERMISSIONS_UPDATED", actorId));
 
@@ -174,9 +150,11 @@ public sealed class CoHostStore(InviteMeDbContext db) : ICoHostStore
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
-        var member = await db.WeddingMembers
-            .SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.UserId == coHostUserId && x.MemberRole == "CO_HOST", ct)
+        var member = await FindMemberForUpdateAsync(weddingId, coHostUserId, ct)
             ?? throw new ApplicationProblemException(ProblemKind.NotFound, "COHOST_NOT_FOUND", "Co-host not found.");
+
+        if (member.Status == "REVOKED")
+            return;
 
         member.Revoke();
 
@@ -187,5 +165,31 @@ public sealed class CoHostStore(InviteMeDbContext db) : ICoHostStore
 
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+    }
+
+    private Task<WeddingMember?> FindMemberForUpdateAsync(Guid weddingId, Guid userId, CancellationToken ct) =>
+        db.WeddingMembers
+            .FromSqlInterpolated($"SELECT * FROM inviteme.wedding_members WHERE wedding_id={weddingId} AND user_id={userId} AND member_role='CO_HOST' FOR UPDATE")
+            .SingleOrDefaultAsync(ct);
+
+    private async Task ApplyGrantsAsync(Guid memberId, IReadOnlyList<WeddingPermission> permissions, CancellationToken ct)
+    {
+        var permCodes = permissions.Select(x => x.ToString()).ToHashSet(StringComparer.Ordinal);
+        var matchedPermissions = await db.Permissions
+            .Where(x => x.Scope == "WEDDING" && permCodes.Contains(x.Code))
+            .ToListAsync(ct);
+
+        if (matchedPermissions.Count != permCodes.Count)
+            throw new ApplicationProblemException(ProblemKind.BusinessRule, "PERMISSION_UNAVAILABLE", "One or more requested permissions are not available.");
+
+        var wantedIds = matchedPermissions.Select(x => x.Id).ToHashSet();
+        var currentGrants = await db.WeddingMemberPermissions.Where(x => x.MemberId == memberId).ToListAsync(ct);
+        db.WeddingMemberPermissions.RemoveRange(currentGrants.Where(x => !wantedIds.Contains(x.PermissionId)));
+
+        var keptIds = currentGrants.Select(x => x.PermissionId).ToHashSet();
+        foreach (var p in matchedPermissions.Where(x => !keptIds.Contains(x.Id)))
+        {
+            db.WeddingMemberPermissions.Add(WeddingMemberPermission.Create(memberId, p.Id));
+        }
     }
 }

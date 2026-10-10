@@ -137,7 +137,7 @@ public sealed class CoHostPermissionTests
         Assert.Contains("ANALYTICS_VIEW", reactivated.Permissions);
     });
 
-    private static Task WithApi(Func<InviteMeDbContext, WorkspaceApiFactory, Task> action) =>
+    internal static Task WithApi(Func<InviteMeDbContext, WorkspaceApiFactory, Task> action) =>
         SchemaV2MigrationTests.InDatabase(async db =>
         {
             await db.Database.MigrateAsync();
@@ -145,7 +145,7 @@ public sealed class CoHostPermissionTests
             await action(db, factory);
         });
 
-    private static async Task<WorkspaceDto> CreateWedding(HttpClient client, string slug)
+    internal static async Task<WorkspaceDto> CreateWedding(HttpClient client, string slug)
     {
         var input = new WorkspaceInput("CoHost Test Wedding", slug, 100, "Asia/Ho_Chi_Minh");
         var response = await client.PostAsJsonAsync("/api/weddings", input);
@@ -153,7 +153,7 @@ public sealed class CoHostPermissionTests
         return (await response.Content.ReadFromJsonAsync<WorkspaceDto>())!;
     }
 
-    private static async Task<HttpClient> SignIn(WorkspaceApiFactory factory, string name)
+    internal static async Task<HttpClient> SignIn(WorkspaceApiFactory factory, string name)
     {
         var client = factory.CreateHttpsClient();
         var email = $"{name}@example.test";

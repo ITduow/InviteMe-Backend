@@ -21,21 +21,32 @@ public sealed record AddCoHostInput(string Email, IReadOnlyList<string> Permissi
 
 public sealed record UpdateCoHostPermissionsInput(IReadOnlyList<string> Permissions);
 
+internal static class CoHostPermissionCodes
+{
+    private static readonly IReadOnlyDictionary<string, WeddingPermission> Known =
+        Enum.GetValues<WeddingPermission>().ToDictionary(x => x.ToString(), StringComparer.Ordinal);
+
+    public static bool TryParse(string? code, out WeddingPermission permission)
+    {
+        permission = default;
+        return code is not null && Known.TryGetValue(code, out permission);
+    }
+
+    public static bool IsKnown(string? code) => TryParse(code, out _);
+
+    public static bool HasNoDuplicates(IReadOnlyList<string>? codes) =>
+        codes is null || codes.Distinct(StringComparer.OrdinalIgnoreCase).Count() == codes.Count;
+}
+
 public sealed class AddCoHostInputValidator : AbstractValidator<AddCoHostInput>
 {
     public AddCoHostInputValidator()
     {
         RuleFor(x => x.Email).NotEmpty().EmailAddress().MaximumLength(256);
         RuleFor(x => x.Permissions).NotNull();
-        RuleForEach(x => x.Permissions).NotEmpty().Must(BeValidPermissionCode).WithMessage("Invalid permission code.");
-        RuleFor(x => x.Permissions).Must(HaveNoDuplicates).WithMessage("Permissions list cannot have duplicates.");
+        RuleForEach(x => x.Permissions).Must(CoHostPermissionCodes.IsKnown).WithMessage("Invalid permission code.");
+        RuleFor(x => x.Permissions).Must(CoHostPermissionCodes.HasNoDuplicates).WithMessage("Permissions list cannot have duplicates.");
     }
-
-    private static bool BeValidPermissionCode(string code) =>
-        Enum.TryParse<WeddingPermission>(code, false, out _);
-
-    private static bool HaveNoDuplicates(IReadOnlyList<string>? permissions) =>
-        permissions is null || permissions.Distinct(StringComparer.OrdinalIgnoreCase).Count() == permissions.Count;
 }
 
 public sealed class UpdateCoHostPermissionsInputValidator : AbstractValidator<UpdateCoHostPermissionsInput>
@@ -43,15 +54,9 @@ public sealed class UpdateCoHostPermissionsInputValidator : AbstractValidator<Up
     public UpdateCoHostPermissionsInputValidator()
     {
         RuleFor(x => x.Permissions).NotNull();
-        RuleForEach(x => x.Permissions).NotEmpty().Must(BeValidPermissionCode).WithMessage("Invalid permission code.");
-        RuleFor(x => x.Permissions).Must(HaveNoDuplicates).WithMessage("Permissions list cannot have duplicates.");
+        RuleForEach(x => x.Permissions).Must(CoHostPermissionCodes.IsKnown).WithMessage("Invalid permission code.");
+        RuleFor(x => x.Permissions).Must(CoHostPermissionCodes.HasNoDuplicates).WithMessage("Permissions list cannot have duplicates.");
     }
-
-    private static bool BeValidPermissionCode(string code) =>
-        Enum.TryParse<WeddingPermission>(code, false, out _);
-
-    private static bool HaveNoDuplicates(IReadOnlyList<string>? permissions) =>
-        permissions is null || permissions.Distinct(StringComparer.OrdinalIgnoreCase).Count() == permissions.Count;
 }
 
 public sealed class CoHostHandler(
@@ -78,8 +83,8 @@ public sealed class CoHostHandler(
     public async Task<CoHostDto> AddAsync(Guid weddingId, AddCoHostInput input, CancellationToken ct)
     {
         var callerId = RequireCallerId();
-        await addValidation.ValidateAsync(input, ct);
         var ownerId = await EnsureOwnerAsync(weddingId, callerId, ct);
+        await addValidation.ValidateAsync(input, ct);
 
         var targetUserId = await store.FindUserIdByEmailAsync(input.Email.Trim(), ct)
             ?? throw new ApplicationProblemException(ProblemKind.NotFound, "USER_NOT_FOUND", "No user found with the provided email.");
@@ -94,8 +99,8 @@ public sealed class CoHostHandler(
     public async Task<CoHostDto> UpdatePermissionsAsync(Guid weddingId, Guid coHostUserId, UpdateCoHostPermissionsInput input, CancellationToken ct)
     {
         var callerId = RequireCallerId();
-        await updateValidation.ValidateAsync(input, ct);
         await EnsureOwnerAsync(weddingId, callerId, ct);
+        await updateValidation.ValidateAsync(input, ct);
 
         var permissions = ParsePermissions(input.Permissions);
         return await store.UpdatePermissionsAsync(weddingId, coHostUserId, permissions, callerId, ct);
@@ -113,13 +118,11 @@ public sealed class CoHostHandler(
 
     private async Task<Guid> EnsureOwnerAsync(Guid weddingId, Guid callerId, CancellationToken ct)
     {
-        var ownerId = await store.GetWeddingOwnerIdAsync(weddingId, ct)
-            ?? throw new ApplicationProblemException(ProblemKind.NotFound, "WEDDING_NOT_FOUND", "Wedding not found.");
-
+        var ownerId = await store.GetWeddingOwnerIdAsync(weddingId, ct);
         if (ownerId != callerId)
             throw new ApplicationProblemException(ProblemKind.Forbidden, "OWNER_ONLY", "Only the wedding owner can manage co-hosts.");
 
-        return ownerId;
+        return callerId;
     }
 
     private static IReadOnlyList<WeddingPermission> ParsePermissions(IReadOnlyList<string> permissionCodes)
@@ -127,8 +130,8 @@ public sealed class CoHostHandler(
         var list = new List<WeddingPermission>(permissionCodes.Count);
         foreach (var code in permissionCodes)
         {
-            if (Enum.TryParse<WeddingPermission>(code, false, out var perm))
-                list.Add(perm);
+            if (CoHostPermissionCodes.TryParse(code, out var permission))
+                list.Add(permission);
         }
         return list;
     }
