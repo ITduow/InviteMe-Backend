@@ -1565,6 +1565,16 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnName("id")
                         .HasDefaultValueSql("gen_random_uuid()");
 
+                    b.Property<Guid?>("ActorGuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("actor_guest_id");
+
+                    b.Property<string>("ActorType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("actor_type");
+
                     b.Property<DateTimeOffset>("ChangedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
@@ -1616,11 +1626,15 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "ChangedAt" }, "ix_rsvp_history_changed_at")
                         .HasDatabaseName("ix_rsvp_history_changed_at");
 
-                    b.HasIndex(new[] { "RsvpId" }, "ix_rsvp_history_rsvp_id")
-                        .HasDatabaseName("ix_rsvp_history_rsvp_id");
+                    b.HasIndex(new[] { "RsvpId", "ChangedAt" }, "ix_rsvp_history_rsvp_changed_at")
+                        .HasDatabaseName("ix_rsvp_history_rsvp_changed_at");
 
                     b.ToTable("rsvp_history", "inviteme", t =>
                         {
+                            t.HasCheckConstraint("ck_rsvp_history_actor_shape", "(actor_type = 'USER' AND changed_by IS NOT NULL AND actor_guest_id IS NULL) OR (actor_type = 'WEDDING_GUEST' AND actor_guest_id IS NOT NULL AND changed_by IS NULL) OR (actor_type = 'SYSTEM' AND changed_by IS NULL AND actor_guest_id IS NULL)");
+
+                            t.HasCheckConstraint("ck_rsvp_history_actor_type", "actor_type IN ('USER', 'WEDDING_GUEST', 'SYSTEM')");
+
                             t.HasCheckConstraint("ck_rsvp_history_confirmed_party_sizes", "(old_confirmed_party_size IS NULL OR old_confirmed_party_size >= 0) AND new_confirmed_party_size >= 0");
 
                             t.HasCheckConstraint("ck_rsvp_history_new_status", "new_status IN ('PENDING', 'ATTENDING', 'DECLINED')");
@@ -3342,16 +3356,22 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("InviteMe.Domain.Rsvps.RsvpHistory", b =>
                 {
+                    b.HasOne("InviteMe.Domain.Guests.WeddingGuest", null)
+                        .WithMany()
+                        .HasForeignKey("ActorGuestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_rsvp_history_actor_guest");
+
                     b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("ChangedBy")
-                        .OnDelete(DeleteBehavior.SetNull)
+                        .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_rsvp_history_changed_by");
 
                     b.HasOne("InviteMe.Domain.Rsvps.Rsvp", null)
                         .WithMany()
                         .HasForeignKey("RsvpId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_rsvp_history_rsvp");
                 });

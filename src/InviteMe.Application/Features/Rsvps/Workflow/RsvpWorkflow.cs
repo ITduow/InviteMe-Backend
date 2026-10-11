@@ -13,8 +13,15 @@ namespace InviteMe.Application.Features.Rsvps.Workflow;
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SubmitRsvp(int ExpectedVersion, string Decision, IReadOnlyList<Guid> ParticipantIds,
     IReadOnlyList<string>? PlusOnes = null);
+/// <summary>Current RSVP state. Status is PENDING with RsvpId null until the Wedding-Guest first submits.</summary>
 public sealed record RsvpDto(Guid InvitationId, Guid GuestId, int Version, Guid? RsvpId, string Status,
-    int ConfirmedPartySize, int WaitlistedPartySize, IReadOnlyList<ParticipantDto> Participants);
+    int ConfirmedPartySize, int WaitlistedPartySize, IReadOnlyList<ParticipantDto> Participants,
+    DateTimeOffset? SubmittedAt = null, DateTimeOffset? UpdatedAt = null);
+/// <summary>
+/// RSVP-02 write semantics. Create = first submission only (409 RSVP_ALREADY_EXISTS otherwise);
+/// Replace = update an existing RSVP (404 RSVP_NOT_FOUND otherwise); Upsert = Host/Co-host management route.
+/// </summary>
+public enum RsvpWriteMode { Create, Replace, Upsert }
 public sealed record WaitlistDto(Guid Id, Guid GuestId, int RequestedSlots, string Status, DateTimeOffset RequestedAt);
 public sealed class SubmitRsvpValidator : AbstractValidator<SubmitRsvp>
 {
@@ -34,8 +41,10 @@ public sealed class RsvpHandler(IRsvpStore store, IWeddingPermissionService perm
     RequestValidation<SubmitRsvp> validation, RequestValidation<PageRequest> pageValidation)
 {
     public Task<RsvpDto> PublicGetAsync(string token, CancellationToken ct) => store.PublicGetAsync(token, ct);
-    public async Task<RsvpDto> PublicSubmitAsync(string token, SubmitRsvp input, CancellationToken ct)
-    { await validation.ValidateAsync(input, ct); return await store.PublicSubmitAsync(token, input, ct); }
+    public async Task<RsvpDto> PublicCreateAsync(string token, SubmitRsvp input, CancellationToken ct)
+    { await validation.ValidateAsync(input, ct); return await store.PublicSubmitAsync(token, input, RsvpWriteMode.Create, ct); }
+    public async Task<RsvpDto> PublicReplaceAsync(string token, SubmitRsvp input, CancellationToken ct)
+    { await validation.ValidateAsync(input, ct); return await store.PublicSubmitAsync(token, input, RsvpWriteMode.Replace, ct); }
     public async Task<RsvpDto> GetAsync(Guid weddingId, Guid invitationId, CancellationToken ct)
     { await permissions.RequireAsync(weddingId, WeddingPermission.RSVP_VIEW, ct); return await store.GetAsync(weddingId, invitationId, ct); }
     public async Task<RsvpDto> SubmitAsync(Guid weddingId, Guid invitationId, SubmitRsvp input, CancellationToken ct)
