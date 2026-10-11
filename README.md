@@ -2,7 +2,7 @@
 
 InviteMe is a .NET 10 modular monolith with vertical slices, PostgreSQL/EF Core 10, Identity, JWT, SignalR and two test projects. Accounts and Wedding Workspace APIs are implemented alongside `GET /api/health/application`.
 
-**Scope:** EF maps all 37 v2 business tables, four Identity support tables and three reporting views. Register/login/current-user/logout and wedding create/list/get/settings/access are available. Workspace edits use version checks, wedding row locking, capacity validation and atomic audit/settings/event/venue writes. RSVP, invitation lifecycle, seating/check-in/gift APIs and delivery workers remain pending. No migration runs automatically at API startup. See [implemented API and evidence](docs/workspace-api.md).
+**Scope:** EF maps all 37 v2 business tables, four Identity support tables and three reporting views. Register/login/current-user/logout and wedding create/list/get/settings/access are available. Workspace edits use version checks, wedding row locking, capacity validation and atomic audit/settings/event/venue writes. RSVP submit/update with an append-only `rsvp_history` is implemented (RSVP-02, see [notes](docs/RSVP-02_Implementation_Notes.md)). No migration runs automatically at API startup. See [implemented API and evidence](docs/workspace-api.md).
 
 ## Architecture
 
@@ -79,6 +79,12 @@ Readiness only checks connectivity, not schema readiness; no usable business dat
 
 Optional local containers: `docker compose --profile app up --build -d` serves HTTP on loopback port 5043. This profile deliberately uses Development for local Swagger access. Production uses the Dockerfile with Production configuration and HTTPS termination. Configure trusted proxy forwarding before relying on forwarded scheme/client-IP headers; never trust arbitrary forwarded headers. The runtime container runs as the built-in non-root user.
 
+## Secrets
+
+- Never commit a real PostgreSQL password or JWT signing key. `appsettings.json` keeps placeholders only.
+- Use `dotnet user-secrets` (`UserSecretsId` `inviteme-api-development`) or environment variables (`ConnectionStrings__PostgreSQL`, `Jwt__SigningKey`), as shown above. The only connection-string key is `ConnectionStrings:PostgreSQL`.
+- Check with `dotnet user-secrets list --project src/InviteMe.Api` (it prints values, so don't paste the output anywhere).
+
 ## Configuration
 
 | Variable | Purpose |
@@ -132,6 +138,16 @@ dotnet ef database update --project src/InviteMe.Infrastructure --startup-projec
 
 Create the `artifacts` directory before requesting the script output. The design-time factory only needs `ConnectionStrings__PostgreSQL`; it does not require JWT configuration or a live connection for script generation. Review SQL before applying it. For externally installed v1 use `MarkExistingBaseline.sql`; for externally installed v2 use `MarkExistingV2.sql`, after comparing the entire live schema with its reference. Databases with valid EF history apply only pending migrations. Follow `docs/database.md` for preflight failures and data conversion. Production migrations are a separate deployment step. Never call `EnsureCreated` in application startup or delete existing data to repair a migration.
 
+### Database migration workflow
+
+1. Change the model, and put the DDL in an embedded `Persistence/Schema/<Name>.sql` resource when the change needs triggers, functions or backfills.
+2. `dotnet ef migrations add <Name> --project src/InviteMe.Infrastructure --startup-project src/InviteMe.Api`, then make `Up` run the SQL resource.
+3. `dotnet ef migrations has-pending-model-changes ...` must report no changes. Add the resource to `FreshMigrationsMatchAuthoritativeV2BusinessSchema`.
+4. Apply with `dotnet ef database update ...`, and regenerate the consolidated fresh-install file (`database/inviteme_postgresql_schema_v3.sql` is the latest; see [RSVP-02 DB audit](docs/RSVP-02_DB_Audit.md)).
+5. Never edit data by hand to emulate a migration.
+
+Verify the connection after applying: `psql "host=localhost dbname=InviteMe user=postgres" -c "SELECT current_database(); SELECT count(*) FROM inviteme.rsvp_history;"`.
+
 ## Transactions, concurrency and realtime
 
 The detailed contracts are in [architecture.md](docs/architecture.md). A single PostgreSQL transaction covers each multi-record operation. Capacity updates lock the wedding row **before** counting participants; seating updates lock affected tables in deterministic UUID order, count occupancy, and compare expected versions. Every writer that changes those counts follows the same lock protocol. Optimistic conflict yields 409; database uniqueness remains the final protection for check-in and gift idempotency.
@@ -147,11 +163,22 @@ $env:INVITEME_TEST_POSTGRES = '1'
 dotnet test tests/InviteMe.IntegrationTests --filter Category=PostgreSQL
 ```
 
-You may instead set `INVITEME_TEST_CONNECTION_STRING` to a disposable PostgreSQL database. The database test applies migrations and writes fixtures; never use a shared or production database.
+You may instead set `INVITEME_TEST_CONNECTION_STRING` to a **fresh** disposable PostgreSQL database. `PostgreSqlFoundationTests` migrates and seeds that database directly, so reusing it fails with unique-key errors. The other tests create and drop their own `inviteme_v2_test_*` databases, which needs CREATEDB rights. The database test applies migrations and writes fixtures; never use a shared or production database.
 
 Default tests cover permission isolation, model mapping, validation bounds, token hashing, liveness/readiness, OpenAPI, ProblemDetails, JWT validation and hub authentication. The opt-in PostgreSQL test uses a disposable database, executes `MigrateAsync`, seeds owner/co-host/revoked-member cases, and exercises the real `WeddingAccessReader`.
 
 Business concurrency tests are milestone acceptance criteria, not simulated success in this foundation: RSVP 148/150 with two +2 requests; seating 9/10 with two inserts; stale version 5 after version 6 returns HTTP 409. Also add duplicate check-in/gift, invalid import, cross-wedding token scope, RSVP history and walk-in tests with their implementations.
+
+### RSVP-02 smoke test
+
+1. Apply migrations: `dotnet ef database update --project src/InviteMe.Infrastructure --startup-project src/InviteMe.Api`.
+2. Run the API: `dotnet run --project src/InviteMe.Api --launch-profile https`.
+3. Open `https://localhost:7043/swagger`. As host, create a wedding with an `rsvpDeadline`, import a guest, then create, approve and publish an invitation. The last segment of `publicPath` is the token.
+4. Submit: `POST /api/public/invitations/{token}/rsvp` with `{"expectedVersion":<invitation version>,"decision":"ATTENDING","participantIds":["<participant id>"]}` → 201. A second POST → 409 `RSVP_ALREADY_EXISTS`.
+5. Update: `PUT` the same URL with the new `version` from the response → 200. An identical body is a no-op.
+6. `SELECT old_status,new_status,old_confirmed_party_size,new_confirmed_party_size,actor_type,reason,changed_at FROM inviteme.rsvp_history ORDER BY changed_at;` shows one row per real change. `UPDATE`/`DELETE` on it are rejected.
+
+Captured results: [evidence/RSVP-02](evidence/RSVP-02/README.md).
 
 ## Packages
 
@@ -167,6 +194,17 @@ Versions are pinned centrally in `Directory.Packages.props`:
 - Testcontainers PostgreSQL: 4.15.0
 
 Identity/EF dependencies bring EF Core transitively. SignalR, health checks and JSON logging use the ASP.NET shared framework. ClosedXML, CsvHelper and QRCoder are deferred until their slices need them. No mediator, broker, Redis or outbox is introduced. The provider supports EF Core 10; see [Npgsql release notes](https://www.npgsql.org/efcore/release-notes/10.0.html).
+
+## Feature branch workflow
+
+```bash
+git fetch --all --prune
+git checkout main
+git pull --ff-only origin main
+git checkout -b feature/<feature-name>
+```
+
+Never commit to `main` directly. Push the feature branch and open a PR.
 
 ## Team conventions and next milestone
 
