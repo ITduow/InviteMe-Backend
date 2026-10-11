@@ -16,9 +16,19 @@ public sealed record LoginAccount(
     string Email,
     string Password);
 
+public sealed record RefreshSession(string RefreshToken);
+
 public sealed record AccessToken(
     string AccessTokenValue,
     int ExpiresIn);
+
+public sealed record IssuedRefreshToken(
+    string Value,
+    int ExpiresIn);
+
+public sealed record RefreshRotation(
+    Guid UserId,
+    IssuedRefreshToken Token);
 
 public interface IAccountStore
 {
@@ -28,7 +38,15 @@ public interface IAccountStore
     Task RevokeSessionsAsync(Guid id, CancellationToken ct);
 }
 
+public interface IRefreshTokenStore
+{
+    Task<IssuedRefreshToken> IssueAsync(Guid userId, TimeSpan lifetime, CancellationToken ct);
+    Task<RefreshRotation?> RotateAsync(string refreshToken, TimeSpan lifetime, CancellationToken ct);
+    Task RevokeAllAsync(Guid userId, CancellationToken ct);
+}
+
 public interface IAccessTokenIssuer
 {
+    TimeSpan RefreshLifetime { get; }
     AccessToken Issue(AccountIdentity account);
 }

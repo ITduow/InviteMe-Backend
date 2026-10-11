@@ -11,6 +11,8 @@ internal sealed class AccessTokenIssuer(
     IOptions<JwtOptions> options,
     TimeProvider time) : IAccessTokenIssuer
 {
+    public TimeSpan RefreshLifetime => TimeSpan.FromDays(options.Value.RefreshExpirationDays);
+
     public AccessToken Issue(AccountIdentity account)
     {
         var jwt = options.Value;
