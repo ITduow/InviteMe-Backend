@@ -166,7 +166,9 @@ Versions are pinned centrally in `Directory.Packages.props`:
 - xUnit: 2.9.3; Visual Studio runner: 3.1.5
 - Testcontainers PostgreSQL: 4.15.0
 
-Identity/EF dependencies bring EF Core transitively. SignalR, health checks and JSON logging use the ASP.NET shared framework. ClosedXML, CsvHelper and QRCoder are deferred until their slices need them. No mediator, broker, Redis or outbox is introduced. The provider supports EF Core 10; see [Npgsql release notes](https://www.npgsql.org/efcore/release-notes/10.0.html).
+Identity/EF dependencies bring EF Core transitively. SignalR, health checks and JSON logging use the ASP.NET shared framework. Guest file import uses ClosedXML 0.105.0 and CsvHelper 33.1.0; QRCoder remains deferred. No mediator, broker, Redis or outbox is introduced. The provider supports EF Core 10; see [Npgsql release notes](https://www.npgsql.org/efcore/release-notes/10.0.html).
+
+CSV/XLSX guest import: see [template, preview/confirm API and migration guide](docs/guest-file-import.md).
 
 ## Team conventions and next milestone
 

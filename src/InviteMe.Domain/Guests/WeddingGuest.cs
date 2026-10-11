@@ -11,7 +11,7 @@ public sealed class WeddingGuest
     public string? Phone { get; private set; }
     public string? Email { get; private set; }
     public string? Relationship { get; private set; }
-    public string Side { get; private set; } = "MUTUAL";
+    public string? Side { get; private set; }
     public string RecordStatus { get; private set; } = "ACTIVE";
     public bool AllowedPlusOne { get; private set; } = false;
     public int MaxPlusOne { get; private set; } = 0;
@@ -27,4 +27,12 @@ public sealed class WeddingGuest
         Email = string.IsNullOrWhiteSpace(email) ? null : email.Trim(), Phone = string.IsNullOrWhiteSpace(phone) ? null : phone.Trim(),
         Side = side, ExpectedCompanionCount = expectedCompanions, AllowedPlusOne = maxPlusOne > 0, MaxPlusOne = maxPlusOne
     };
+
+    public void SetImportDetails(Guid? groupId, GuestSide? side, GuestRelationship? relationship, string? notes)
+    {
+        GroupId = groupId;
+        Side = side?.ToString();
+        Relationship = relationship?.ToString();
+        Notes = notes;
+    }
 }

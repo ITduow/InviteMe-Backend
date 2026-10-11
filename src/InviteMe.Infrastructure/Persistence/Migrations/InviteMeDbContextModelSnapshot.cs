@@ -878,11 +878,8 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnName("relationship");
 
                     b.Property<string>("Side")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
                         .HasMaxLength(20)
                         .HasColumnType("varchar(20)")
-                        .HasDefaultValue("MUTUAL")
                         .HasColumnName("side");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
@@ -918,6 +915,8 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("ck_guests_plus_one", "max_plus_one >= 0 AND (allowed_plus_one OR max_plus_one = 0)");
 
                             t.HasCheckConstraint("ck_guests_record_status", "record_status IN ('ACTIVE', 'ARCHIVED')");
+
+                            t.HasCheckConstraint("ck_guests_relationship", "relationship IS NULL OR relationship IN ('FAMILY', 'FRIEND', 'COLLEAGUE', 'NEIGHBOR', 'PARTNER', 'OTHER')");
 
                             t.HasCheckConstraint("ck_guests_side", "side IN ('BRIDE', 'GROOM', 'MUTUAL', 'OTHER')");
                         });
@@ -2600,6 +2599,45 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("InviteMe.Infrastructure.Persistence.GuestImportSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ActorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("actor_id");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("PreviewJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("preview_json");
+
+                    b.Property<string>("ResultJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("result_json");
+
+                    b.Property<string>("SelectionJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("selection_json");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.ToTable("guest_import_sessions", "inviteme");
+                });
+
             modelBuilder.Entity("InviteMe.Infrastructure.Persistence.ReadModels.GuestRsvpSummary", b =>
                 {
                     b.Property<long>("AttendingParticipants")
@@ -3404,6 +3442,15 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_wedding_settings_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Infrastructure.Persistence.GuestImportSession", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<System.Guid>", b =>

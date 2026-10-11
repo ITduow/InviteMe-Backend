@@ -2234,3 +2234,64 @@ BEGIN
 END $EF$;
 COMMIT;
 
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261011043107_AddGuestFileImport') THEN
+    UPDATE inviteme.guests SET
+        notes = concat_ws(E'\n', NULLIF(notes, ''), 'Quan hệ trước chuyển đổi: ' || relationship),
+        relationship = NULL
+    WHERE relationship IS NOT NULL
+      AND relationship NOT IN ('FAMILY', 'FRIEND', 'COLLEAGUE', 'NEIGHBOR', 'PARTNER', 'OTHER');
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261011043107_AddGuestFileImport') THEN
+    ALTER TABLE inviteme.guests ALTER COLUMN side DROP NOT NULL;
+    ALTER TABLE inviteme.guests ALTER COLUMN side DROP DEFAULT;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261011043107_AddGuestFileImport') THEN
+    CREATE TABLE inviteme.guest_import_sessions (
+        id uuid NOT NULL,
+        wedding_id uuid NOT NULL,
+        actor_id uuid NOT NULL,
+        expires_at timestamp with time zone NOT NULL,
+        preview_json jsonb NOT NULL,
+        result_json jsonb,
+        selection_json jsonb,
+        CONSTRAINT "PK_guest_import_sessions" PRIMARY KEY (id),
+        CONSTRAINT "FK_guest_import_sessions_weddings_wedding_id" FOREIGN KEY (wedding_id) REFERENCES inviteme.weddings (id) ON DELETE CASCADE
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261011043107_AddGuestFileImport') THEN
+    ALTER TABLE inviteme.guests ADD CONSTRAINT ck_guests_relationship CHECK (relationship IS NULL OR relationship IN ('FAMILY', 'FRIEND', 'COLLEAGUE', 'NEIGHBOR', 'PARTNER', 'OTHER'));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261011043107_AddGuestFileImport') THEN
+    CREATE INDEX "IX_guest_import_sessions_expires_at" ON inviteme.guest_import_sessions (expires_at);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261011043107_AddGuestFileImport') THEN
+    INSERT INTO inviteme."__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+    VALUES ('20261011043107_AddGuestFileImport', '10.0.12');
+    END IF;
+END $EF$;
+COMMIT;
+

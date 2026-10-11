@@ -104,6 +104,7 @@ public sealed class SchemaV2MigrationTests
             await ExecuteScript(db, "IdentitySupport.sql");
             await ExecuteScript(db, "WorkspaceSupport.sql");
             await ExecuteScript(db, "InvitationLifecycleSupport.sql");
+            await ExecuteScript(db, "GuestFileImportSupport.sql");
             await db.Database.ExecuteSqlRawAsync("SET search_path TO inviteme, pg_temp");
             expected = await Scalar<string>(db, SchemaSignature);
         });
@@ -112,7 +113,8 @@ public sealed class SchemaV2MigrationTests
             await db.Database.MigrateAsync();
             await db.Database.OpenConnectionAsync();
             await db.Database.ExecuteSqlRawAsync("SET search_path TO inviteme, pg_temp");
-            Assert.Equal(expected, await Scalar<string>(db, SchemaSignature));
+            // Embedded SQL files may use CRLF on Windows while migration literals use LF.
+            Assert.Equal(expected!.Replace("\r\n", "\n"), (await Scalar<string>(db, SchemaSignature)).Replace("\r\n", "\n"));
         });
     }
 

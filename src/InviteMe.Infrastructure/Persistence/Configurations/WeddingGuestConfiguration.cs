@@ -13,6 +13,7 @@ public sealed class WeddingGuestConfiguration : IEntityTypeConfiguration<Wedding
         builder.ToTable("guests", table =>
         {
             table.HasCheckConstraint("ck_guests_side", "side IN ('BRIDE', 'GROOM', 'MUTUAL', 'OTHER')");
+            table.HasCheckConstraint("ck_guests_relationship", "relationship IS NULL OR relationship IN ('FAMILY', 'FRIEND', 'COLLEAGUE', 'NEIGHBOR', 'PARTNER', 'OTHER')");
             table.HasCheckConstraint("ck_guests_record_status", "record_status IN ('ACTIVE', 'ARCHIVED')");
             table.HasCheckConstraint("ck_guests_plus_one", "max_plus_one >= 0 AND (allowed_plus_one OR max_plus_one = 0)");
             table.HasCheckConstraint("ck_guests_expected_companion_count", "expected_companion_count >= 0");
@@ -26,7 +27,7 @@ public sealed class WeddingGuestConfiguration : IEntityTypeConfiguration<Wedding
         builder.Property(x => x.Phone).HasColumnName("phone").HasColumnType("varchar(30)").HasMaxLength(30);
         builder.Property(x => x.Email).HasColumnName("email").HasColumnType("varchar(255)").HasMaxLength(255);
         builder.Property(x => x.Relationship).HasColumnName("relationship").HasColumnType("varchar(100)").HasMaxLength(100);
-        builder.Property(x => x.Side).HasColumnName("side").HasColumnType("varchar(20)").HasMaxLength(20).IsRequired().HasDefaultValue("MUTUAL");
+        builder.Property(x => x.Side).HasColumnName("side").HasColumnType("varchar(20)").HasMaxLength(20);
         builder.Property(x => x.RecordStatus).HasColumnName("record_status").HasColumnType("varchar(20)").HasMaxLength(20).IsRequired().HasDefaultValue("ACTIVE");
         builder.Property(x => x.AllowedPlusOne).HasColumnName("allowed_plus_one").HasColumnType("boolean").IsRequired().HasDefaultValue(false);
         builder.Property(x => x.MaxPlusOne).HasColumnName("max_plus_one").HasColumnType("integer").IsRequired().HasDefaultValue(0);

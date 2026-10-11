@@ -5,7 +5,7 @@ public sealed record WeddingGuestPickerItem(
     string GuestCode,
     string FullName,
     Guid? GroupId,
-    string Side,
+    string? Side,
     string RecordStatus,
     bool HasEmail,
     bool HasPhone,

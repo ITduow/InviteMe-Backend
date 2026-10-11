@@ -20,7 +20,7 @@ public sealed class WeddingGuestApiTests
         var guestId = Guid.NewGuid();
         await db.Database.ExecuteSqlInterpolatedAsync($@"
             INSERT INTO inviteme.guests(id, wedding_id, guest_code, full_name, email, phone, relationship, notes, side, record_status)
-            VALUES ({guestId}, {wedding.Id}, 'G001', 'An Nguyễn', 'an@example.test', '0901234567', 'Friend', 'Secret note', 'MUTUAL', 'ACTIVE')");
+            VALUES ({guestId}, {wedding.Id}, 'G001', 'An Nguyễn', 'an@example.test', '0901234567', 'FRIEND', 'Secret note', 'MUTUAL', 'ACTIVE')");
 
         var response = await owner.GetAsync($"/api/weddings/{wedding.Id}/guests?page=1&pageSize=20");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -29,7 +29,7 @@ public sealed class WeddingGuestApiTests
         Assert.DoesNotContain("an@example.test", json);
         Assert.DoesNotContain("0901234567", json);
         Assert.DoesNotContain("Secret note", json);
-        Assert.DoesNotContain("Friend", json);
+        Assert.DoesNotContain("FRIEND", json);
 
         var page = await response.Content.ReadFromJsonAsync<WeddingGuestPage>();
         Assert.NotNull(page);

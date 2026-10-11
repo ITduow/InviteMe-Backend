@@ -10,4 +10,7 @@ public sealed class GuestGroup
     public string? Description { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
+
+    public static GuestGroup Create(Guid weddingId, string name) => new()
+    { Id = Guid.NewGuid(), WeddingId = weddingId, Name = name.Trim() };
 }
