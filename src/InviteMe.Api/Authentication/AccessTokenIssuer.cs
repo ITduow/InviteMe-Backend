@@ -7,16 +7,38 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace InviteMe.Api.Authentication;
 
-internal sealed class AccessTokenIssuer(IOptions<JwtOptions> options, TimeProvider time) : IAccessTokenIssuer
+internal sealed class AccessTokenIssuer(
+    IOptions<JwtOptions> options,
+    TimeProvider time) : IAccessTokenIssuer
 {
     public AccessToken Issue(AccountIdentity account)
     {
         var jwt = options.Value;
         var now = time.GetUtcNow().UtcDateTime;
-        var token = new JwtSecurityToken(jwt.Issuer, jwt.Audience,
-            [new Claim("sub", account.Id.ToString()), new Claim("role", account.Role), new Claim("session_stamp", account.SessionStamp), new Claim("jti", Guid.NewGuid().ToString())],
-            now, now.AddMinutes(jwt.ExpirationMinutes),
-            new SigningCredentials(new SymmetricSecurityKey(Convert.FromBase64String(jwt.SigningKey)), SecurityAlgorithms.HmacSha256));
-        return new(new JwtSecurityTokenHandler().WriteToken(token), jwt.ExpirationMinutes * 60);
+
+        var claims = new Claim[]
+        {
+            new("sub", account.Id.ToString()),
+            new("role", account.Role),
+            new("session_stamp", account.SessionStamp),
+            new("jti", Guid.NewGuid().ToString())
+        };
+
+        var credentials = new SigningCredentials(
+            new SymmetricSecurityKey(Convert.FromBase64String(jwt.SigningKey)),
+            SecurityAlgorithms.HmacSha256);
+
+        var token = new JwtSecurityToken(
+            jwt.Issuer,
+            jwt.Audience,
+            claims,
+            now,
+            now.AddMinutes(jwt.ExpirationMinutes),
+            credentials);
+
+        var serializedToken = new JwtSecurityTokenHandler().WriteToken(token);
+        var expiresInSeconds = jwt.ExpirationMinutes * 60;
+
+        return new AccessToken(serializedToken, expiresInSeconds);
     }
 }
