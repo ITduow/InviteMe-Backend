@@ -1,0 +1,67 @@
+# Negative cases
+# Captured 2026-10-11T11:17:45+00:00 against https://localhost:7043 (ASPNETCORE_ENVIRONMENT=Development) + PostgreSQL database InviteMe.
+# Raw invitation tokens and JWTs are redacted.
+
+### duplicate first submission -> 409 RSVP_ALREADY_EXISTS
+> POST /api/public/invitations/807331…<redacted>/rsvp
+> Content-Type: application/json
+> {"expectedVersion": 8, "decision": "ATTENDING", "participantIds": ["297ee732-10e3-458f-8782-fdd3cd01e8bc"]}
+< HTTP 409
+< {"type":"https://httpstatuses.io/409","title":"Conflict","status":409,"detail":"An RSVP already exists for this invitation. Use PUT to update it.","code":"RSVP_ALREADY_EXISTS","traceId":"acdc40d789edaf570394ef4caa490a20"}
+
+### stale expectedVersion -> 409 CONCURRENCY_CONFLICT
+> PUT /api/public/invitations/807331…<redacted>/rsvp
+> Content-Type: application/json
+> {"expectedVersion": 7, "decision": "ATTENDING", "participantIds": ["297ee732-10e3-458f-8782-fdd3cd01e8bc"]}
+< HTTP 409
+< {"type":"https://httpstatuses.io/409","title":"Conflict","status":409,"detail":"Data changed or the request conflicts. Refresh and retry.","code":"CONCURRENCY_CONFLICT","traceId":"3788d845c36035b7c3ef89103206eeb5"}
+
+### DECLINED with attendees -> 400 validation
+> PUT /api/public/invitations/807331…<redacted>/rsvp
+> Content-Type: application/json
+> {"expectedVersion": 8, "decision": "DECLINED", "participantIds": ["297ee732-10e3-458f-8782-fdd3cd01e8bc"]}
+< HTTP 400
+< {"type":"https://httpstatuses.io/400","title":"Bad Request","status":400,"detail":"One or more fields are invalid.","code":"VALIDATION_FAILED","errors":{"":["Declined RSVP must not select attendees."]},"traceId":"9ea949aefe79e76a8c1a97b0fb6e53c6"}
+
+### ATTENDING with no attendee -> 400 validation
+> PUT /api/public/invitations/807331…<redacted>/rsvp
+> Content-Type: application/json
+> {"expectedVersion": 8, "decision": "ATTENDING", "participantIds": []}
+< HTTP 400
+< {"type":"https://httpstatuses.io/400","title":"Bad Request","status":400,"detail":"One or more fields are invalid.","code":"VALIDATION_FAILED","errors":{"":["Select at least one attendee."]},"traceId":"6bf15a75abdafc3af034f1d24ee1b487"}
+
+### unknown status -> 400 validation
+> PUT /api/public/invitations/807331…<redacted>/rsvp
+> Content-Type: application/json
+> {"expectedVersion": 8, "decision": "MAYBE", "participantIds": ["297ee732-10e3-458f-8782-fdd3cd01e8bc"]}
+< HTTP 400
+< {"type":"https://httpstatuses.io/400","title":"Bad Request","status":400,"detail":"One or more fields are invalid.","code":"VALIDATION_FAILED","errors":{"Decision":["The specified condition was not met for 'Decision'."]},"traceId":"761f9d56061a3910775ae9a32d4bd366"}
+
+### claim more people than invited (no plus-one allowance) -> 422 PLUS_ONE_LIMIT
+> PUT /api/public/invitations/807331…<redacted>/rsvp
+> Content-Type: application/json
+> {"expectedVersion": 8, "decision": "ATTENDING", "participantIds": ["297ee732-10e3-458f-8782-fdd3cd01e8bc"], "plusOnes": ["Uninvited"]}
+< HTTP 422
+< {"type":"https://httpstatuses.io/422","title":"Unprocessable Entity","status":422,"detail":"Invitation plus-one allowance is exceeded.","code":"PLUS_ONE_LIMIT","traceId":"c722e4c105d25d87726924aa115bfb0d"}
+
+### unknown invitation token -> 404
+> GET /api/public/invitations/0000000000000000000000000000000000000000000000000000000000000000/rsvp
+> Content-Type: application/json
+< HTTP 404
+< {"type":"https://httpstatuses.io/404","title":"Not Found","status":404,"detail":"Record is unavailable in this wedding.","code":"INVITATION_NOT_FOUND","traceId":"0ae4e375ce870b2d9bb0126cb1df0998"}
+
+### malformed token -> 404
+> PUT /api/public/invitations/not-a-token/rsvp
+> Content-Type: application/json
+> {"expectedVersion": 1, "decision": "DECLINED", "participantIds": []}
+< HTTP 404
+< {"type":"https://httpstatuses.io/404","title":"Not Found","status":404,"detail":"Record is unavailable in this wedding.","code":"INVITATION_NOT_FOUND","traceId":"80ccc919938d36276e44e7404e4584af"}
+
+### (DB) wedding_settings.rsvp_deadline moved to now() - 1 minute for the deadline case
+
+### re-attend after RSVP deadline -> 422 RSVP_DEADLINE_PASSED (RSVP-01: needs host approval)
+> PUT /api/public/invitations/807331…<redacted>/rsvp
+> Content-Type: application/json
+> {"expectedVersion": 8, "decision": "ATTENDING", "participantIds": ["297ee732-10e3-458f-8782-fdd3cd01e8bc"]}
+< HTTP 422
+< {"type":"https://httpstatuses.io/422","title":"Unprocessable Entity","status":422,"detail":"The RSVP deadline has passed. Only cancelling or reducing an attending party is still possible; contact the hosts for other changes.","code":"RSVP_DEADLINE_PASSED","traceId":"ef3f1bd6672dd01552daa28473c2edd4"}
