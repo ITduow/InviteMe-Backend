@@ -128,12 +128,18 @@ public sealed class SeatingCheckInApiTests
         Assert.Equal("WALK_IN", (await Read<CheckInDto>(await owner.PostAsJsonAsync(root + "/check-ins", new CheckInInput(WalkinId: walk.Id)))).Method);
 
         // One guest plus the walk-in fill the 2-seat table, so the spouse cannot sit there.
+        var beforeWalkIn = table.Version;
         table = (await owner.GetFromJsonAsync<PagedResult<TableDto>>(root + "/tables"))!.Items.Single(x => x.Id == table.Id);
-        Assert.Equal((2, "FULL"), ((int)table.Occupied, table.FillLevel));
+        Assert.Equal((2, "FULL", beforeWalkIn + 1), ((int)table.Occupied, table.FillLevel, table.Version));
         await AssertProblem(HttpStatusCode.UnprocessableEntity, "TABLE_FULL",
             await owner.PutAsJsonAsync(root + $"/seating/{guest.Participants[1].Id}", new AssignSeat(table.Id, null, table.Version)));
         Assert.Null((await Read<WalkinDto>(await owner.PutAsJsonAsync(root + $"/walk-ins/{walk.Id}/table", new AssignWalkinTable(null)))).TableId);
-        await Read<AssignmentDto>(await owner.PutAsJsonAsync(root + $"/seating/{guest.Participants[1].Id}", new AssignSeat(table.Id, null, table.Version)));
+        // Walk-in seat changes bump the table version: a planner holding the old version must refresh first.
+        await AssertProblem(HttpStatusCode.Conflict, "CONCURRENCY_CONFLICT",
+            await owner.PutAsJsonAsync(root + $"/seating/{guest.Participants[1].Id}", new AssignSeat(table.Id, null, table.Version)));
+        var freed = (await owner.GetFromJsonAsync<PagedResult<TableDto>>(root + "/tables"))!.Items.Single(x => x.Id == table.Id);
+        Assert.Equal((table.Version + 1, 1), (freed.Version, (int)freed.Occupied));
+        await Read<AssignmentDto>(await owner.PutAsJsonAsync(root + $"/seating/{guest.Participants[1].Id}", new AssignSeat(table.Id, null, freed.Version)));
 
         var overflow = (await owner.GetFromJsonAsync<OverflowDto>(root + "/seating/overflow"))!;
         Assert.Equal((3, 1, 1), (overflow.Demand, overflow.Breakdown.WalkIn, overflow.Unseated));
