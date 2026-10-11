@@ -237,10 +237,11 @@ public sealed class IntegrationWorkflowTests
         var table = await Read<TableDto>(await owner.PostAsJsonAsync(root + "/tables", new CreateTable("T", 2, "ACTIVE")));
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await owner.PutAsJsonAsync(root + $"/seating/{family.Participants[0].Id}", new AssignSeat(table.Id, null, table.Version))).StatusCode);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await owner.PostAsJsonAsync(root + "/check-ins", new CheckInInput(family.Participants[0].Id))).StatusCode);
-        waiting = await Read<RsvpDto>(await c.PostAsJsonAsync(Public(p) + "/rsvp", new SubmitRsvp(waiting.Version, "ATTENDING", family.Participants.Select(x => x.Id).ToArray())));
+        // RSVP-02: POST is first submission only; later changes use PUT on the same resource.
+        waiting = await Read<RsvpDto>(await c.PutAsJsonAsync(Public(p) + "/rsvp", new SubmitRsvp(waiting.Version, "ATTENDING", family.Participants.Select(x => x.Id).ToArray())));
         Assert.Equal(1, await db.WaitlistEntries.CountAsync(x => x.Status == "WAITING"));
         Assert.Equal(1, await db.WaitlistEntries.CountAsync(x => x.Status == "CANCELLED"));
-        var attending = await Read<RsvpDto>(await c.PostAsJsonAsync(Public(p) + "/rsvp", new SubmitRsvp(waiting.Version, "ATTENDING", [family.Participants[0].Id])));
+        var attending = await Read<RsvpDto>(await c.PutAsJsonAsync(Public(p) + "/rsvp", new SubmitRsvp(waiting.Version, "ATTENDING", [family.Participants[0].Id])));
         Assert.Equal(1, attending.ConfirmedPartySize); Assert.Equal(0, attending.WaitlistedPartySize);
         Assert.Equal(0, await db.WaitlistEntries.CountAsync(x => x.Status == "WAITING"));
         Assert.Equal(3, await db.RsvpHistory.CountAsync());
