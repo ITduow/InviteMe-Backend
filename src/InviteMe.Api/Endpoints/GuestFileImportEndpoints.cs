@@ -28,8 +28,15 @@ internal static class GuestFileImportEndpoints
             if (form.Files.Count != 1 || form.Files[0].Length is 0 or > maxBytes)
                 throw new ApplicationProblemException(ProblemKind.BusinessRule, "IMPORT_UPLOAD", "Upload exactly one nonempty file, at most 5 MB.");
             var file = form.Files[0];
+            Guid? replacesImportId = null;
+            if (form.TryGetValue("replacesImportId", out var replacement))
+            {
+                if (replacement.Count != 1 || !Guid.TryParse(replacement[0], out var id))
+                    throw new ApplicationProblemException(ProblemKind.BusinessRule, "IMPORT_SELECTION", "Invalid preview to replace.");
+                replacesImportId = id;
+            }
             using var stream = new MemoryStream(); await file.CopyToAsync(stream, ct);
-            return await handler.PreviewAsync(weddingId, file.FileName, stream.ToArray(), ct);
+            return await handler.PreviewAsync(weddingId, file.FileName, stream.ToArray(), ct, replacesImportId);
         });
         group.MapPost("/import/confirm", (Guid weddingId, ConfirmGuestFile input, GuestFileImportHandler handler, CancellationToken ct) => handler.ConfirmAsync(weddingId, input, ct));
         return endpoints;

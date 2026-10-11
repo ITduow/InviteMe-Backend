@@ -7,6 +7,25 @@ namespace InviteMe.Infrastructure.Persistence.Adapters;
 
 public sealed class WeddingGuestReader(InviteMeDbContext db) : IWeddingGuestReader
 {
+    public async Task<WeddingGuestDetail?> GetAsync(Guid weddingId, Guid guestId, CancellationToken cancellationToken)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, cancellationToken);
+        var guest = await db.WeddingGuests.AsNoTracking()
+            .SingleOrDefaultAsync(g => g.WeddingId == weddingId && g.Id == guestId, cancellationToken);
+        if (guest is null) return null;
+        var groupName = guest.GroupId is null ? null : await db.GuestGroups.AsNoTracking()
+            .Where(g => g.WeddingId == weddingId && g.Id == guest.GroupId)
+            .Select(g => g.Name).SingleOrDefaultAsync(cancellationToken);
+        var participants = await db.GuestParticipants.AsNoTracking().Where(p => p.GuestId == guestId)
+            .OrderBy(p => p.ParticipantType == "PRIMARY" ? 0 : 1).ThenBy(p => p.FullName).ThenBy(p => p.Id)
+            .Select(p => new InviteMe.Application.Features.Guests.Import.ParticipantDto(
+                p.Id, p.GuestId, p.FullName, p.ParticipantType, p.AttendanceStatus))
+            .ToListAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+        return new(guest.Id, guest.GuestCode, guest.FullName, guest.Phone, guest.Email, guest.Side,
+            guest.Relationship, groupName, guest.Notes, guest.MaxPlusOne, guest.RecordStatus, participants);
+    }
+
     public async Task<WeddingGuestPage> ListAsync(Guid weddingId, WeddingGuestFilter filter, CancellationToken cancellationToken)
     {
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, cancellationToken);

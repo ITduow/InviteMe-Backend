@@ -10,6 +10,9 @@ internal static class WeddingGuestEndpoints
             .RequireAuthorization()
             .WithTags("Wedding Guests");
 
+        group.MapGet("/{guestId:guid}", (Guid weddingId, Guid guestId,
+            ListWeddingGuestsHandler handler, CancellationToken ct) => handler.GetAsync(weddingId, guestId, ct));
+
         group.MapGet("", (
             Guid weddingId,
             ListWeddingGuestsHandler handler,

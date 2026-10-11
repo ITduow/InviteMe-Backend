@@ -15,6 +15,29 @@ public sealed class WeddingGuestApiTests
     private const string Password = "Test-only-Pass123!";
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task HouseholdDetailReturnsMembersAndScopesGuestToWedding() => WithApi(async (db, factory, owner, wedding) =>
+    {
+        var guest = InviteMe.Domain.Guests.WeddingGuest.Create(wedding.Id, "GD01", "An Nguyễn", "an@example.test", "0901234567", "BRIDE", 1, 2);
+        guest.SetImportDetails(null, InviteMe.Domain.Guests.GuestSide.BRIDE, InviteMe.Domain.Guests.GuestRelationship.FAMILY, "Family note");
+        var primary = InviteMe.Domain.Guests.GuestParticipant.Create(guest.Id, "An Nguyễn", "PRIMARY");
+        var child = InviteMe.Domain.Guests.GuestParticipant.Create(guest.Id, "Bình Nguyễn", "CHILD");
+        child.SetAttendance("DECLINED");
+        db.WeddingGuests.Add(guest); db.GuestParticipants.AddRange(primary, child); await db.SaveChangesAsync();
+        var detail = await owner.GetFromJsonAsync<WeddingGuestDetail>($"/api/weddings/{wedding.Id}/guests/{guest.Id}");
+        Assert.NotNull(detail); Assert.Equal("an@example.test", detail.Email); Assert.Equal("Family note", detail.Notes);
+        Assert.Equal("FAMILY", detail.Relationship); Assert.Equal(2, detail.AdditionalAllowance); Assert.Equal(2, detail.Participants.Count);
+        Assert.Equal(primary.Id, detail.Participants[0].Id); Assert.Contains(detail.Participants, p => p.Id == child.Id && p.AttendanceStatus == "DECLINED");
+        Assert.Equal(HttpStatusCode.NotFound, (await owner.GetAsync($"/api/weddings/{wedding.Id}/guests/{Guid.NewGuid()}")).StatusCode);
+        var other = await owner.PostAsJsonAsync("/api/weddings", new WorkspaceInput("Other", "other-" + Guid.NewGuid().ToString("N"), 100, "UTC"));
+        var otherWedding = (await other.Content.ReadFromJsonAsync<WorkspaceDto>())!;
+        Assert.Equal(HttpStatusCode.NotFound, (await owner.GetAsync($"/api/weddings/{otherWedding.Id}/guests/{guest.Id}")).StatusCode);
+        using var outsider = await SignIn(factory, "detail_outsider");
+        Assert.Equal(HttpStatusCode.Forbidden, (await outsider.GetAsync($"/api/weddings/{wedding.Id}/guests/{guest.Id}")).StatusCode);
+        using var anonymous = factory.CreateHttpsClient();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync($"/api/weddings/{wedding.Id}/guests/{guest.Id}")).StatusCode);
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task GuestPickerReturnsExpectedProjectionAndPrivacy() => WithApi(async (db, factory, owner, wedding) =>
     {
         var guestId = Guid.NewGuid();

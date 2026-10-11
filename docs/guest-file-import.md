@@ -1,5 +1,71 @@
 # Import khách mời bằng CSV/Excel
 
+API hỗ trợ format gia đình **v2** bên dưới và format cũ **v1** để giữ tương thích.
+Logic thiết kế và các task còn lại nằm trong [kế hoạch import gia đình](guest-household-import-plan.md).
+
+## Format v2: mỗi người một dòng, một nhóm nhận chung thiệp
+
+FE giữ template với đúng 10 header bên dưới (thứ tự có thể đổi). BE nhận ra version
+qua bộ header chính xác; preview/session có `formatVersion = 2`, không suy đoán từ tên người.
+
+| Header | Dòng đại diện | Dòng thành viên |
+|---|---|---|
+| Mã nhóm mời | Bắt buộc khi có thành viên; khách lẻ được trống | Bắt buộc, cùng mã đại diện |
+| Họ và tên | Bắt buộc, tối đa 150 ký tự | Bắt buộc, tối đa 150 ký tự |
+| Vai trò | Người đại diện/PRIMARY | Vợ/chồng/SPOUSE, Con/CHILD, Thành viên khác/OTHER |
+| Số điện thoại | Tùy chọn, text | Phải để trống |
+| Email | Tùy chọn | Phải để trống |
+| Phía khách mời | Tùy chọn, danh mục cố định | Phải để trống |
+| Mối quan hệ | Tùy chọn, danh mục cố định | Phải để trống |
+| Nhóm khách | Tùy chọn | Phải để trống |
+| Số người được thêm | Tùy chọn, trống = 0, số nguyên 0–20 | Phải để trống, kể cả số 0 |
+| Ghi chú | Tùy chọn | Phải để trống |
+
+Mã nhóm trim, chuẩn hóa hoa, tối đa 50 ký tự ASCII chữ/số/_/-. Mã trống của khách lẻ
+có groupKey riêng `ROW:<rowNumber>`. Mỗi nhóm đúng một đại diện, tối đa 20 thành viên
+ngoài đại diện; dòng không cần liền nhau hay đại diện đứng trước. Dòng trống hoàn toàn bỏ qua.
+Không cho tên trống: người chưa biết tên chỉ khai bằng quyền thêm trên dòng đại diện.
+Giới hạn 500 dòng dữ liệu không trống/5 MB, công thức bị từ chối như v1.
+
+Ví dụ CSV hợp lệ (gia đình 4 người, chưa có liên hệ):
+
+```csv
+Mã nhóm mời,Họ và tên,Vai trò,Số điện thoại,Email,Phía khách mời,Mối quan hệ,Nhóm khách,Số người được thêm,Ghi chú
+GD01,Nguyễn Văn An,Người đại diện,,,,,,,
+GD01,Trần Thị Bình,Vợ/chồng,,,,,,,
+GD01,Nguyễn Văn Minh,Con,,,,,,,
+GD01,Nguyễn Văn Mai,Con,,,,,,,
+```
+
+Preview vẫn trả rows/errors/warnings, bổ sung `groups`: mỗi nhóm có groupKey, code,
+members, namedPersonCount, additionalAllowance, maximumPartySize. Ví dụ này là 4 + 0 = 4.
+Issue theo rowNumber/column; một dòng lỗi khiến cả nhóm không confirm được.
+
+Confirm v2 chọn **nguyên nhóm**, không gửi rowNumbers:
+
+```json
+{
+  "importId": "82e70388-4ff0-4cf3-a37e-7130319712d6",
+  "groupKeys": ["GD01"],
+  "acknowledgeDuplicates": false
+}
+```
+
+Kết quả `importedCount = 1` là số đầu mối nhận thiệp, `importedParticipantCount = 4`
+là số người. `guests` trả GuestId/GuestCode và danh sách participants với ID riêng.
+Lưu một WeddingGuest + bốn GuestParticipant PENDING, chưa tạo thiệp/RSVP/ghế.
+Side/Relationship trống giữ null; liên hệ trống vẫn import được.
+
+Mã có sẵn được lưu vào GuestCode, unique trong wedding. Mã đã tồn tại báo lỗi ở preview;
+confirm kiểm tra lại và trả 409 nếu mã xuất hiện sau preview. Không append/merge/update người cũ.
+Cảnh báo trùng tên thành viên không tự gộp. Retry cùng session/cùng nhóm không tạo thêm người;
+session v1 cũ vẫn confirm bằng rowNumbers. Quota thêm không tạo participant trước RSVP.
+
+Không còn cột dự kiến trong v2. Field ExpectedCompanionCount trong DB được điền bằng số
+thành viên đã có tên ngoài đại diện để báo cáo EstimatedHeadcount hiện hữu đếm đủ người;
+không lấy quota thêm làm dự kiến. Số thực sự dự vẫn đếm ATTENDING.
+RSVP thêm người hiện vẫn yêu cầu tên; tên tùy chọn là task riêng chưa triển khai.
+
 ## API cho frontend
 
 Tất cả endpoint bên dưới yêu cầu JWT và quyền `GUEST_EDIT` trên đám cưới.
@@ -14,7 +80,7 @@ Root: `/api/weddings/{weddingId}/guests`.
 API JSON cũ `POST /guests/import` và `POST /guests` vẫn hoạt động.
 Không gửi thiệp hoặc thay đổi RSVP khi import.
 
-## Template và mapping
+## Format v1: template cũ và mapping
 
 | Header | Thuộc tính lưu | Quy tắc |
 |---|---|---|
@@ -105,3 +171,10 @@ dotnet test InviteMe.sln
 Các test bao phủ Unicode, phone số 0 đầu, đọc XLSX, enum sai, công thức,
 header/size/row limits, kiểm tra quyền, preview không tạo guest, chọn dòng hợp lệ,
 nhóm, confirm đồng thời/idempotency, duplicate ở preview và sau preview, expiry và model/migration.
+
+## API đọc chi tiết nhóm cho dashboard
+
+`GET /api/weddings/{weddingId}/guests/{guestId}` yêu cầu `GUEST_VIEW`. Trả đại diện, mã nhóm, phone/email/side/relationship/nhóm khách/notes, additionalAllowance và participants có ID, vai trò, trạng thái RSVP riêng. Đọc trong snapshot nhất quán; guest phải thuộc đúng wedding. Không có guest trả 404; không có quyền trả 403. Không đổi danh sách picker hiện hữu, không trả ghế hay tạo/gửi thiệp.
+
+## Sửa trước khi import
+Preview bổ sung rawValues (giá trị gốc theo header), giữ cả ô sai enum/số. FE sửa nhóm trong drawer rồi dựng CSV và gọi lại preview để BE kiểm tra toàn bộ danh sách. Confirm vẫn chỉ nhận importId/groupKeys của phiên đã được BE kiểm tra. Sửa không ghi khách và không thay đổi Excel gốc. File sai cấu trúc cần sửa file gốc. Multipart preview nhận replacesImportId khi sửa: thay phiên chưa confirm của đúng người dùng/đám cưới trong cùng transaction. Phiên cũ không còn confirm được; sửa nhiều lần không tăng số phiên đang mở. Không thay thế phiên đã confirm/hết hạn. Lỗi đọc file giữ nguyên phiên trước.

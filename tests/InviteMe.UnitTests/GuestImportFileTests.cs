@@ -25,6 +25,8 @@ public sealed class GuestImportFileTests
         Assert.Equal(5, errors.Count); Assert.All(errors, x => Assert.Equal(2, x.RowNumber));
         Assert.Null(Assert.Single(rows).Side); Assert.Null(rows[0].Relationship);
         Assert.Contains(errors, x => x.Column == "Phía khách mời");
+        Assert.Equal("Nhà gáii", rows[0].RawValues!["Phía khách mời"]);
+        Assert.Equal("-1", rows[0].RawValues!["Số người đi kèm tối đa"]);
     }
 
     [Fact]
@@ -81,5 +83,65 @@ public sealed class GuestImportFileTests
         for (var i = 0; i < GuestImportFileCodec.Headers.Length; i++)
             sheet.Cell(1, i + 1).Value = GuestImportFileCodec.Headers[i];
         return workbook;
+    }
+
+    private static byte[] FamilyCsv(params string[] rows) => Encoding.UTF8.GetBytes(string.Join(",", GuestImportFileCodec.HouseholdHeaders) + "\r\n" + string.Join("\r\n", rows));
+
+    [Fact]
+    public void FamilyRowsCanBeOutOfOrderAndOptionalMetadataIsNull()
+    {
+        var (rows, errors) = GuestImportFileCodec.Parse("a.csv", FamilyCsv(
+            "gd01,Bình,Vợ/chồng,,,,,,,", ",,,,,,,,,", "GD01,An,Người đại diện,,,,,,,", "GD01,Minh,Con,,,,,,,", "GD01,Mai,Con,,,,,,,",
+            ",Khách lẻ,PRIMARY,,,,,,,"));
+        Assert.Empty(errors); Assert.Equal(5, rows.Count);
+        Assert.Equal(4, rows.Count(x => x.GroupKey == "GD01"));
+        Assert.All(rows, x => { Assert.Null(x.Phone); Assert.Null(x.Side); Assert.Equal(0, x.MaxPlusOne); });
+        Assert.Equal("ROW:7", rows.Last().GroupKey);
+    }
+
+    [Theory]
+    [InlineData("GD01,A,Con,,,,,,,", "GD01,B,Con,,,,,,,", "INVALID_GROUP")]
+    [InlineData("GD01,A,PRIMARY,,,,,,,", "GD01,B,PRIMARY,,,,,,,", "INVALID_GROUP")]
+    [InlineData("GD01,A,PRIMARY,,,,,,,", "GD01,B,Con,0912345678,,,,,,", "INVALID_VALUE")]
+    [InlineData("GD01,A,PRIMARY,,,,,,,", ",B,Con,,,,,,,", "INVALID_VALUE")]
+    [InlineData("GD01,A,PRIMARY,,,,,,,", "GD01,,Con,,,,,,,", "INVALID_VALUE")]
+    [InlineData("GD01,A,PRIMARY,,,,,,,", "GD01,B,,,,,,,,", "INVALID_VALUE")]
+    public void InvalidFamilyDataReportsErrors(string first, string second, string code)
+    {
+        var (_, errors) = GuestImportFileCodec.Parse("a.csv", FamilyCsv(first, second));
+        Assert.Contains(errors, x => x.Code == code);
+    }
+
+    [Fact]
+    public void MalformedMemberIsRetainedSoWholeGroupCannotBeImported()
+    {
+        var (rows, errors) = GuestImportFileCodec.Parse("a.csv", FamilyCsv("GD01,A,PRIMARY,,,,,,,", "GD01,B,Con"));
+        Assert.Equal(2, rows.Count); Assert.All(rows, x => Assert.Equal("GD01", x.GroupKey));
+        Assert.Contains(errors, x => x.RowNumber == 3);
+    }
+
+    [Fact]
+    public void FamilyXlsxAcceptsBlankMetadataAndSparseRows()
+    {
+        using var workbook = new XLWorkbook(); var sheet = workbook.AddWorksheet("KhachMoi");
+        for (var i = 0; i < GuestImportFileCodec.HouseholdHeaders.Length; i++) sheet.Cell(1, i + 1).Value = GuestImportFileCodec.HouseholdHeaders[i];
+        sheet.Cell("A2").Value = "F01"; sheet.Cell("B2").Value = "An"; sheet.Cell("C2").Value = "PRIMARY";
+        sheet.Cell("D2").Value = "0912345678"; sheet.Cell("I2").Value = 2;
+        sheet.Cell("A1000").Value = "F01"; sheet.Cell("B1000").Value = "Bình"; sheet.Cell("C1000").Value = "SPOUSE";
+        using var stream = new MemoryStream(); workbook.SaveAs(stream);
+        var (rows, errors) = GuestImportFileCodec.Parse("a.xlsx", stream.ToArray());
+        Assert.Empty(errors); Assert.Equal(2, rows.Count); Assert.Equal(1000, rows[1].RowNumber);
+        Assert.Equal(2, rows[0].MaxPlusOne); Assert.Equal("0912345678", rows[0].Phone);
+    }
+
+    [Fact]
+    public void FamilyLimitsAndCodesAreValidated()
+    {
+        var (_, errors) = GuestImportFileCodec.Parse("a.csv", FamilyCsv("BAD CODE,A,PRIMARY,,,,,,,"));
+        Assert.Contains(errors, x => x.Column == "Mã nhóm mời");
+        var members = Enumerable.Repeat("F01,B,CHILD,,,,,,,", 21).Prepend("F01,A,PRIMARY,,,,,,21,").ToArray();
+        var parsed = GuestImportFileCodec.Parse("a.csv", FamilyCsv(members));
+        Assert.Contains(parsed.Errors, x => x.Code == "INVALID_GROUP");
+        Assert.Contains(parsed.Errors, x => x.Column == "Số người được thêm");
     }
 }

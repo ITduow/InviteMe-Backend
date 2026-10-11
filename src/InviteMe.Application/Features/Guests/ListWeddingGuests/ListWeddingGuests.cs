@@ -1,5 +1,6 @@
 using FluentValidation;
 using InviteMe.Application.Common.Behaviors;
+using InviteMe.Application.Common.Errors;
 using InviteMe.Application.Ports.Authorization;
 using InviteMe.Application.Ports.Guests;
 using InviteMe.Domain.Weddings;
@@ -52,6 +53,13 @@ public sealed class ListWeddingGuestsHandler(
     IWeddingPermissionService permissions,
     RequestValidation<ListWeddingGuestsQuery> validation)
 {
+    public async Task<WeddingGuestDetail> GetAsync(Guid weddingId, Guid guestId, CancellationToken cancellationToken)
+    {
+        await permissions.RequireAsync(weddingId, WeddingPermission.GUEST_VIEW, cancellationToken);
+        return await reader.GetAsync(weddingId, guestId, cancellationToken)
+            ?? throw new ApplicationProblemException(ProblemKind.NotFound, "GUEST_NOT_FOUND", "Guest not found.");
+    }
+
     public async Task<WeddingGuestPage> HandleAsync(Guid weddingId, ListWeddingGuestsQuery query, CancellationToken cancellationToken)
     {
         await validation.ValidateAsync(query, cancellationToken);

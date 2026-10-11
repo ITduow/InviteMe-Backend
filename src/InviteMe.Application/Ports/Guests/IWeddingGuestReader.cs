@@ -29,4 +29,10 @@ public sealed record WeddingGuestFilter(
 public interface IWeddingGuestReader
 {
     Task<WeddingGuestPage> ListAsync(Guid weddingId, WeddingGuestFilter filter, CancellationToken cancellationToken);
+    Task<WeddingGuestDetail?> GetAsync(Guid weddingId, Guid guestId, CancellationToken cancellationToken);
 }
+
+public sealed record WeddingGuestDetail(Guid Id, string GuestCode, string FullName, string? Phone,
+    string? Email, string? Side, string? Relationship, string? GroupName, string? Notes,
+    int AdditionalAllowance, string RecordStatus,
+    IReadOnlyList<InviteMe.Application.Features.Guests.Import.ParticipantDto> Participants);
