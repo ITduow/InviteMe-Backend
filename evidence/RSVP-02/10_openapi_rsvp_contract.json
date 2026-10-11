@@ -1,0 +1,181 @@
+{
+  "path": "/api/public/invitations/{token}/rsvp",
+  "operations": {
+    "GET": {
+      "operationId": "GetPublicRsvp",
+      "summary": "Read the current RSVP for this invitation (status PENDING and rsvpId null before the first submission).",
+      "tags": [
+        "Public Invitations"
+      ],
+      "requestBody": null,
+      "responses": {
+        "200": [
+          "application/json"
+        ],
+        "404": [
+          "application/problem+json"
+        ]
+      }
+    },
+    "POST": {
+      "operationId": "CreatePublicRsvp",
+      "summary": "First RSVP submission. Appends the first rsvp_history row in the same transaction.",
+      "tags": [
+        "Public Invitations"
+      ],
+      "requestBody": {
+        "$ref": "#/components/schemas/SubmitRsvp"
+      },
+      "responses": {
+        "201": [
+          "application/json"
+        ],
+        "400": [
+          "application/problem+json"
+        ],
+        "404": [
+          "application/problem+json"
+        ],
+        "409": [
+          "application/problem+json"
+        ],
+        "422": [
+          "application/problem+json"
+        ]
+      }
+    },
+    "PUT": {
+      "operationId": "ReplacePublicRsvp",
+      "summary": "Replace the existing RSVP (full representation, expectedVersion required). Each real change appends one rsvp_history row; an identical body is a no-op.",
+      "tags": [
+        "Public Invitations"
+      ],
+      "requestBody": {
+        "$ref": "#/components/schemas/SubmitRsvp"
+      },
+      "responses": {
+        "200": [
+          "application/json"
+        ],
+        "400": [
+          "application/problem+json"
+        ],
+        "404": [
+          "application/problem+json"
+        ],
+        "409": [
+          "application/problem+json"
+        ],
+        "422": [
+          "application/problem+json"
+        ]
+      }
+    }
+  },
+  "schemas": {
+    "SubmitRsvp": {
+      "required": [
+        "expectedVersion",
+        "decision",
+        "participantIds"
+      ],
+      "type": "object",
+      "properties": {
+        "expectedVersion": {
+          "pattern": "^-?(?:0|[1-9]\\d*)$",
+          "type": [
+            "integer",
+            "string"
+          ],
+          "format": "int32"
+        },
+        "decision": {
+          "type": "string"
+        },
+        "participantIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "plusOnes": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "RsvpDto": {
+      "required": [
+        "invitationId",
+        "guestId",
+        "version",
+        "rsvpId",
+        "status",
+        "confirmedPartySize",
+        "waitlistedPartySize",
+        "participants"
+      ],
+      "type": "object",
+      "properties": {
+        "invitationId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "guestId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "version": {
+          "pattern": "^-?(?:0|[1-9]\\d*)$",
+          "type": [
+            "integer",
+            "string"
+          ],
+          "format": "int32"
+        },
+        "rsvpId": {
+          "type": [
+            "null",
+            "string"
+          ],
+          "format": "uuid"
+        },
+        "status": {
+          "type": "string"
+        },
+        "confirmedPartySize": {
+          "pattern": "^-?(?:0|[1-9]\\d*)$",
+          "type": [
+            "integer",
+            "string"
+          ],
+          "format": "int32"
+        },
+        "waitlistedPartySize": {
+          "pattern": "^-?(?:0|[1-9]\\d*)$",
+          "type": [
+            "integer",
+            "string"
+          ],
+          "format": "int32"
+        },
+        "participants": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/ParticipantDto"
+          }
+        },
+        "submittedAt": {},
+        "updatedAt": {}
+      }
+    }
+  },
+  "no_history_mutation_routes": []
+}

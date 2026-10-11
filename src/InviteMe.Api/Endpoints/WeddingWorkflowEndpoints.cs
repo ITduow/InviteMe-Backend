@@ -49,8 +49,29 @@ internal static class WeddingWorkflowEndpoints
         g.MapPost("/gifts/{id:guid}/confirm", (Guid weddingId, Guid id, GiftHandler h, CancellationToken ct) => h.ConfirmAsync(weddingId, id, ct));
         g.MapGet("/reports/summary", (Guid weddingId, WeddingReportHandler h, CancellationToken ct, bool includeGifts = false) => h.GetAsync(weddingId, includeGifts, ct));
         var p = endpoints.MapGroup("/api/public/invitations/{token}").AllowAnonymous().RequireRateLimiting("PublicInvitation").WithTags("Public Invitations");
-        p.MapGet("/rsvp", (string token, RsvpHandler h, CancellationToken ct) => h.PublicGetAsync(token, ct));
-        p.MapPost("/rsvp", (string token, SubmitRsvp input, RsvpHandler h, CancellationToken ct) => h.PublicSubmitAsync(token, input, ct));
+        // RSVP-02: the RSVP is a sub-resource of the invitation; the 64-hex invitation token in the path is the Wedding-Guest credential.
+        p.MapGet("/rsvp", (string token, RsvpHandler h, CancellationToken ct) => h.PublicGetAsync(token, ct))
+            .WithName("GetPublicRsvp")
+            .WithSummary("Read the current RSVP for this invitation (status PENDING and rsvpId null before the first submission).")
+            .Produces<RsvpDto>().ProducesProblem(StatusCodes.Status404NotFound);
+        p.MapPost("/rsvp", async (string token, SubmitRsvp input, RsvpHandler h, CancellationToken ct) =>
+                // Location is omitted on purpose: it would echo the raw invitation token into response headers/logs.
+                Results.Created((string?)null, await h.PublicCreateAsync(token, input, ct)))
+            .WithName("CreatePublicRsvp")
+            .WithSummary("First RSVP submission. Appends the first rsvp_history row in the same transaction.")
+            .Produces<RsvpDto>(StatusCodes.Status201Created)
+            .ProducesValidationProblem()
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+        p.MapPut("/rsvp", (string token, SubmitRsvp input, RsvpHandler h, CancellationToken ct) => h.PublicReplaceAsync(token, input, ct))
+            .WithName("ReplacePublicRsvp")
+            .WithSummary("Replace the existing RSVP (full representation, expectedVersion required). Each real change appends one rsvp_history row; an identical body is a no-op.")
+            .Produces<RsvpDto>()
+            .ProducesValidationProblem()
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
         p.MapPost("/gifts", (string token, PublicGift input, GiftHandler h, CancellationToken ct) => h.PublicAsync(token, input, ct));
         return endpoints;
     }
