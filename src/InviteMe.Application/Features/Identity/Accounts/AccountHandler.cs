@@ -63,6 +63,17 @@ public sealed class RefreshSessionValidator : AbstractValidator<RefreshSession>
     }
 }
 
+public sealed class ForgotPasswordValidator : AbstractValidator<ForgotPassword>
+{
+    public ForgotPasswordValidator()
+    {
+        RuleFor(x => x.Email)
+            .NotEmpty()
+            .EmailAddress()
+            .MaximumLength(255);
+    }
+}
+
 public sealed class AccountHandler(
     IAccountStore store,
     IRefreshTokenStore refreshTokens,
@@ -70,7 +81,9 @@ public sealed class AccountHandler(
     ICurrentUser current,
     RequestValidation<RegisterAccount> registerValidation,
     RequestValidation<LoginAccount> loginValidation,
-    RequestValidation<RefreshSession> refreshValidation)
+    RequestValidation<RefreshSession> refreshValidation,
+    IAccountEmailSender emailSender,
+    RequestValidation<ForgotPassword> forgotValidation)
 {
     public async Task<AccountDto> RegisterAsync(RegisterAccount input, CancellationToken ct)
     {
@@ -101,6 +114,18 @@ public sealed class AccountHandler(
         }
 
         return MapToTokenDto(issuer.Issue(account), rotation.Token);
+    }
+
+    public async Task ForgotPasswordAsync(ForgotPassword input, CancellationToken ct)
+    {
+        await forgotValidation.ValidateAsync(input, ct);
+
+        // Same outcome whether or not the email exists, so callers cannot probe for accounts.
+        var request = await store.CreatePasswordResetAsync(input.Email, ct);
+        if (request is not null)
+        {
+            await emailSender.SendPasswordResetAsync(request, ct);
+        }
     }
 
     public async Task<AccountDto> MeAsync(CancellationToken ct)
