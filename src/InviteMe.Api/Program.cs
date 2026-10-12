@@ -36,6 +36,7 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check 
 app.MapApplicationHealth();
 app.MapAccounts();
 app.MapWorkspaces();
+app.MapCoHosts();
 app.MapInvitations();
 app.MapWeddingGuests();
 app.MapWeddingWorkflow();
