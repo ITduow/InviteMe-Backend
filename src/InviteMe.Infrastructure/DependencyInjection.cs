@@ -31,6 +31,8 @@ public static class DependencyInjection
         }).AddRoles<ApplicationRole>()
           .AddEntityFrameworkStores<InviteMeDbContext>()
           .AddDefaultTokenProviders();
+        services.AddOptions<SmtpOptions>().BindConfiguration("Smtp");
+        services.AddScoped<InviteMe.Application.Ports.Authentication.IAccountEmailSender, SmtpAccountEmailSender>();
 
         services.AddScoped<IWeddingAccessReader, WeddingAccessReader>();
         services.AddScoped<InviteMe.Application.Ports.Authentication.IAccountStore, InviteMe.Infrastructure.Authentication.AccountStore>();
