@@ -38,6 +38,7 @@ internal static class WeddingWorkflowEndpoints
         g.MapGet("/seating/overflow", (Guid weddingId, SeatingHandler h, CancellationToken ct) => h.OverflowAsync(weddingId, ct));
         g.MapGet("/seating/unseated", (Guid weddingId, SeatingHandler h, CancellationToken ct, string? side = null, Guid? groupId = null) => h.UnseatedAsync(weddingId, side, groupId, ct));
         g.MapGet("/tables/{id:guid}/history", (Guid weddingId, Guid id, SeatingHandler h, CancellationToken ct) => h.HistoryAsync(weddingId, id, ct));
+        g.MapGet("/seating/report", (Guid weddingId, SeatingHandler h, CancellationToken ct) => h.ReportAsync(weddingId, ct));
         // CHK-02/03: manual lookup (body keeps names/phones out of URL logs), party card, void, summary, walk-in seating.
         g.MapPost("/check-ins/search", (Guid weddingId, SearchGuests input, ReceptionHandler h, CancellationToken ct) => h.SearchAsync(weddingId, input, ct));
         g.MapGet("/check-ins/parties/{guestId:guid}", (Guid weddingId, Guid guestId, ReceptionHandler h, CancellationToken ct) => h.PartyAsync(weddingId, guestId, ct));

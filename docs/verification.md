@@ -1,5 +1,10 @@
 # Foundation verification
 
+## Extra-table report (SEAT-01 §12, action item #17) — 2026-10-12
+
+- `GET /api/weddings/{id}/seating/report` (SEATING_VIEW), read in one repeatable-read snapshot. Extra tables are BACKUP tables with at least one BACKUP → ACTIVE history row, so a table withdrawn later still counts once; every activation is listed with actor, reason, note and the frozen overflow snapshot. Also returns booked/used/unused primary tables, declared backup tables, extra seats, activations per reason, seated people vs ACTIVE capacity (fill rate), tables per fill level and current unseated count. No schema change.
+- Against disposable PostgreSQL 17: 56 unit + 63 integration passed (119), including `ExtraTableReportCountsBackupTablesActivatedAtLeastOnce`.
+
 ## Seating lifecycle and reception extensions — 2026-10-07
 
 - Builds on the PR #4 seating/reception workflow without changing its routes or request contracts; new request fields are optional.

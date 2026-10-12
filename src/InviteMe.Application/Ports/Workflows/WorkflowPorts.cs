@@ -33,6 +33,7 @@ public interface ISeatingStore
     Task<OverflowDto> OverflowAsync(Guid weddingId, CancellationToken ct);
     Task<IReadOnlyList<UnseatedDto>> UnseatedAsync(Guid weddingId, string? side, Guid? groupId, CancellationToken ct);
     Task<IReadOnlyList<TableHistoryDto>> HistoryAsync(Guid weddingId, Guid tableId, CancellationToken ct);
+    Task<TableReportDto> ReportAsync(Guid weddingId, CancellationToken ct);
 }
 public interface IReceptionStore
 {
