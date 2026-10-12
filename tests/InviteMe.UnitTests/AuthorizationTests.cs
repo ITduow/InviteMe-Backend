@@ -53,14 +53,26 @@ public sealed class AuthorizationTests
         Assert.Null(reader.LastRequest);
     }
 
+    [Fact]
+    public async Task HasPermissionReturnsExpectedBoolean()
+    {
+        var user = Guid.NewGuid();
+        var wedding = Guid.NewGuid();
+        var reader = new AccessReader(new WeddingAccess(user, false, new HashSet<WeddingPermission>()));
+        var service = new WeddingPermissionService(new CurrentUser(user), reader);
+
+        Assert.False(await service.HasPermissionAsync(Guid.Empty, WeddingPermission.WEDDING_VIEW, default));
+        Assert.True(await service.HasPermissionAsync(wedding, WeddingPermission.WEDDING_VIEW, default));
+    }
+
     private sealed record CurrentUser(Guid? UserId) : ICurrentUser;
-    private sealed class AccessReader : IWeddingAccessReader
+    private sealed class AccessReader(WeddingAccess? result = null) : IWeddingAccessReader
     {
         public (Guid WeddingId, Guid UserId)? LastRequest { get; private set; }
         public Task<WeddingAccess?> FindAsync(Guid weddingId, Guid userId, CancellationToken cancellationToken)
         {
             LastRequest = (weddingId, userId);
-            return Task.FromResult<WeddingAccess?>(null);
+            return Task.FromResult(result);
         }
     }
 }
