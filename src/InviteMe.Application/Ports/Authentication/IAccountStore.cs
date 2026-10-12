@@ -18,6 +18,14 @@ public sealed record LoginAccount(
 
 public sealed record RefreshSession(string RefreshToken);
 
+public sealed record ForgotPassword(string Email);
+
+public sealed record PasswordResetRequest(
+    Guid UserId,
+    string Email,
+    string DisplayName,
+    string Code);
+
 public sealed record AccessToken(
     string AccessTokenValue,
     int ExpiresIn);
@@ -36,6 +44,12 @@ public interface IAccountStore
     Task<AccountIdentity> LoginAsync(LoginAccount input, CancellationToken ct);
     Task<AccountIdentity?> GetAsync(Guid id, CancellationToken ct);
     Task RevokeSessionsAsync(Guid id, CancellationToken ct);
+    Task<PasswordResetRequest?> CreatePasswordResetAsync(string email, CancellationToken ct);
+}
+
+public interface IAccountEmailSender
+{
+    Task SendPasswordResetAsync(PasswordResetRequest request, CancellationToken ct);
 }
 
 public interface IRefreshTokenStore
