@@ -216,6 +216,39 @@ public sealed class SeatingStore(InviteMeDbContext db, TimeProvider clock) : ISe
         return await db.TableStatusHistory.AsNoTracking().Where(x => x.TableId == tableId && x.WeddingId == id).OrderBy(x => x.ChangedAt).ThenBy(x => x.Id)
             .Select(x => new TableHistoryDto(x.Id, x.FromStatus, x.ToStatus, x.ReasonCode, x.Note, x.OverflowSnapshot, x.ChangedBy, x.ChangedAt)).ToListAsync(ct);
     }
+    public async Task<TableReportDto> ReportAsync(Guid id, CancellationToken ct)
+    {
+        // One snapshot for every figure, like the table list.
+        await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct);
+        var settings = await db.WeddingSettings.AsNoTracking().SingleOrDefaultAsync(x => x.WeddingId == id, ct);
+        var tables = await db.Tables.AsNoTracking().Where(x => x.WeddingId == id).Select(x => new { x.TableKind, x.Status }).ToListAsync(ct);
+        var active = await db.Database.SqlQuery<OccupancyRow>($"""
+            SELECT t.capacity AS "Capacity", inviteme.table_occupied_seats(t.id, NULL, NULL) AS "Occupied"
+              FROM inviteme.tables t WHERE t.wedding_id = {id} AND t.status = 'ACTIVE'
+            """).ToListAsync(ct);
+        // The history CHECK only allows BACKUP → ACTIVE on BACKUP-kind tables, so these rows are exactly the extra-table activations.
+        var activations = await (from h in db.TableStatusHistory.AsNoTracking()
+                                 join t in db.Tables.AsNoTracking() on h.TableId equals t.Id
+                                 join u in db.Users.AsNoTracking() on h.ChangedBy equals (Guid?)u.Id into actors
+                                 from u in actors.DefaultIfEmpty()
+                                 where h.WeddingId == id && h.FromStatus == TableStatuses.Backup && h.ToStatus == TableStatuses.Active
+                                 orderby h.ChangedAt, h.Id
+                                 select new TableActivationDto(t.Id, t.TableNumber, t.Capacity, t.Status, h.ChangedAt, h.ChangedBy,
+                                     u == null ? null : u.FullName, h.ReasonCode!, h.Note, h.OverflowSnapshot)).ToListAsync(ct);
+        var unseated = (await OverflowAsync(id, ct)).Unseated;
+        await tx.CommitAsync(ct);
+        var extra = activations.DistinctBy(x => x.TableId).ToList();
+        var fill = new[] { "EMPTY", "UNDERFILLED", "NORMAL", "FULL" }.ToDictionary(x => x, _ => 0);
+        foreach (var t in active) fill[TableDto.Fill(t.Occupied, t.Capacity)]++;
+        return new(settings?.BookedTableCount,
+            tables.Count(x => x.TableKind == TableKinds.Primary && x.Status == TableStatuses.Active),
+            tables.Count(x => x.TableKind == TableKinds.Primary && x.Status != TableStatuses.Active),
+            settings?.BackupTableLimit ?? 0, tables.Count(x => x.TableKind == TableKinds.Backup),
+            extra.Count, extra.Sum(x => x.Capacity), active.Sum(x => x.Occupied), active.Sum(x => x.Capacity), unseated, fill,
+            [.. activations.GroupBy(x => x.ReasonCode).OrderBy(x => x.Key, StringComparer.Ordinal)
+                .Select(x => new ActivationReasonDto(x.Key, x.Count(), x.Sum(a => a.Capacity)))],
+            activations);
+    }
 
     // SEAT-01 limits: booked primary tables and the venue's spare (backup) tables; INACTIVE tables free their slot.
     private async Task EnsureWithinLimits(Guid id, string kind, CancellationToken ct)
@@ -260,5 +293,10 @@ public sealed class SeatingStore(InviteMeDbContext db, TimeProvider clock) : ISe
         public string? GroupName { get; set; }
         public string? Relationship { get; set; }
         public string? DietaryNote { get; set; }
+    }
+    private sealed class OccupancyRow
+    {
+        public int Capacity { get; set; }
+        public int Occupied { get; set; }
     }
 }
