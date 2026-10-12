@@ -8,11 +8,12 @@ public sealed class JwtOptions
     // Base64-encoded random bytes, at least 256 bits.
     public string SigningKey { get; init; } = "";
     public int ExpirationMinutes { get; init; } = 15;
+    public int RefreshExpirationDays { get; init; } = 30;
 
     public bool IsValid()
     {
         if (string.IsNullOrWhiteSpace(SigningKey) || string.IsNullOrWhiteSpace(Issuer) || string.IsNullOrWhiteSpace(Audience)
-            || ExpirationMinutes is < 1 or > 60)
+            || ExpirationMinutes is < 1 or > 60 || RefreshExpirationDays is < 1 or > 90)
             return false;
         try { return Convert.FromBase64String(SigningKey).Length >= 32; }
         catch (FormatException) { return false; }
