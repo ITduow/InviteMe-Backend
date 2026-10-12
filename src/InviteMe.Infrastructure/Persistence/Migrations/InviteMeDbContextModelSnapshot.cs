@@ -338,6 +338,19 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnName("created_at")
                         .HasDefaultValueSql("NOW()");
 
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("QR")
+                        .HasColumnName("method");
+
+                    b.Property<string>("OnsiteOverrideReason")
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("onsite_override_reason");
+
                     b.Property<Guid?>("ParticipantId")
                         .HasColumnType("uuid")
                         .HasColumnName("participant_id");
@@ -349,6 +362,18 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("varchar(20)")
                         .HasDefaultValue("CHECKED_IN")
                         .HasColumnName("status");
+
+                    b.Property<string>("VoidReason")
+                        .HasColumnType("text")
+                        .HasColumnName("void_reason");
+
+                    b.Property<DateTimeOffset?>("VoidedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("voided_at");
+
+                    b.Property<Guid?>("VoidedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("voided_by");
 
                     b.Property<Guid?>("WalkinId")
                         .HasColumnType("uuid")
@@ -370,18 +395,26 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "WeddingId", "ParticipantId" }, "uq_checkins_participant")
                         .IsUnique()
                         .HasDatabaseName("uq_checkins_participant")
-                        .HasFilter("participant_id IS NOT NULL");
+                        .HasFilter("participant_id IS NOT NULL AND status = 'CHECKED_IN'");
 
                     b.HasIndex(new[] { "WeddingId", "WalkinId" }, "uq_checkins_walkin")
                         .IsUnique()
                         .HasDatabaseName("uq_checkins_walkin")
-                        .HasFilter("walkin_id IS NOT NULL");
+                        .HasFilter("walkin_id IS NOT NULL AND status = 'CHECKED_IN'");
 
                     b.ToTable("check_ins", "inviteme", t =>
                         {
+                            t.HasCheckConstraint("ck_checkins_method", "method IN ('QR', 'MANUAL', 'WALK_IN')");
+
+                            t.HasCheckConstraint("ck_checkins_method_target", "(method = 'WALK_IN') = (walkin_id IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_checkins_override_reason", "onsite_override_reason IS NULL OR onsite_override_reason IN ('DECLINED_ARRIVED', 'PENDING_ARRIVED', 'WAITLISTED_ARRIVED')");
+
                             t.HasCheckConstraint("ck_checkins_status", "status IN ('CHECKED_IN', 'VOID')");
 
                             t.HasCheckConstraint("ck_checkins_target_xor", "(participant_id IS NOT NULL AND walkin_id IS NULL) OR (participant_id IS NULL AND walkin_id IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_checkins_void_shape", "(status = 'CHECKED_IN' AND voided_at IS NULL AND voided_by IS NULL AND void_reason IS NULL) OR (status = 'VOID' AND voided_at IS NOT NULL AND void_reason IS NOT NULL)");
                         });
                 });
 
@@ -424,6 +457,19 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("varchar(30)")
                         .HasColumnName("phone");
 
+                    b.Property<Guid?>("RelatedGuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("related_guest_id");
+
+                    b.Property<string>("Side")
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("side");
+
+                    b.Property<Guid?>("TableId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("table_id");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("timestamp with time zone")
@@ -437,12 +483,19 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.HasKey("Id")
                         .HasName("walk_ins_pkey");
 
+                    b.HasIndex(new[] { "TableId" }, "ix_walkins_table_id")
+                        .HasDatabaseName("ix_walkins_table_id");
+
                     b.HasIndex(new[] { "WeddingId" }, "ix_walkins_wedding_id")
                         .HasDatabaseName("ix_walkins_wedding_id");
 
                     b.ToTable("walk_ins", "inviteme", t =>
                         {
+                            t.HasCheckConstraint("ck_walkins_full_name_not_blank", "btrim(full_name) <> ''");
+
                             t.HasCheckConstraint("ck_walkins_party_size", "party_size > 0");
+
+                            t.HasCheckConstraint("ck_walkins_side", "side IS NULL OR side IN ('BRIDE', 'GROOM', 'MUTUAL', 'OTHER')");
                         });
                 });
 
@@ -971,6 +1024,67 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("ck_permissions_scope", "scope IN ('PLATFORM', 'WEDDING')");
                         });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Identity.RefreshToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<Guid>("FamilyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("family_id");
+
+                    b.Property<Guid?>("ReplacedById")
+                        .HasColumnType("uuid")
+                        .HasColumnName("replaced_by_id");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("revoked_at");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("char(64)")
+                        .HasColumnName("token_hash")
+                        .IsFixedLength();
+
+                    b.Property<DateTimeOffset?>("UsedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("used_at");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id")
+                        .HasName("refresh_tokens_pkey");
+
+                    b.HasIndex(new[] { "FamilyId" }, "ix_refresh_tokens_family_id")
+                        .HasDatabaseName("ix_refresh_tokens_family_id");
+
+                    b.HasIndex(new[] { "UserId" }, "ix_refresh_tokens_user_id")
+                        .HasDatabaseName("ix_refresh_tokens_user_id");
+
+                    b.HasIndex(new[] { "TokenHash" }, "uq_refresh_tokens_token_hash")
+                        .IsUnique()
+                        .HasDatabaseName("uq_refresh_tokens_token_hash");
+
+                    b.ToTable("refresh_tokens", "inviteme");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Identity.RolePermission", b =>
@@ -1702,6 +1816,14 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasDefaultValue("PLANNED")
                         .HasColumnName("status");
 
+                    b.Property<string>("TableKind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("PRIMARY")
+                        .HasColumnName("table_kind");
+
                     b.Property<string>("TableNumber")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -1738,6 +1860,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.ToTable("tables", "inviteme", t =>
                         {
                             t.HasCheckConstraint("ck_tables_capacity", "capacity > 0");
+
+                            t.HasCheckConstraint("ck_tables_kind", "table_kind IN ('PRIMARY', 'BACKUP')");
+
+                            t.HasCheckConstraint("ck_tables_kind_status", "(table_kind = 'PRIMARY' AND status IN ('PLANNED', 'ACTIVE', 'INACTIVE')) OR (table_kind = 'BACKUP' AND status IN ('BACKUP', 'ACTIVE', 'INACTIVE'))");
 
                             t.HasCheckConstraint("ck_tables_status", "status IN ('PLANNED', 'ACTIVE', 'BACKUP', 'INACTIVE')");
 
@@ -1921,6 +2047,79 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.ToTable("seating_change_logs", "inviteme", t =>
                         {
                             t.HasCheckConstraint("ck_seating_logs_action", "action IN ('ASSIGN', 'MOVE', 'UNASSIGN', 'SEAT_CHANGE')");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Seating.TableStatusHistory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset>("ChangedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("changed_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid?>("ChangedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("changed_by");
+
+                    b.Property<string>("FromStatus")
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("from_status");
+
+                    b.Property<string>("Note")
+                        .HasColumnType("text")
+                        .HasColumnName("note");
+
+                    b.Property<string>("OverflowSnapshot")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("overflow_snapshot");
+
+                    b.Property<string>("ReasonCode")
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("reason_code");
+
+                    b.Property<Guid>("TableId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("table_id");
+
+                    b.Property<string>("ToStatus")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("to_status");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("table_status_history_pkey");
+
+                    b.HasIndex(new[] { "TableId" }, "ix_table_status_history_table_id")
+                        .HasDatabaseName("ix_table_status_history_table_id");
+
+                    b.HasIndex(new[] { "WeddingId", "ChangedAt" }, "ix_table_status_history_wedding_changed_at")
+                        .HasDatabaseName("ix_table_status_history_wedding_changed_at");
+
+                    b.ToTable("table_status_history", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_table_status_history_backup_activation_reason", "NOT (from_status = 'BACKUP' AND to_status = 'ACTIVE') OR reason_code IS NOT NULL");
+
+                            t.HasCheckConstraint("ck_table_status_history_from_status", "from_status IS NULL OR from_status IN ('PLANNED', 'ACTIVE', 'BACKUP', 'INACTIVE')");
+
+                            t.HasCheckConstraint("ck_table_status_history_other_note", "reason_code IS DISTINCT FROM 'OTHER' OR note IS NOT NULL");
+
+                            t.HasCheckConstraint("ck_table_status_history_reason_code", "reason_code IS NULL OR reason_code IN ('EXTRA_COMPANIONS', 'WAITLIST_PROMOTION', 'LATE_RSVP_CHANGE', 'WALK_IN', 'PLANNING_SHORTFALL', 'OTHER')");
+
+                            t.HasCheckConstraint("ck_table_status_history_to_status", "to_status IN ('PLANNED', 'ACTIVE', 'BACKUP', 'INACTIVE')");
                         });
                 });
 
@@ -2366,11 +2565,33 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("wedding_id");
 
+                    b.Property<int>("BackupTableLimit")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("backup_table_limit");
+
+                    b.Property<bool>("BlockArrivalsOverCapacity")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("block_arrivals_over_capacity");
+
+                    b.Property<int?>("BookedTableCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("booked_table_count");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at")
                         .HasDefaultValueSql("NOW()");
+
+                    b.Property<short>("DefaultTableCapacity")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("smallint")
+                        .HasDefaultValue((short)10)
+                        .HasColumnName("default_table_capacity");
 
                     b.Property<DateTimeOffset?>("RsvpDeadline")
                         .HasColumnType("timestamp with time zone")
@@ -2413,6 +2634,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.ToTable("wedding_settings", "inviteme", t =>
                         {
+                            t.HasCheckConstraint("ck_wedding_settings_backup_table_limit", "backup_table_limit >= 0");
+
+                            t.HasCheckConstraint("ck_wedding_settings_booked_table_count", "booked_table_count IS NULL OR booked_table_count > 0");
+
+                            t.HasCheckConstraint("ck_wedding_settings_default_table_capacity", "default_table_capacity BETWEEN 1 AND 20");
+
                             t.HasCheckConstraint("ck_wedding_settings_reminder_days", "rsvp_reminder_days_before >= 0");
 
                             t.HasCheckConstraint("ck_wedding_settings_visibility", "visibility IN ('PRIVATE', 'UNLISTED', 'PUBLIC')");
@@ -2936,6 +3163,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_checkins_participant");
 
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("VoidedBy")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_checkins_voided_by");
+
                     b.HasOne("InviteMe.Domain.CheckIn.WalkIn", null)
                         .WithMany()
                         .HasForeignKey("WalkinId")
@@ -2958,6 +3191,18 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_walkins_created_by");
+
+                    b.HasOne("InviteMe.Domain.Guests.WeddingGuest", null)
+                        .WithMany()
+                        .HasForeignKey("RelatedGuestId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_walkins_related_guest");
+
+                    b.HasOne("InviteMe.Domain.Seating.ReceptionTable", null)
+                        .WithMany()
+                        .HasForeignKey("TableId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_walkins_table");
 
                     b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
                         .WithMany()
@@ -3062,6 +3307,16 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_guests_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Identity.RefreshToken", b =>
+                {
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_refresh_tokens_user");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Identity.RolePermission", b =>
@@ -3304,6 +3559,29 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_seating_logs_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Seating.TableStatusHistory", b =>
+                {
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ChangedBy")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_table_status_history_changed_by");
+
+                    b.HasOne("InviteMe.Domain.Seating.ReceptionTable", null)
+                        .WithMany()
+                        .HasForeignKey("TableId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_table_status_history_table");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_table_status_history_wedding");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Weddings.LoveStory", b =>
