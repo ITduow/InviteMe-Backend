@@ -13,7 +13,9 @@ public sealed record AccountDto(
 
 public sealed record TokenDto(
     string AccessToken,
-    int ExpiresIn);
+    int ExpiresIn,
+    string RefreshToken,
+    int RefreshExpiresIn);
 
 public sealed class RegisterAccountValidator : AbstractValidator<RegisterAccount>
 {
@@ -51,12 +53,24 @@ public sealed class LoginAccountValidator : AbstractValidator<LoginAccount>
     }
 }
 
+public sealed class RefreshSessionValidator : AbstractValidator<RefreshSession>
+{
+    public RefreshSessionValidator()
+    {
+        RuleFor(x => x.RefreshToken)
+            .NotEmpty()
+            .MaximumLength(256);
+    }
+}
+
 public sealed class AccountHandler(
     IAccountStore store,
+    IRefreshTokenStore refreshTokens,
     IAccessTokenIssuer issuer,
     ICurrentUser current,
     RequestValidation<RegisterAccount> registerValidation,
-    RequestValidation<LoginAccount> loginValidation)
+    RequestValidation<LoginAccount> loginValidation,
+    RequestValidation<RefreshSession> refreshValidation)
 {
     public async Task<AccountDto> RegisterAsync(RegisterAccount input, CancellationToken ct)
     {
@@ -69,8 +83,24 @@ public sealed class AccountHandler(
     {
         await loginValidation.ValidateAsync(input, ct);
         var account = await store.LoginAsync(input, ct);
-        var token = issuer.Issue(account);
-        return new TokenDto(token.AccessTokenValue, token.ExpiresIn);
+        var refresh = await refreshTokens.IssueAsync(account.Id, issuer.RefreshLifetime, ct);
+        return MapToTokenDto(issuer.Issue(account), refresh);
+    }
+
+    public async Task<TokenDto> RefreshAsync(RefreshSession input, CancellationToken ct)
+    {
+        await refreshValidation.ValidateAsync(input, ct);
+        var rotation = await refreshTokens.RotateAsync(input.RefreshToken, issuer.RefreshLifetime, ct)
+            ?? throw InvalidRefreshToken();
+
+        var account = await store.GetAsync(rotation.UserId, ct);
+        if (account is null)
+        {
+            await refreshTokens.RevokeAllAsync(rotation.UserId, ct);
+            throw InvalidRefreshToken();
+        }
+
+        return MapToTokenDto(issuer.Issue(account), rotation.Token);
     }
 
     public async Task<AccountDto> MeAsync(CancellationToken ct)
@@ -93,6 +123,7 @@ public sealed class AccountHandler(
     {
         var userId = GetCurrentUserId();
         await store.RevokeSessionsAsync(userId, ct);
+        await refreshTokens.RevokeAllAsync(userId, ct);
     }
 
     private Guid GetCurrentUserId()
@@ -101,6 +132,23 @@ public sealed class AccountHandler(
             ProblemKind.Unauthenticated,
             "SESSION_REQUIRED",
             "Sign in first.");
+    }
+
+    private static ApplicationProblemException InvalidRefreshToken()
+    {
+        return new ApplicationProblemException(
+            ProblemKind.Unauthenticated,
+            "INVALID_REFRESH_TOKEN",
+            "Sign in again.");
+    }
+
+    private static TokenDto MapToTokenDto(AccessToken accessToken, IssuedRefreshToken refreshToken)
+    {
+        return new TokenDto(
+            accessToken.AccessTokenValue,
+            accessToken.ExpiresIn,
+            refreshToken.Value,
+            refreshToken.ExpiresIn);
     }
 
     private static AccountDto MapToDto(AccountIdentity account)
