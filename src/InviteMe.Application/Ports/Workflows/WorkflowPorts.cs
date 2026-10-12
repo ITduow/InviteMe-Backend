@@ -13,7 +13,7 @@ public interface IGuestImportStore
 public interface IRsvpStore
 {
     Task<RsvpDto> PublicGetAsync(string token, CancellationToken ct);
-    Task<RsvpDto> PublicSubmitAsync(string token, SubmitRsvp input, CancellationToken ct);
+    Task<RsvpDto> PublicSubmitAsync(string token, SubmitRsvp input, RsvpWriteMode mode, CancellationToken ct);
     Task<RsvpDto> GetAsync(Guid weddingId, Guid invitationId, CancellationToken ct);
     Task<RsvpDto> SubmitAsync(Guid weddingId, Guid invitationId, Guid actor, SubmitRsvp input, CancellationToken ct);
     Task<PagedResult<ParticipantDto>> ParticipantsAsync(Guid weddingId, PageRequest page, CancellationToken ct);

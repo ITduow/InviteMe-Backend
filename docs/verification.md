@@ -1,9 +1,10 @@
 # Foundation verification
 
-## Extra-table report (SEAT-01 §12, action item #17) — 2026-10-12
+## RSVP-02 submit/update + immutable history — 2026-10-11
 
-- `GET /api/weddings/{id}/seating/report` (SEATING_VIEW), read in one repeatable-read snapshot. Extra tables are BACKUP tables with at least one BACKUP → ACTIVE history row, so a table withdrawn later still counts once; every activation is listed with actor, reason, note and the frozen overflow snapshot. Also returns booked/used/unused primary tables, declared backup tables, extra seats, activations per reason, seated people vs ACTIVE capacity (fill rate), tables per fill level and current unseated count. No schema change.
-- Against disposable PostgreSQL 17: 56 unit + 63 integration passed (119), including `ExtraTableReportCountsBackupTablesActivatedAtLeastOnce`.
+- `dotnet build`: 0 warnings, 0 errors. Unit tests 61/61; integration tests 66/66 against real PostgreSQL 16, including `RsvpSubmitHistoryApiTests` (4) and the fresh-migration schema-equivalence test with `RsvpImmutableHistory.sql`.
+- `dotnet ef migrations has-pending-model-changes`: no changes, on both Windows and Linux.
+- Upgrade of a seeded pre-RSVP-02 database, actor backfill, and the UPDATE/DELETE/TRUNCATE guards were checked in psql. API smoke run against database `InviteMe`. See [evidence/RSVP-02](../evidence/RSVP-02/README.md).
 
 ## Seating lifecycle and reception extensions — 2026-10-07
 
