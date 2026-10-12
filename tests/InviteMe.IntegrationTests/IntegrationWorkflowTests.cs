@@ -145,7 +145,7 @@ public sealed class IntegrationWorkflowTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await owner.PutAsJsonAsync(root + $"/tables/{table.Id}", new UpdateTable(table.Version, 1, "INACTIVE"))).StatusCode);
         var invitation = assignment.ParticipantId == aid ? pa : pb;
         var state = (await owner.GetFromJsonAsync<RsvpDto>(root + $"/invitations/{invitation.Invitation.Id}/rsvp"))!;
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await owner.PutAsJsonAsync(root + $"/invitations/{state.InvitationId}/rsvp", new SubmitRsvp(state.Version, "DECLINED", []))).StatusCode);
+        // A seated guest may decline (their seat is released); see SeatingCheckInApiTests. Checked-in attendance stays locked below.
         var second = await Read<TableDto>(await owner.PostAsJsonAsync(root + "/tables", new CreateTable("T2", 2, "ACTIVE")));
         assignment = await Read<AssignmentDto>(await owner.PutAsJsonAsync(root + $"/seating/{assignment.ParticipantId}", new AssignSeat(second.Id, second.Seats[0].Id, second.Version, assignment.Version)));
         Assert.Equal(2, assignment.Version);
@@ -162,6 +162,8 @@ public sealed class IntegrationWorkflowTests
     public Task WalkinsReserveCapacityOnlyOnCheckInAndProtectWorkspaceCapacity() => WithApi(async (db, factory, owner) =>
     {
         var w = await Wedding(owner, "walkins", 2); var root = Root(w);
+        // Strict venue: arrivals beyond capacity are rejected (the default only warns).
+        await Read<SeatingSettingsDto>(await owner.PutAsJsonAsync(root + "/seating/settings", new SeatingSettings(null, 0, 10, true)));
         var walk = await Read<WalkinDto>(await owner.PostAsJsonAsync(root + "/walk-ins", new WalkinInput("Walk in", 2)));
         Assert.Equal(0, await db.WeddingGuests.CountAsync());
         await Read<CheckInDto>(await owner.PostAsJsonAsync(root + "/check-ins", new CheckInInput(WalkinId: walk.Id)));
@@ -235,10 +237,11 @@ public sealed class IntegrationWorkflowTests
         var table = await Read<TableDto>(await owner.PostAsJsonAsync(root + "/tables", new CreateTable("T", 2, "ACTIVE")));
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await owner.PutAsJsonAsync(root + $"/seating/{family.Participants[0].Id}", new AssignSeat(table.Id, null, table.Version))).StatusCode);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await owner.PostAsJsonAsync(root + "/check-ins", new CheckInInput(family.Participants[0].Id))).StatusCode);
-        waiting = await Read<RsvpDto>(await c.PostAsJsonAsync(Public(p) + "/rsvp", new SubmitRsvp(waiting.Version, "ATTENDING", family.Participants.Select(x => x.Id).ToArray())));
+        // RSVP-02: POST is first submission only; later changes use PUT on the same resource.
+        waiting = await Read<RsvpDto>(await c.PutAsJsonAsync(Public(p) + "/rsvp", new SubmitRsvp(waiting.Version, "ATTENDING", family.Participants.Select(x => x.Id).ToArray())));
         Assert.Equal(1, await db.WaitlistEntries.CountAsync(x => x.Status == "WAITING"));
         Assert.Equal(1, await db.WaitlistEntries.CountAsync(x => x.Status == "CANCELLED"));
-        var attending = await Read<RsvpDto>(await c.PostAsJsonAsync(Public(p) + "/rsvp", new SubmitRsvp(waiting.Version, "ATTENDING", [family.Participants[0].Id])));
+        var attending = await Read<RsvpDto>(await c.PutAsJsonAsync(Public(p) + "/rsvp", new SubmitRsvp(waiting.Version, "ATTENDING", [family.Participants[0].Id])));
         Assert.Equal(1, attending.ConfirmedPartySize); Assert.Equal(0, attending.WaitlistedPartySize);
         Assert.Equal(0, await db.WaitlistEntries.CountAsync(x => x.Status == "WAITING"));
         Assert.Equal(3, await db.RsvpHistory.CountAsync());
