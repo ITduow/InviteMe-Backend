@@ -3,6 +3,7 @@ using InviteMe.Application.Features.Reception;
 using InviteMe.Application.Ports.Workflows;
 using InviteMe.Domain.CheckIn;
 using InviteMe.Domain.Rsvps;
+using InviteMe.Domain.Seating;
 using InviteMe.Infrastructure.Authentication;
 using Microsoft.EntityFrameworkCore;
 using static InviteMe.Infrastructure.Persistence.Adapters.WorkflowPersistence;
@@ -57,7 +58,8 @@ public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : I
         await using var tx = await db.Database.BeginTransactionAsync(ct); await LockWedding(db, id, ct);
         if (input.RelatedGuestId is { } related && !await db.WeddingGuests.AnyAsync(x => x.Id == related && x.WeddingId == id, ct))
             throw Missing("RELATED_GUEST_NOT_FOUND");
-        if (input.TableId is { } tableId) await EnsureWalkinFits(id, tableId, input.PartySize, null, ct);
+        // Occupancy changes bump the table version, so planners holding the old version get 409 like for seat moves.
+        if (input.TableId is { } tableId) (await EnsureWalkinFits(id, tableId, input.PartySize, null, ct)).Touch();
         var walk = WalkIn.Create(id, input.FullName, input.PartySize, actor, input.Phone, input.Side, input.RelatedGuestId, input.Note, input.TableId);
         db.WalkIns.Add(walk); Audit(db, id, "walk_ins", walk.Id, "WALKIN_RECORDED", actor);
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return WalkDto(walk);
@@ -67,7 +69,12 @@ public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : I
         await using var tx = await db.Database.BeginTransactionAsync(ct); await LockWedding(db, id, ct);
         var walk = await db.WalkIns.FromSqlInterpolated($"SELECT * FROM inviteme.walk_ins WHERE id={walkinId} AND wedding_id={id} FOR UPDATE").SingleOrDefaultAsync(ct)
             ?? throw Missing("WALKIN_NOT_FOUND");
-        if (input.TableId is { } tableId && tableId != walk.TableId) await EnsureWalkinFits(id, tableId, walk.PartySize, walk.Id, ct);
+        if (input.TableId != walk.TableId)
+        {
+            // Both the table the party leaves and the one it joins change occupancy.
+            if (input.TableId is { } tableId) (await EnsureWalkinFits(id, tableId, walk.PartySize, walk.Id, ct)).Touch();
+            if (walk.TableId is { } previous) (await LockTable(id, previous, ct)).Touch();
+        }
         walk.AssignTable(input.TableId); Audit(db, id, "walk_ins", walk.Id, "WALKIN_SEATED", actor);
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return WalkDto(walk);
     }
@@ -183,14 +190,18 @@ public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : I
         return true;
     }
 
-    // The whole walk-in party sits together on an ACTIVE table; the walk-in trigger re-checks under the row lock.
-    private async Task EnsureWalkinFits(Guid id, Guid tableId, int partySize, Guid? walkinId, CancellationToken ct)
-    {
-        var table = await db.Tables.FromSqlInterpolated($"SELECT * FROM inviteme.tables WHERE id={tableId} AND wedding_id={id} FOR UPDATE").SingleOrDefaultAsync(ct)
+    private async Task<ReceptionTable> LockTable(Guid id, Guid tableId, CancellationToken ct) =>
+        await db.Tables.FromSqlInterpolated($"SELECT * FROM inviteme.tables WHERE id={tableId} AND wedding_id={id} FOR UPDATE").SingleOrDefaultAsync(ct)
             ?? throw Missing("TABLE_NOT_FOUND");
+
+    // The whole walk-in party sits together on an ACTIVE table; the walk-in trigger re-checks under the row lock.
+    private async Task<ReceptionTable> EnsureWalkinFits(Guid id, Guid tableId, int partySize, Guid? walkinId, CancellationToken ct)
+    {
+        var table = await LockTable(id, tableId, ct);
         if (table.Status != "ACTIVE") throw Rule("TABLE_NOT_ACTIVE", "Activate this table before assigning guests.");
         var occupied = (await db.Database.SqlQuery<int>($"SELECT inviteme.table_occupied_seats({tableId}, NULL, {walkinId}::uuid) AS \"Value\"").ToListAsync(ct)).Single();
         if (occupied + partySize > table.Capacity) throw Rule("TABLE_FULL", "The table does not have enough free seats for the whole party.");
+        return table;
     }
 
     private sealed class SearchRow
