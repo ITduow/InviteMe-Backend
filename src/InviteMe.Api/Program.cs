@@ -37,6 +37,7 @@ app.MapApplicationHealth();
 app.MapAccounts();
 app.MapWorkspaces();
 app.MapCoHosts();
+app.MapAuditLogs();
 app.MapInvitations();
 app.MapWeddingGuests();
 app.MapWeddingWorkflow();
