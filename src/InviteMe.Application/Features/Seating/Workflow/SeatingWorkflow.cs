@@ -29,8 +29,10 @@ public sealed record SeatDto(Guid Id, int Number, Guid? ParticipantId);
 public sealed record TableDto(Guid Id, string TableNumber, int Capacity, string Status, int Version, DateTimeOffset? ActivatedAt,
     long Occupied, IReadOnlyList<SeatDto> Seats, string Kind = TableKinds.Primary)
 {
+    public string FillLevel => Fill(Occupied, Capacity);
     // BR-039: EMPTY, UNDERFILLED (< 70%), NORMAL, FULL. Over-capacity cannot exist (database trigger).
-    public string FillLevel => Occupied == 0 ? "EMPTY" : Occupied >= Capacity ? "FULL" : Occupied * 10 < Capacity * 7 ? "UNDERFILLED" : "NORMAL";
+    public static string Fill(long occupied, int capacity) =>
+        occupied == 0 ? "EMPTY" : occupied >= capacity ? "FULL" : occupied * 10 < capacity * 7 ? "UNDERFILLED" : "NORMAL";
 }
 public sealed record AssignmentDto(Guid Id, Guid ParticipantId, Guid TableId, Guid? SeatId, int Version);
 public sealed record SeatingSettingsDto(int? BookedTableCount, int BackupTableLimit, short DefaultTableCapacity, int PrimaryTablesInUse, int BackupTablesInUse,
@@ -47,6 +49,17 @@ public sealed record UnseatedDto(Guid ParticipantId, string FullName, string Par
     string Side, Guid? GroupId, string? GroupName, string? Relationship, string? DietaryNote);
 public sealed record TableHistoryDto(Guid Id, string? FromStatus, string ToStatus, string? ReasonCode, string? Note, string? OverflowSnapshot,
     Guid? ChangedBy, DateTimeOffset ChangedAt);
+// One BACKUP → ACTIVE change; OverflowSnapshot holds the overflow numbers frozen at that moment.
+public sealed record TableActivationDto(Guid TableId, string TableNumber, int Capacity, string CurrentStatus, DateTimeOffset ActivatedAt,
+    Guid? ActivatedBy, string? ActivatedByName, string ReasonCode, string? Note, string? OverflowSnapshot);
+public sealed record ActivationReasonDto(string ReasonCode, int Activations, int Seats);
+// SEAT-01 §12 extra-table report. Extra tables = BACKUP tables activated at least once, still counted after deactivation.
+public sealed record TableReportDto(int? BookedTableCount, int PrimaryTablesUsed, int PrimaryTablesUnused, int BackupTableLimit,
+    int BackupTablesDeclared, int ExtraTables, int ExtraSeats, int SeatedPeople, int ActiveCapacity, int Unseated,
+    IReadOnlyDictionary<string, int> TablesByFillLevel, IReadOnlyList<ActivationReasonDto> ByReason, IReadOnlyList<TableActivationDto> Activations)
+{
+    public decimal FillRate => ActiveCapacity == 0 ? 0 : Math.Round(SeatedPeople * 100m / ActiveCapacity, 1);
+}
 public sealed class CreateTableValidator : AbstractValidator<CreateTable>
 {
     public CreateTableValidator() { RuleFor(x => x.TableNumber).NotEmpty().MaximumLength(100); RuleFor(x => x.Capacity).InclusiveBetween(1, 500);
@@ -125,4 +138,6 @@ public sealed class SeatingHandler(ISeatingStore store, IWeddingPermissionServic
     { await permissions.RequireAsync(id, WeddingPermission.SEATING_VIEW, ct); return await store.UnseatedAsync(id, side, groupId, ct); }
     public async Task<IReadOnlyList<TableHistoryDto>> HistoryAsync(Guid id, Guid tableId, CancellationToken ct)
     { await permissions.RequireAsync(id, WeddingPermission.SEATING_VIEW, ct); return await store.HistoryAsync(id, tableId, ct); }
+    public async Task<TableReportDto> ReportAsync(Guid id, CancellationToken ct)
+    { await permissions.RequireAsync(id, WeddingPermission.SEATING_VIEW, ct); return await store.ReportAsync(id, ct); }
 }

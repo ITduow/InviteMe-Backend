@@ -1,0 +1,113 @@
+# Migration evidence — 2026-10-11T11:16:16Z. Database: InviteMe on local PostgreSQL 16.15 (connection via ConnectionStrings__PostgreSQL env var; password not shown)
+
+$ dotnet ef migrations list (before update)
+Failed executing DbCommand (26ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+SELECT "MigrationId", "ProductVersion"
+FROM inviteme."__EFMigrationsHistory"
+ORDER BY "MigrationId";
+20260924000100_ExistingSchemaBaseline (Pending)
+20260924151913_AddIdentitySupport (Pending)
+20261002000100_AlignBusinessSchemaV2 (Pending)
+20261002141849_AdoptV2EntityMappings (Pending)
+20261003074534_AddWorkspaceSupport (Pending)
+20261003120830_AddInvitationLifecycle (Pending)
+20261009033238_AddSeatingCheckInWorkflows (Pending)
+20261011104500_AddRsvpImmutableHistory (Pending)
+
+$ dotnet ef database update
+Failed executing DbCommand (24ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+SELECT "MigrationId", "ProductVersion"
+FROM inviteme."__EFMigrationsHistory"
+ORDER BY "MigrationId";
+Acquiring an exclusive lock for migration application. See https://aka.ms/efcore-docs-migrations-lock for more information if this takes too long.
+Applying migration '20260924000100_ExistingSchemaBaseline'.
+Applying migration '20260924151913_AddIdentitySupport'.
+Acquiring an exclusive lock for migration application. See https://aka.ms/efcore-docs-migrations-lock for more information if this takes too long.
+Applying migration '20261002000100_AlignBusinessSchemaV2'.
+Acquiring an exclusive lock for migration application. See https://aka.ms/efcore-docs-migrations-lock for more information if this takes too long.
+Applying migration '20261002141849_AdoptV2EntityMappings'.
+Acquiring an exclusive lock for migration application. See https://aka.ms/efcore-docs-migrations-lock for more information if this takes too long.
+Applying migration '20261003074534_AddWorkspaceSupport'.
+Acquiring an exclusive lock for migration application. See https://aka.ms/efcore-docs-migrations-lock for more information if this takes too long.
+Applying migration '20261003120830_AddInvitationLifecycle'.
+Acquiring an exclusive lock for migration application. See https://aka.ms/efcore-docs-migrations-lock for more information if this takes too long.
+Applying migration '20261009033238_AddSeatingCheckInWorkflows'.
+Acquiring an exclusive lock for migration application. See https://aka.ms/efcore-docs-migrations-lock for more information if this takes too long.
+Applying migration '20261011104500_AddRsvpImmutableHistory'.
+Acquiring an exclusive lock for migration application. See https://aka.ms/efcore-docs-migrations-lock for more information if this takes too long.
+Done.
+
+$ dotnet ef migrations list (after update)
+20260924000100_ExistingSchemaBaseline
+20260924151913_AddIdentitySupport
+20261002000100_AlignBusinessSchemaV2
+20261002141849_AdoptV2EntityMappings
+20261003074534_AddWorkspaceSupport
+20261003120830_AddInvitationLifecycle
+20261009033238_AddSeatingCheckInWorkflows
+20261011104500_AddRsvpImmutableHistory
+
+$ dotnet ef migrations has-pending-model-changes
+No changes have been made to the model since the last migration.
+
+$ psql: connectivity round trip
+ current_database | current_user |                                                                 version
+------------------+--------------+------------------------------------------------------------------------------------------------------------------------------------------
+ InviteMe         | postgres     | PostgreSQL 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit
+(1 row)
+
+                MigrationId
+-------------------------------------------
+ 20260924000100_ExistingSchemaBaseline
+ 20260924151913_AddIdentitySupport
+ 20261002000100_AlignBusinessSchemaV2
+ 20261002141849_AdoptV2EntityMappings
+ 20261003074534_AddWorkspaceSupport
+ 20261003120830_AddInvitationLifecycle
+ 20261009033238_AddSeatingCheckInWorkflows
+ 20261011104500_AddRsvpImmutableHistory
+(8 rows)
+
+ rsvps
+-------
+     0
+(1 row)
+
+ rsvp_history
+--------------
+            0
+(1 row)
+
+                                 Table "inviteme.rsvp_history"
+          Column          |           Type           | Collation | Nullable |      Default
+--------------------------+--------------------------+-----------+----------+-------------------
+ id                       | uuid                     |           | not null | gen_random_uuid()
+ rsvp_id                  | uuid                     |           | not null |
+ old_status               | character varying(20)    |           |          |
+ new_status               | character varying(20)    |           | not null |
+ old_confirmed_party_size | integer                  |           |          |
+ new_confirmed_party_size | integer                  |           | not null |
+ old_snapshot             | jsonb                    |           |          |
+ new_snapshot             | jsonb                    |           |          |
+ changed_by               | uuid                     |           |          |
+ reason                   | text                     |           |          |
+ changed_at               | timestamp with time zone |           | not null | now()
+ actor_type               | character varying(20)    |           | not null |
+ actor_guest_id           | uuid                     |           |          |
+Indexes:
+    "rsvp_history_pkey" PRIMARY KEY, btree (id)
+    "ix_rsvp_history_changed_at" btree (changed_at)
+    "ix_rsvp_history_rsvp_changed_at" btree (rsvp_id, changed_at)
+Check constraints:
+    "ck_rsvp_history_actor_shape" CHECK (actor_type::text = 'USER'::text AND changed_by IS NOT NULL AND actor_guest_id IS NULL OR actor_type::text = 'WEDDING_GUEST'::text AND actor_guest_id IS NOT NULL AND changed_by IS NULL OR actor_type::text = 'SYSTEM'::text AND changed_by IS NULL AND actor_guest_id IS NULL)
+    "ck_rsvp_history_actor_type" CHECK (actor_type::text = ANY (ARRAY['USER'::character varying, 'WEDDING_GUEST'::character varying, 'SYSTEM'::character varying]::text[]))
+    "ck_rsvp_history_confirmed_party_sizes" CHECK ((old_confirmed_party_size IS NULL OR old_confirmed_party_size >= 0) AND new_confirmed_party_size >= 0)
+    "ck_rsvp_history_new_status" CHECK (new_status::text = ANY (ARRAY['PENDING'::character varying, 'ATTENDING'::character varying, 'DECLINED'::character varying]::text[]))
+    "ck_rsvp_history_old_status" CHECK (old_status IS NULL OR (old_status::text = ANY (ARRAY['PENDING'::character varying, 'ATTENDING'::character varying, 'DECLINED'::character varying]::text[])))
+Foreign-key constraints:
+    "fk_rsvp_history_actor_guest" FOREIGN KEY (actor_guest_id) REFERENCES inviteme.guests(id) ON DELETE RESTRICT
+    "fk_rsvp_history_changed_by" FOREIGN KEY (changed_by) REFERENCES inviteme.users(id) ON DELETE RESTRICT
+    "fk_rsvp_history_rsvp" FOREIGN KEY (rsvp_id) REFERENCES inviteme.rsvps(id) ON DELETE RESTRICT
+Triggers:
+    trg_rsvp_history_append_only BEFORE DELETE OR UPDATE ON inviteme.rsvp_history FOR EACH ROW EXECUTE FUNCTION inviteme.rsvp_history_append_only()
+    trg_rsvp_history_no_truncate BEFORE TRUNCATE ON inviteme.rsvp_history FOR EACH STATEMENT EXECUTE FUNCTION inviteme.rsvp_history_append_only()
