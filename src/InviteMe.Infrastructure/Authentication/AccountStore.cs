@@ -55,6 +55,85 @@ public sealed class AccountStore(
         return await DescribeAsync(user);
     }
 
+    public async Task<AccountIdentity> LoginWithGoogleAsync(GoogleUserPayload payload, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var user = await users.FindByLoginAsync("Google", payload.Subject);
+        if (user is not null)
+        {
+            if (user.Status != "ACTIVE" || await users.IsLockedOutAsync(user))
+            {
+                throw InvalidLogin();
+            }
+
+            if (string.IsNullOrEmpty(user.AvatarUrl) && !string.IsNullOrWhiteSpace(payload.Picture))
+            {
+                user.AvatarUrl = payload.Picture;
+                await users.UpdateAsync(user);
+            }
+
+            return await DescribeAsync(user);
+        }
+
+        var normalizedEmail = payload.Email.Trim();
+        user = await users.FindByEmailAsync(normalizedEmail);
+
+        if (user is not null)
+        {
+            if (user.Status != "ACTIVE" || await users.IsLockedOutAsync(user))
+            {
+                throw InvalidLogin();
+            }
+
+            EnsureSuccess(await users.AddLoginAsync(user, new UserLoginInfo("Google", payload.Subject, "Google")));
+
+            var updated = false;
+            if (!user.EmailConfirmed)
+            {
+                user.EmailConfirmed = true;
+                updated = true;
+            }
+
+            if (string.IsNullOrEmpty(user.AvatarUrl) && !string.IsNullOrWhiteSpace(payload.Picture))
+            {
+                user.AvatarUrl = payload.Picture;
+                updated = true;
+            }
+
+            if (updated)
+            {
+                await users.UpdateAsync(user);
+            }
+
+            return await DescribeAsync(user);
+        }
+
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+
+        var displayName = !string.IsNullOrWhiteSpace(payload.Name)
+            ? payload.Name.Trim()
+            : normalizedEmail.Split('@')[0];
+
+        user = new ApplicationUser
+        {
+            Id = Guid.NewGuid(),
+            UserName = normalizedEmail,
+            Email = normalizedEmail,
+            FullName = displayName.Length > 150 ? displayName[..150] : displayName,
+            AvatarUrl = payload.Picture,
+            EmailConfirmed = true,
+            Status = "ACTIVE"
+        };
+
+        EnsureSuccess(await users.CreateAsync(user));
+        EnsureSuccess(await users.AddToRoleAsync(user, "USER"));
+        EnsureSuccess(await users.AddLoginAsync(user, new UserLoginInfo("Google", payload.Subject, "Google")));
+
+        await transaction.CommitAsync(ct);
+        return await DescribeAsync(user);
+    }
+
     public async Task<AccountIdentity?> GetAsync(Guid id, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
