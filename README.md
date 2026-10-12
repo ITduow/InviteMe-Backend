@@ -94,6 +94,7 @@ Optional local containers: `docker compose --profile app up --build -d` serves H
 | `Jwt__Audience` | Expected audience; default InviteMe.Web |
 | `Jwt__SigningKey` | Required base64 random key, at least 32 bytes |
 | `Jwt__ExpirationMinutes` | Future issuing lifetime, 1–60; default 15 |
+| `Jwt__RefreshExpirationDays` | Refresh token sliding lifetime, 1–90; default 30 |
 | `Frontend__Url` | Exact HTTP(S) origin for CORS; default http://localhost:5173 |
 | `AllowedHosts` | Deployment hostname allowlist; default localhost |
 | `ASPNETCORE_ENVIRONMENT` | Development enables documentation; use Production when deployed |
@@ -113,6 +114,8 @@ JWT validation requires HS256, a valid signature, issuer, audience, expiry, and 
 Milestone 2 will implement register/login/current-user using Identity, rate limiting, and JWT issuance. `ExpirationMinutes` is reserved for issuance; it does not shorten externally issued tokens. Proposed logout: discard short-lived access tokens locally. Access tokens remain valid until expiry; Identity security-stamp changes do not automatically revoke bearer JWTs. Decide whether persistent rotating, hashed refresh tokens and immediate revocation are needed before adding their schema.
 
 Wedding authorization uses `IWeddingPermissionService.RequireAsync(weddingId, permission, cancellationToken)`. It obtains the actor from the authenticated context and `WeddingAccessReader` performs a read-only query scoped by wedding and user. An `ACTIVE` user is allowed as owner or as an `ACTIVE` co-host with an explicit wedding-scoped permission. ADMIN is not an implicit wedding-data bypass. Missing weddings and denied access both produce 403 to avoid revealing existence.
+
+Refresh tokens: `POST /api/auth/login` also returns `refreshToken` and `refreshExpiresIn`. `POST /api/auth/refresh` with `{ "refreshToken": "..." }` returns a new access token and a new refresh token (rotation, sliding lifetime of `Jwt__RefreshExpirationDays`). Only the SHA-256 hash is stored in `inviteme.refresh_tokens`. Reusing an already rotated token revokes the whole token family and returns `401 INVALID_REFRESH_TOKEN`. `POST /api/auth/logout` changes the security stamp and revokes every refresh token of the user, so all devices are signed out.
 
 Guests will use cryptographically random invitation tokens, storing only SHA-256 hashes. The hashing helper is implemented; invitation endpoints and persistence are not. Guests, reception staff and AI are not additional platform roles.
 
