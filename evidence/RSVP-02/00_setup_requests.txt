@@ -1,0 +1,33 @@
+# Setup: host account, wedding, Wedding-Guest, published invitation
+# Captured 2026-10-11T11:17:44+00:00 against https://localhost:7043 (ASPNETCORE_ENVIRONMENT=Development) + PostgreSQL database InviteMe.
+# Raw invitation tokens and JWTs are redacted.
+
+### register host
+> POST /api/auth/register
+> Content-Type: application/json
+> {"email": "rsvp02-host@example.test", "password": "Evidence-only-Pass123!", "displayName": "RSVP-02 Host"}
+< HTTP 201
+< Location: /api/auth/me
+< {"id":"2d93af7a-8d8a-4ceb-a993-a5ae962f469d","displayName":"RSVP-02 Host","email":"rsvp02-host@example.test","role":"USER"}
+
+### create wedding (rsvp_deadline = now + 32 days)
+> POST /api/weddings
+> Content-Type: application/json
+> {"title": "RSVP-02 Evidence Wedding", "slug": "rsvp02-evidence", "maxCapacity": 50, "timezone": "Asia/Ho_Chi_Minh", "startAt": "2026-12-10T11:17:42Z", "endAt": "2026-12-10T15:17:42Z", "rsvpDeadline": "2026-11-12T11:17:42Z", "venueName": "Riverside Hall", "venueAddress": "1 Example Street"}
+< HTTP 201
+< Location: /api/weddings/b6ab6ac0-34e8-4ca3-acf0-5cbce6d61ba7
+< {"id":"b6ab6ac0-34e8-4ca3-acf0-5cbce6d61ba7","title":"RSVP-02 Evidence Wedding","slug":"rsvp02-evidence","status":"DRAFT","maxCapacity":50,"timezone":"Asia/Ho_Chi_Minh","mainEventId":"770c9f90-b106-4c5b-ae15-dba29019467f","startAt":"2026-12-10T11:17:42+00:00","endAt":"2026-12-10T15:17:42+00:00","rsvpDeadline":"2026-11-12T11:17:42+00:00","venueId":"df231f3b-d151-4207-86e2-9a8e92c40898","venueName":"Riverside Hall","venueAddress":"1 Example Street","visibility":"PRIVATE","reminderDays":2,"version":1}
+
+### import Wedding-Guest with one invited companion
+> POST /api/weddings/b6ab6ac0-34e8-4ca3-acf0-5cbce6d61ba7/guests/import
+> Content-Type: application/json
+> {"rows": [{"guestCode": "F001", "fullName": "Nguyen Family", "email": "family@example.test", "companions": [{"fullName": "Tran Spouse", "type": "SPOUSE"}]}]}
+< HTTP 200
+< {"dryRun":false,"rowsChecked":1,"importedCount":1,"guests":[{"id":"4c2a80fe-2e24-4a95-b07f-d7b1b8ee3b62","guestCode":"F001","fullName":"Nguyen Family","participants":[{"id":"297ee732-10e3-458f-8782-fdd3cd01e8bc","guestId":"4c2a80fe-2e24-4a95-b07f-d7b1b8ee3b62","fullName":"Nguyen Family","type":"PRIMARY","attendanceStatus":"PENDING"},{"id":"c63df6ec-fe17-4e36-9905-3f8ade52e435","guestId":"4c2a80fe-2e24-4a95-b07f-d7b1b8ee3b62","fullName":"Tran Spouse","type":"SPOUSE","attendanceStatus":"PENDING"}]}]}
+
+### publish invitation
+> POST /api/weddings/b6ab6ac0-34e8-4ca3-acf0-5cbce6d61ba7/invitations/6c6ec583-7c7a-4072-baed-0c6e64528682/publish
+> Content-Type: application/json
+> {"expectedVersion": 4, "expiresAt": "2027-01-09T11:17:42Z"}
+< HTTP 200
+< {"invitation":{"id":"6c6ec583-7c7a-4072-baed-0c6e64528682","weddingId":"b6ab6ac0-34e8-4ca3-acf0-5cbce6d61ba7","guestId":"4c2a80fe-2e24-4a95-b07f-d7b1b8ee3b62","status":"PUBLISHED","version":5,"configuration":{"schemaVersion":1,"sourceWeddingVersion":1,"templateId":"50b913dd-5cae-42d7-b9d0-ce7e4567aeb6","templateName":"InviteMe Classic","title":"RSVP-02 Evidence Wedding","partnerOne":"An","partnerTwo":"Binh","startAt":"2026-12-10T11:17:42+00:00","endAt":"2026-12-10T15:17:42+00:00","timezone":"Asia/Ho_Chi_Minh","venueName":"Riverside Hall","venueAddress":"1 Example Street","capacity":50,"rsvpDeadline":"2026-11-12T11:17:42+00:00","greeting":"Welcome","loveStory":null,"giftMessage":null,"themePreset":"classic"},"publishedConfiguration":{"schemaVersion":1,"sourceWeddingVersion":1,"templateId":"50b913dd-5cae-42d7-b9d0-ce7e4567aeb6","templateName":"InviteMe Classic","title":"RSVP-02 Evidence Wedding","partnerOne":"An","partnerTwo":"Binh","startAt":"2026-12-10T11:17:42+00:00","endAt":"2026-12-10T15:17:42+00:00","timezone":"Asia/Ho_Chi_Minh","venueName":"Riverside Hall","venueAddress":"1 Example Street","capacity":50,"rsvpDeadline":"2026-11-12T11:17:42+00:00","greeting":"Welcome","loveStory":null,"giftMessage":null,"themePreset":"classic"},"previewedAt":"2026-10-11T11:17:44.070489+00:00","reviewedAt":"2026-10-11T11:17:44.103581+00:00","approvedBy":"2d93af7a-8d8a-4ceb-a993-a5ae962f469d","approvedAt":"2026-10-11T11:17:44.135088+00:00","publishedAt":"2026-10-11T11:17:44.172555+00:00","expiresAt":"2027-01-09T11:17:42+00:00","sentAt":null,"openedAt":null},"publicPath":"/invitation/8073317e54088ee443e2f92f5b49c9bddcc61ed7516dc418875ef0521bc5924b"}

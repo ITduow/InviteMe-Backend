@@ -14,6 +14,7 @@ public sealed class Rsvp
     {
         if (status is not ("PENDING" or "ATTENDING" or "DECLINED") || size < 0 || (status == "ATTENDING" ? size < 1 : size != 0))
             throw new ArgumentException("Invalid RSVP state/headcount.");
-        Status = status; ConfirmedPartySize = size; SubmittedAt = now;
+        // submitted_at keeps the first submission time; updated_at (DB trigger) tracks later changes.
+        Status = status; ConfirmedPartySize = size; SubmittedAt ??= now;
     }
 }
