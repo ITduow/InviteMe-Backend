@@ -74,6 +74,26 @@ public sealed class ForgotPasswordValidator : AbstractValidator<ForgotPassword>
     }
 }
 
+public sealed class ResetPasswordValidator : AbstractValidator<ResetPassword>
+{
+    public ResetPasswordValidator()
+    {
+        RuleFor(x => x.Email)
+            .NotEmpty()
+            .EmailAddress()
+            .MaximumLength(255);
+
+        RuleFor(x => x.Code)
+            .NotEmpty()
+            .Matches("^[0-9]{6}$");
+
+        RuleFor(x => x.NewPassword)
+            .NotEmpty()
+            .MinimumLength(12)
+            .MaximumLength(128);
+    }
+}
+
 public sealed class AccountHandler(
     IAccountStore store,
     IRefreshTokenStore refreshTokens,
@@ -83,7 +103,8 @@ public sealed class AccountHandler(
     RequestValidation<LoginAccount> loginValidation,
     RequestValidation<RefreshSession> refreshValidation,
     IAccountEmailSender emailSender,
-    RequestValidation<ForgotPassword> forgotValidation)
+    RequestValidation<ForgotPassword> forgotValidation,
+    RequestValidation<ResetPassword> resetValidation)
 {
     public async Task<AccountDto> RegisterAsync(RegisterAccount input, CancellationToken ct)
     {
@@ -126,6 +147,13 @@ public sealed class AccountHandler(
         {
             await emailSender.SendPasswordResetAsync(request, ct);
         }
+    }
+
+    public async Task ResetPasswordAsync(ResetPassword input, CancellationToken ct)
+    {
+        await resetValidation.ValidateAsync(input, ct);
+        var userId = await store.ResetPasswordAsync(input, ct);
+        await refreshTokens.RevokeAllAsync(userId, ct);
     }
 
     public async Task<AccountDto> MeAsync(CancellationToken ct)

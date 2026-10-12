@@ -1,6 +1,6 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Text.RegularExpressions;
 using InviteMe.Application.Features.Identity.Accounts;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Infrastructure.Persistence;
@@ -16,6 +16,7 @@ namespace InviteMe.IntegrationTests;
 public sealed class ForgotPasswordApiTests
 {
     private const string Password = "Test-only-Pass123!";
+    private const string NewPassword = "Brand-new-Pass456!";
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task UnknownEmailGetsTheSameAcceptedAnswerAndNoEmailIsSent() => WithApi(async (sender, client) =>
@@ -25,17 +26,62 @@ public sealed class ForgotPasswordApiTests
 
         await Register(client, "known");
         Assert.Equal(HttpStatusCode.Accepted, (await client.PostAsJsonAsync("/api/auth/forgot-password", new ForgotPassword("known@example.test"))).StatusCode);
-        var sent = Assert.Single(sender.Sent);
-        Assert.Equal("known@example.test", sent.Email);
-        Assert.Matches(new Regex("^[0-9]{6}$"), sent.Code);
+        Assert.Single(sender.Sent);
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
-    public Task InvalidEmailIsRejectedAndNothingIsSent() => WithApi(async (sender, client) =>
+    public Task ResetWithTheEmailedCodeChangesThePasswordAndEndsOldSessions() => WithApi(async (sender, client) =>
     {
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/auth/forgot-password", new ForgotPassword("not-an-email"))).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/auth/forgot-password", new ForgotPassword(""))).StatusCode);
-        Assert.Empty(sender.Sent);
+        var session = await Register(client, "reset");
+        await client.PostAsJsonAsync("/api/auth/forgot-password", new ForgotPassword("reset@example.test"));
+        var code = sender.Sent.Single().Code;
+
+        var reset = await client.PostAsJsonAsync("/api/auth/reset-password", new ResetPassword("reset@example.test", code, NewPassword));
+        Assert.Equal(HttpStatusCode.NoContent, reset.StatusCode);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/api/auth/login", new LoginAccount("reset@example.test", Password))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/auth/login", new LoginAccount("reset@example.test", NewPassword))).StatusCode);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/api/auth/refresh", new RefreshSession(session.RefreshToken))).StatusCode);
+        using var old = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+        old.Headers.Authorization = new AuthenticationHeaderValue("Bearer", session.AccessToken);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.SendAsync(old)).StatusCode);
+
+        // A reset code works only once.
+        var reuse = await client.PostAsJsonAsync("/api/auth/reset-password", new ResetPassword("reset@example.test", code, "Another-Pass789!"));
+        Assert.Equal(HttpStatusCode.BadRequest, reuse.StatusCode);
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task WrongCodeUnknownEmailAndWeakPasswordAreRejected() => WithApi(async (sender, client) =>
+    {
+        await Register(client, "reject");
+        await client.PostAsJsonAsync("/api/auth/forgot-password", new ForgotPassword("reject@example.test"));
+        var code = sender.Sent.Single().Code;
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/auth/reset-password", new ResetPassword("reject@example.test", "000000", NewPassword))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/auth/reset-password", new ResetPassword("nobody@example.test", code, NewPassword))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/auth/reset-password", new ResetPassword("reject@example.test", code, "short"))).StatusCode);
+
+        // None of the failures changed the password.
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/auth/login", new LoginAccount("reject@example.test", Password))).StatusCode);
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task RepeatedWrongCodesLockTheResetEvenForTheCorrectCode() => WithApi(async (sender, client) =>
+    {
+        await Register(client, "brute");
+        await client.PostAsJsonAsync("/api/auth/forgot-password", new ForgotPassword("brute@example.test"));
+        var code = sender.Sent.Single().Code;
+        var wrong = code == "123456" ? "654321" : "123456";
+
+        for (var i = 0; i < 5; i++)
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/auth/reset-password", new ResetPassword("brute@example.test", wrong, NewPassword))).StatusCode);
+        }
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/api/auth/reset-password", new ResetPassword("brute@example.test", code, NewPassword))).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/api/auth/login", new LoginAccount("brute@example.test", NewPassword))).StatusCode);
     });
 
     private static Task WithApi(Func<CapturingEmailSender, HttpClient, Task> action) => SchemaV2MigrationTests.InDatabase(async db =>
