@@ -35,6 +35,13 @@ internal static class AccountEndpoints
             return Results.Accepted();
         }).AllowAnonymous().RequireRateLimiting("auth");
 
+        group.MapPost("/reset-password", async (ResetPassword input, AccountHandler handler, HttpContext context, CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            await handler.ResetPasswordAsync(input, ct);
+            return Results.NoContent();
+        }).AllowAnonymous().RequireRateLimiting("auth");
+
         group.MapGet("/me", async (AccountHandler handler, CancellationToken ct) =>
         {
             var account = await handler.MeAsync(ct);

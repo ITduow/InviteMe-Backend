@@ -90,6 +90,32 @@ public sealed class AccountStore(
         return new PasswordResetRequest(user.Id, user.Email!, user.FullName, code);
     }
 
+    public async Task<Guid> ResetPasswordAsync(ResetPassword input, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var user = await users.FindByEmailAsync(input.Email.Trim());
+        if (user is not { Status: "ACTIVE" } || await users.IsLockedOutAsync(user))
+        {
+            throw InvalidResetCode();
+        }
+
+        if (!await users.VerifyUserTokenAsync(user, TokenOptions.DefaultEmailProvider, ResetPurpose, input.Code))
+        {
+            // Wrong codes count toward the normal lockout so a 6-digit code cannot be brute-forced.
+            EnsureSuccess(await users.AccessFailedAsync(user));
+            throw InvalidResetCode();
+        }
+
+        var resetToken = await users.GeneratePasswordResetTokenAsync(user);
+        EnsureSuccess(await users.ResetPasswordAsync(user, resetToken, input.NewPassword));
+
+        // A successful reset also lifts any lockout caused by earlier failed sign-ins.
+        EnsureSuccess(await users.SetLockoutEndDateAsync(user, null));
+        EnsureSuccess(await users.ResetAccessFailedCountAsync(user));
+        return user.Id;
+    }
+
     private async Task<AccountIdentity> DescribeAsync(ApplicationUser user)
     {
         var role = await users.IsInRoleAsync(user, "ADMIN") ? "ADMIN" : "USER";
@@ -107,6 +133,11 @@ public sealed class AccountStore(
             ProblemKind.Unauthenticated,
             "INVALID_CREDENTIALS",
             "Email, password or account is unavailable.");
+    }
+
+    private static ValidationException InvalidResetCode()
+    {
+        return new ValidationException([new ValidationFailure("Code", "The code is invalid or has expired.")]);
     }
 
     private static void EnsureSuccess(IdentityResult result)
