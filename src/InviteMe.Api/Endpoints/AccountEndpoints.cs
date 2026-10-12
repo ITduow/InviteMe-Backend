@@ -29,6 +29,12 @@ internal static class AccountEndpoints
             return Results.Ok(token);
         }).AllowAnonymous().RequireRateLimiting("auth");
 
+        group.MapPost("/forgot-password", async (ForgotPassword input, AccountHandler handler, CancellationToken ct) =>
+        {
+            await handler.ForgotPasswordAsync(input, ct);
+            return Results.Accepted();
+        }).AllowAnonymous().RequireRateLimiting("auth");
+
         group.MapGet("/me", async (AccountHandler handler, CancellationToken ct) =>
         {
             var account = await handler.MeAsync(ct);

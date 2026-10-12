@@ -12,6 +12,8 @@ public sealed class AccountStore(
     UserManager<ApplicationUser> users,
     InviteMeDbContext db) : IAccountStore
 {
+    private const string ResetPurpose = "ResetPassword";
+
     public async Task<AccountIdentity> RegisterAsync(RegisterAccount input, CancellationToken ct)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
@@ -72,6 +74,20 @@ public sealed class AccountStore(
 
         var user = await users.FindByIdAsync(id.ToString()) ?? throw InvalidLogin();
         EnsureSuccess(await users.UpdateSecurityStampAsync(user));
+    }
+
+    public async Task<PasswordResetRequest?> CreatePasswordResetAsync(string email, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var user = await users.FindByEmailAsync(email.Trim());
+        if (user is not { Status: "ACTIVE" })
+        {
+            return null;
+        }
+
+        var code = await users.GenerateUserTokenAsync(user, TokenOptions.DefaultEmailProvider, ResetPurpose);
+        return new PasswordResetRequest(user.Id, user.Email!, user.FullName, code);
     }
 
     private async Task<AccountIdentity> DescribeAsync(ApplicationUser user)
