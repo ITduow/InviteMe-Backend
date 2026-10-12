@@ -64,6 +64,44 @@ public sealed class SeatingCheckInApiTests
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task ExtraTableReportCountsBackupTablesActivatedAtLeastOnce() => WithApi(async (db, factory, owner) =>
+    {
+        var w = await Wedding(owner, "table-report", 20); var root = Root(w);
+        await Read<SeatingSettingsDto>(await owner.PutAsJsonAsync(root + "/seating/settings", new SeatingSettings(2, 2, 4)));
+        var guest = await Read<ImportedGuestDto>(await owner.PostAsJsonAsync(root + "/guests", new GuestInput("G001", "Family", Email: "family@example.test",
+            MaxPlusOne: 1, Companions: [new("Spouse", "SPOUSE")])));
+        var pub = await Publish(owner, w, guest.Id); await Attend(owner, pub, guest);
+        var main = await Read<TableDto>(await owner.PostAsJsonAsync(root + "/tables", new CreateTable("1", 4, "ACTIVE")));
+        await Read<TableDto>(await owner.PostAsJsonAsync(root + "/tables", new CreateTable("2", 4)));
+        var b1 = await Read<TableDto>(await owner.PostAsJsonAsync(root + "/tables", new CreateTable("B1", 4, "BACKUP")));
+        await Read<TableDto>(await owner.PostAsJsonAsync(root + "/tables", new CreateTable("B2", 6, "BACKUP")));
+        await Read<AssignmentDto>(await owner.PutAsJsonAsync(root + $"/seating/{guest.Participants[0].Id}", new AssignSeat(main.Id, null, main.Version)));
+        main = (await owner.GetFromJsonAsync<PagedResult<TableDto>>(root + "/tables"))!.Items.Single(x => x.Id == main.Id);
+        await Read<AssignmentDto>(await owner.PutAsJsonAsync(root + $"/seating/{guest.Participants[1].Id}", new AssignSeat(main.Id, null, main.Version)));
+
+        // B1: activated, withdrawn by the venue, restored and activated again - still one extra table, two activations.
+        b1 = await Read<TableDto>(await owner.PutAsJsonAsync(root + $"/tables/{b1.Id}", new UpdateTable(b1.Version, 4, "ACTIVE", "EXTRA_COMPANIONS")));
+        b1 = await Read<TableDto>(await owner.PutAsJsonAsync(root + $"/tables/{b1.Id}", new UpdateTable(b1.Version, 4, "INACTIVE")));
+        b1 = await Read<TableDto>(await owner.PutAsJsonAsync(root + $"/tables/{b1.Id}", new UpdateTable(b1.Version, 4, "BACKUP")));
+        b1 = await Read<TableDto>(await owner.PutAsJsonAsync(root + $"/tables/{b1.Id}", new UpdateTable(b1.Version, 4, "ACTIVE", "WALK_IN", "Venue confirmed")));
+
+        var report = (await owner.GetFromJsonAsync<TableReportDto>(root + "/seating/report"))!;
+        Assert.Equal((2, 1, 1, 2, 2), (report.BookedTableCount!.Value, report.PrimaryTablesUsed, report.PrimaryTablesUnused, report.BackupTableLimit,
+            report.BackupTablesDeclared));
+        Assert.Equal((1, 4), (report.ExtraTables, report.ExtraSeats));
+        Assert.Equal(new[] { "EXTRA_COMPANIONS", "WALK_IN" }, report.Activations.Select(x => x.ReasonCode));
+        Assert.All(report.Activations, x => Assert.Equal((b1.Id, "B1", "ACTIVE"), (x.TableId, x.TableNumber, x.CurrentStatus)));
+        Assert.Equal("Venue confirmed", report.Activations[1].Note);
+        Assert.NotNull(report.Activations[0].ActivatedByName);
+        Assert.Contains("\"demand\"", report.Activations[0].OverflowSnapshot!, StringComparison.Ordinal);
+        Assert.Equal(new[] { ("EXTRA_COMPANIONS", 1, 4), ("WALK_IN", 1, 4) }, report.ByReason.Select(x => (x.ReasonCode, x.Activations, x.Seats)));
+        // Two people on table 1 (4 seats) and nobody on B1: 2 of 8 active seats, one underfilled and one empty table.
+        Assert.Equal((2, 8, 25.0m, 0), (report.SeatedPeople, report.ActiveCapacity, report.FillRate, report.Unseated));
+        Assert.Equal((1, 1, 0, 0), (report.TablesByFillLevel["UNDERFILLED"], report.TablesByFillLevel["EMPTY"],
+            report.TablesByFillLevel["NORMAL"], report.TablesByFillLevel["FULL"]));
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task QrLinkScanDuplicateVoidAndManualLookup() => WithApi(async (db, factory, owner) =>
     {
         var w = await Wedding(owner, "reception", 20); var root = Root(w);
