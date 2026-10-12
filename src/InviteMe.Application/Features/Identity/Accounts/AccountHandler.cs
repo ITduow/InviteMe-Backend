@@ -94,6 +94,16 @@ public sealed class ResetPasswordValidator : AbstractValidator<ResetPassword>
     }
 }
 
+public sealed class GoogleLoginValidator : AbstractValidator<GoogleLogin>
+{
+    public GoogleLoginValidator()
+    {
+        RuleFor(x => x.IdToken)
+            .NotEmpty()
+            .MaximumLength(4096);
+    }
+}
+
 public sealed class AccountHandler(
     IAccountStore store,
     IRefreshTokenStore refreshTokens,
@@ -104,7 +114,9 @@ public sealed class AccountHandler(
     RequestValidation<RefreshSession> refreshValidation,
     IAccountEmailSender emailSender,
     RequestValidation<ForgotPassword> forgotValidation,
-    RequestValidation<ResetPassword> resetValidation)
+    RequestValidation<ResetPassword> resetValidation,
+    IGoogleTokenValidator googleValidator,
+    RequestValidation<GoogleLogin> googleValidation)
 {
     public async Task<AccountDto> RegisterAsync(RegisterAccount input, CancellationToken ct)
     {
@@ -117,6 +129,29 @@ public sealed class AccountHandler(
     {
         await loginValidation.ValidateAsync(input, ct);
         var account = await store.LoginAsync(input, ct);
+        var refresh = await refreshTokens.IssueAsync(account.Id, issuer.RefreshLifetime, ct);
+        return MapToTokenDto(issuer.Issue(account), refresh);
+    }
+
+    public async Task<TokenDto> LoginWithGoogleAsync(GoogleLogin input, CancellationToken ct)
+    {
+        await googleValidation.ValidateAsync(input, ct);
+
+        var payload = await googleValidator.ValidateAsync(input.IdToken, ct)
+            ?? throw new ApplicationProblemException(
+                ProblemKind.Unauthenticated,
+                "INVALID_GOOGLE_TOKEN",
+                "Google authentication token is invalid or expired.");
+
+        if (!payload.EmailVerified || string.IsNullOrWhiteSpace(payload.Email))
+        {
+            throw new ApplicationProblemException(
+                ProblemKind.Unauthenticated,
+                "UNVERIFIED_GOOGLE_EMAIL",
+                "Google email is not verified.");
+        }
+
+        var account = await store.LoginWithGoogleAsync(payload, ct);
         var refresh = await refreshTokens.IssueAsync(account.Id, issuer.RefreshLifetime, ct);
         return MapToTokenDto(issuer.Issue(account), refresh);
     }

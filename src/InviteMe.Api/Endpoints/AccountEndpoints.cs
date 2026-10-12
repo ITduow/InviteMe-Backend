@@ -22,6 +22,13 @@ internal static class AccountEndpoints
             return Results.Ok(token);
         }).AllowAnonymous().RequireRateLimiting("auth");
 
+        group.MapPost("/google", async (GoogleLogin input, AccountHandler handler, HttpContext context, CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            var token = await handler.LoginWithGoogleAsync(input, ct);
+            return Results.Ok(token);
+        }).AllowAnonymous().RequireRateLimiting("auth");
+
         group.MapPost("/refresh", async (RefreshSession input, AccountHandler handler, HttpContext context, CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
