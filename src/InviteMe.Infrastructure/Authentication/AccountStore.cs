@@ -195,6 +195,35 @@ public sealed class AccountStore(
         return user.Id;
     }
 
+    public async Task ChangePasswordAsync(Guid userId, ChangePassword input, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var user = await users.FindByIdAsync(userId.ToString());
+        if (user is not { Status: "ACTIVE" } || await users.IsLockedOutAsync(user))
+        {
+            throw InvalidLogin();
+        }
+
+        var result = await users.ChangePasswordAsync(user, input.CurrentPassword, input.NewPassword);
+        if (!result.Succeeded)
+        {
+            if (result.Errors.Any(e => e.Code == "PasswordMismatch"))
+            {
+                throw InvalidCurrentPassword();
+            }
+
+            EnsureSuccess(result);
+        }
+
+        EnsureSuccess(await users.UpdateSecurityStampAsync(user));
+    }
+
+    private static ValidationException InvalidCurrentPassword()
+    {
+        return new ValidationException([new ValidationFailure("CurrentPassword", "Current password is incorrect.")]);
+    }
+
     private async Task<AccountIdentity> DescribeAsync(ApplicationUser user)
     {
         var role = await users.IsInRoleAsync(user, "ADMIN") ? "ADMIN" : "USER";
