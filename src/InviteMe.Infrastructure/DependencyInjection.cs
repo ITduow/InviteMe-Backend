@@ -33,6 +33,8 @@ public static class DependencyInjection
           .AddDefaultTokenProviders();
         services.AddOptions<SmtpOptions>().BindConfiguration("Smtp");
         services.AddScoped<InviteMe.Application.Ports.Authentication.IAccountEmailSender, SmtpAccountEmailSender>();
+        services.AddOptions<InviteMe.Infrastructure.Authentication.GoogleAuthOptions>().BindConfiguration("Authentication:Google");
+        services.AddScoped<InviteMe.Application.Ports.Authentication.IGoogleTokenValidator, InviteMe.Infrastructure.Authentication.GoogleTokenValidator>();
 
         services.AddScoped<IWeddingAccessReader, WeddingAccessReader>();
         services.AddScoped<InviteMe.Application.Ports.Authentication.IAccountStore, InviteMe.Infrastructure.Authentication.AccountStore>();

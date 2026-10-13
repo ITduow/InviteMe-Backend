@@ -43,10 +43,25 @@ public sealed record RefreshRotation(
     Guid UserId,
     IssuedRefreshToken Token);
 
+public sealed record GoogleLogin(string IdToken);
+
+public sealed record GoogleUserPayload(
+    string Subject,
+    string Email,
+    bool EmailVerified,
+    string? Name,
+    string? Picture);
+
+public interface IGoogleTokenValidator
+{
+    Task<GoogleUserPayload?> ValidateAsync(string idToken, CancellationToken ct);
+}
+
 public interface IAccountStore
 {
     Task<AccountIdentity> RegisterAsync(RegisterAccount input, CancellationToken ct);
     Task<AccountIdentity> LoginAsync(LoginAccount input, CancellationToken ct);
+    Task<AccountIdentity> LoginWithGoogleAsync(GoogleUserPayload payload, CancellationToken ct);
     Task<AccountIdentity?> GetAsync(Guid id, CancellationToken ct);
     Task RevokeSessionsAsync(Guid id, CancellationToken ct);
     Task<PasswordResetRequest?> CreatePasswordResetAsync(string email, CancellationToken ct);
