@@ -238,13 +238,15 @@ public sealed class IntegrationWorkflowTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await owner.PutAsJsonAsync(root + $"/seating/{family.Participants[0].Id}", new AssignSeat(table.Id, null, table.Version))).StatusCode);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await owner.PostAsJsonAsync(root + "/check-ins", new CheckInInput(family.Participants[0].Id))).StatusCode);
         // RSVP-02: POST is first submission only; later changes use PUT on the same resource.
-        waiting = await Read<RsvpDto>(await c.PutAsJsonAsync(Public(p) + "/rsvp", new SubmitRsvp(waiting.Version, "ATTENDING", family.Participants.Select(x => x.Id).ToArray())));
+        // RSVP-03: an identical resubmission while still waitlisted is a no-op that keeps the entry (and its queue position).
+        var again = await Read<RsvpDto>(await c.PutAsJsonAsync(Public(p) + "/rsvp", new SubmitRsvp(waiting.Version, "ATTENDING", family.Participants.Select(x => x.Id).ToArray())));
+        Assert.Equal(waiting.Version, again.Version);
         Assert.Equal(1, await db.WaitlistEntries.CountAsync(x => x.Status == "WAITING"));
-        Assert.Equal(1, await db.WaitlistEntries.CountAsync(x => x.Status == "CANCELLED"));
+        Assert.Equal(0, await db.WaitlistEntries.CountAsync(x => x.Status == "CANCELLED"));
         var attending = await Read<RsvpDto>(await c.PutAsJsonAsync(Public(p) + "/rsvp", new SubmitRsvp(waiting.Version, "ATTENDING", [family.Participants[0].Id])));
         Assert.Equal(1, attending.ConfirmedPartySize); Assert.Equal(0, attending.WaitlistedPartySize);
         Assert.Equal(0, await db.WaitlistEntries.CountAsync(x => x.Status == "WAITING"));
-        Assert.Equal(3, await db.RsvpHistory.CountAsync());
+        Assert.Equal(2, await db.RsvpHistory.CountAsync());
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
