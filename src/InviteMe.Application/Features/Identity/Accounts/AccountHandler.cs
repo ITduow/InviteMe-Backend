@@ -94,6 +94,25 @@ public sealed class ResetPasswordValidator : AbstractValidator<ResetPassword>
     }
 }
 
+public sealed class ChangePasswordValidator : AbstractValidator<ChangePassword>
+{
+    public ChangePasswordValidator()
+    {
+        RuleFor(x => x.CurrentPassword)
+            .NotEmpty()
+            .MaximumLength(128);
+
+        RuleFor(x => x.NewPassword)
+            .NotEmpty()
+            .MinimumLength(12)
+            .MaximumLength(128);
+
+        RuleFor(x => x.NewPassword)
+            .NotEqual(x => x.CurrentPassword)
+            .WithMessage("New password must be different from current password.");
+    }
+}
+
 public sealed class GoogleLoginValidator : AbstractValidator<GoogleLogin>
 {
     public GoogleLoginValidator()
@@ -115,6 +134,7 @@ public sealed class AccountHandler(
     IAccountEmailSender emailSender,
     RequestValidation<ForgotPassword> forgotValidation,
     RequestValidation<ResetPassword> resetValidation,
+    RequestValidation<ChangePassword> changeValidation,
     IGoogleTokenValidator googleValidator,
     RequestValidation<GoogleLogin> googleValidation)
 {
@@ -188,6 +208,14 @@ public sealed class AccountHandler(
     {
         await resetValidation.ValidateAsync(input, ct);
         var userId = await store.ResetPasswordAsync(input, ct);
+        await refreshTokens.RevokeAllAsync(userId, ct);
+    }
+
+    public async Task ChangePasswordAsync(ChangePassword input, CancellationToken ct)
+    {
+        await changeValidation.ValidateAsync(input, ct);
+        var userId = GetCurrentUserId();
+        await store.ChangePasswordAsync(userId, input, ct);
         await refreshTokens.RevokeAllAsync(userId, ct);
     }
 

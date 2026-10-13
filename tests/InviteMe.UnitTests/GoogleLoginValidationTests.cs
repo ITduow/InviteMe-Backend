@@ -104,6 +104,7 @@ public sealed class GoogleLoginValidationTests
             new FakeEmailSender(),
             new RequestValidation<ForgotPassword>([]),
             new RequestValidation<ResetPassword>([]),
+            new RequestValidation<ChangePassword>([]),
             validator,
             googleValidation);
 
@@ -131,6 +132,7 @@ public sealed class GoogleLoginValidationTests
         public Task RevokeSessionsAsync(Guid id, CancellationToken ct) => throw new NotImplementedException();
         public Task<PasswordResetRequest?> CreatePasswordResetAsync(string email, CancellationToken ct) => throw new NotImplementedException();
         public Task<Guid> ResetPasswordAsync(ResetPassword input, CancellationToken ct) => throw new NotImplementedException();
+        public Task ChangePasswordAsync(Guid userId, ChangePassword input, CancellationToken ct) => Task.CompletedTask;
     }
 
     private sealed class FakeRefreshTokenStore : IRefreshTokenStore

@@ -25,6 +25,10 @@ public sealed record ResetPassword(
     string Code,
     string NewPassword);
 
+public sealed record ChangePassword(
+    string CurrentPassword,
+    string NewPassword);
+
 public sealed record PasswordResetRequest(
     Guid UserId,
     string Email,
@@ -66,6 +70,7 @@ public interface IAccountStore
     Task RevokeSessionsAsync(Guid id, CancellationToken ct);
     Task<PasswordResetRequest?> CreatePasswordResetAsync(string email, CancellationToken ct);
     Task<Guid> ResetPasswordAsync(ResetPassword input, CancellationToken ct);
+    Task ChangePasswordAsync(Guid userId, ChangePassword input, CancellationToken ct);
 }
 
 public interface IAccountEmailSender
