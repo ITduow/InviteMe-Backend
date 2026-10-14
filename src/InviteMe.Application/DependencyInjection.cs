@@ -22,6 +22,7 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Features.Audit.AuditHandler>();
         services.AddScoped<InviteMe.Application.Features.Invitations.Lifecycle.InvitationHandler>();
         services.AddScoped<InviteMe.Application.Features.Invitations.Lifecycle.InvitationDeliveryProcessor>();
+        services.AddScoped<InviteMe.Application.Features.Invitations.PersonalQr.PersonalQrHandler>();
         services.AddScoped<InviteMe.Application.Features.Guests.ListWeddingGuests.ListWeddingGuestsHandler>();
         services.AddScoped<InviteMe.Application.Features.Guests.Import.GuestImportHandler>();
         services.AddScoped<InviteMe.Application.Features.Rsvps.Workflow.RsvpHandler>();
