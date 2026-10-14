@@ -7,6 +7,7 @@ using InviteMe.Application.Common.Models;
 using InviteMe.Application.Features.Guests.Import;
 using InviteMe.Application.Features.Identity.Accounts;
 using InviteMe.Application.Features.Invitations.Lifecycle;
+using InviteMe.Application.Features.Invitations.PersonalQr;
 using InviteMe.Application.Features.Reception;
 using InviteMe.Application.Features.Rsvps.Workflow;
 using InviteMe.Application.Features.Seating.Workflow;
@@ -99,6 +100,43 @@ public sealed class SeatingCheckInApiTests
         Assert.Equal((2, 8, 25.0m, 0), (report.SeatedPeople, report.ActiveCapacity, report.FillRate, report.Unseated));
         Assert.Equal((1, 1, 0, 0), (report.TablesByFillLevel["UNDERFILLED"], report.TablesByFillLevel["EMPTY"],
             report.TablesByFillLevel["NORMAL"], report.TablesByFillLevel["FULL"]));
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task PersonalQrEncodesTheInvitationLinkTheEntranceScannerAccepts() => WithApi(async (db, factory, owner) =>
+    {
+        var w = await Wedding(owner, "personal-qr", 20); var root = Root(w);
+        var guest = await Read<ImportedGuestDto>(await owner.PostAsJsonAsync(root + "/guests", new GuestInput("G001", "Family", Email: "family@example.test")));
+        var pub = await Publish(owner, w, guest.Id); await Attend(owner, pub, guest);
+        var token = pub.PublicPath.Split('/')[^1];
+        using var anonymous = factory.CreateClient();
+
+        var svg = await anonymous.GetAsync($"/api/public/invitations/{token}/qr");
+        Assert.Equal((HttpStatusCode.OK, "image/svg+xml"), (svg.StatusCode, svg.Content.Headers.ContentType!.MediaType));
+        Assert.StartsWith("<svg", await svg.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.True(svg.Headers.CacheControl!.NoStore);
+        Assert.Null(svg.Content.Headers.ContentDisposition);
+
+        var png = await anonymous.GetAsync($"/api/public/invitations/{token}/qr?format=png&download=true");
+        Assert.Equal("image/png", png.Content.Headers.ContentType!.MediaType);
+        Assert.Equal(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }, (await png.Content.ReadAsByteArrayAsync())[..8]);
+        Assert.Equal("inviteme-qr.png", png.Content.Headers.ContentDisposition!.FileName);
+
+        // The encoded link is the frontend invitation page, and the entrance scan accepts it as-is.
+        using (var scope = factory.Services.CreateScope())
+        {
+            var link = scope.ServiceProvider.GetRequiredService<PersonalQrHandler>().Link(token);
+            Assert.Equal($"http://localhost:3000/invitation/{token}", link);
+            var scan = await Read<ScanResult>(await owner.PostAsJsonAsync(root + "/check-ins/scan", new ScanInvitation(link)));
+            Assert.Equal(guest.Id, scan.GuestId);
+        }
+
+        await AssertProblem(HttpStatusCode.BadRequest, "VALIDATION_FAILED", await anonymous.GetAsync($"/api/public/invitations/{token}/qr?format=gif"));
+        await AssertProblem(HttpStatusCode.NotFound, "INVITATION_NOT_FOUND", await anonymous.GetAsync($"/api/public/invitations/{new string('a', 64)}/qr"));
+        await AssertProblem(HttpStatusCode.NotFound, "INVITATION_NOT_FOUND", await anonymous.GetAsync("/api/public/invitations/not-a-token/qr"));
+        var current = await Read<InvitationDto>(await owner.GetAsync(root + $"/invitations/{pub.Invitation.Id}"));
+        await Read<InvitationDto>(await owner.PostAsJsonAsync(root + $"/invitations/{pub.Invitation.Id}/revoke", new InvitationAction(current.Version)));
+        await AssertProblem(HttpStatusCode.NotFound, "INVITATION_NOT_FOUND", await anonymous.GetAsync($"/api/public/invitations/{token}/qr"));
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]

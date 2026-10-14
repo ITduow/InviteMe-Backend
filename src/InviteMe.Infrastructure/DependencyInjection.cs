@@ -56,6 +56,7 @@ public static class DependencyInjection
         services.AddScoped<IInvitationStore>(p => p.GetRequiredService<InvitationStore>());
         services.AddScoped<IInvitationDeliveryQueue>(p => p.GetRequiredService<InvitationStore>());
         services.AddScoped<IInvitationSender, SandboxInvitationSender>();
+        services.AddSingleton<IQrCodeRenderer, InviteMe.Infrastructure.Invitations.QrCodeRenderer>();
         services.AddHostedService<InvitationDeliveryWorker>();
         services.AddHealthChecks().AddCheck<PostgreSqlHealthCheck>("postgresql", tags: ["ready"]);
         return services;
