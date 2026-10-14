@@ -92,6 +92,13 @@ public sealed class AuthRefreshApiTests
 
         Assert.Single(results, x => x.StatusCode == HttpStatusCode.OK);
         Assert.Single(results, x => x.StatusCode == HttpStatusCode.Unauthorized);
+
+        // When concurrent requests race with the same token, the competing request detects reuse
+        // and revokes the entire token family, ensuring stolen/replayed tokens cannot be leveraged.
+        var okResult = results.Single(x => x.StatusCode == HttpStatusCode.OK);
+        var okToken = (await okResult.Content.ReadFromJsonAsync<TokenDto>())!;
+        await AssertInvalidRefresh(client, okToken.RefreshToken);
+        Assert.Equal(0, await Count(db, "SELECT count(*)::int AS \"Value\" FROM inviteme.refresh_tokens WHERE revoked_at IS NULL"));
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
