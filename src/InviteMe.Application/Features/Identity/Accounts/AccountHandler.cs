@@ -150,6 +150,28 @@ public sealed class GoogleLoginValidator : AbstractValidator<GoogleLogin>
     }
 }
 
+public sealed class DeleteAccountValidator : AbstractValidator<DeleteAccount>
+{
+    public DeleteAccountValidator()
+    {
+        RuleFor(x => x)
+            .Must(x => !string.IsNullOrWhiteSpace(x.Password) || !string.IsNullOrWhiteSpace(x.GoogleIdToken))
+            .WithMessage("Either password or Google ID token is required for account deletion.");
+
+        When(x => !string.IsNullOrWhiteSpace(x.Password), () =>
+        {
+            RuleFor(x => x.Password)
+                .MaximumLength(128);
+        });
+
+        When(x => !string.IsNullOrWhiteSpace(x.GoogleIdToken), () =>
+        {
+            RuleFor(x => x.GoogleIdToken)
+                .MaximumLength(4096);
+        });
+    }
+}
+
 public sealed class AccountHandler(
     IAccountStore store,
     IRefreshTokenStore refreshTokens,
@@ -165,7 +187,8 @@ public sealed class AccountHandler(
     RequestValidation<ResendConfirmation> resendValidation,
     RequestValidation<ChangePassword> changeValidation,
     IGoogleTokenValidator googleValidator,
-    RequestValidation<GoogleLogin> googleValidation)
+    RequestValidation<GoogleLogin> googleValidation,
+    RequestValidation<DeleteAccount> deleteValidation)
 {
     public async Task<AccountDto> RegisterAsync(RegisterAccount input, CancellationToken ct)
     {
@@ -291,6 +314,33 @@ public sealed class AccountHandler(
     {
         var userId = GetCurrentUserId();
         await store.RevokeSessionsAsync(userId, ct);
+        await refreshTokens.RevokeAllAsync(userId, ct);
+    }
+
+    public async Task DeleteAccountAsync(DeleteAccount input, CancellationToken ct)
+    {
+        await deleteValidation.ValidateAsync(input, ct);
+        var userId = GetCurrentUserId();
+
+        GoogleUserPayload? googlePayload = null;
+        if (!string.IsNullOrWhiteSpace(input.GoogleIdToken))
+        {
+            googlePayload = await googleValidator.ValidateAsync(input.GoogleIdToken, ct)
+                ?? throw new ApplicationProblemException(
+                    ProblemKind.Unauthenticated,
+                    "INVALID_GOOGLE_TOKEN",
+                    "Google authentication token is invalid or expired.");
+
+            if (!googlePayload.EmailVerified || string.IsNullOrWhiteSpace(googlePayload.Email))
+            {
+                throw new ApplicationProblemException(
+                    ProblemKind.Unauthenticated,
+                    "UNVERIFIED_GOOGLE_EMAIL",
+                    "Google email is not verified.");
+            }
+        }
+
+        await store.DeleteAccountAsync(userId, input, googlePayload, ct);
         await refreshTokens.RevokeAllAsync(userId, ct);
     }
 
