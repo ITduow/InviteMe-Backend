@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace InviteMe.Application.Features.Reception;
 
-// The QR encodes the personal invitation link (https://<host>/i/{token}) or the bare token.
+// The QR encodes the personal invitation link (https://<host>/invitation/{token}, see PersonalQrHandler) or the bare token.
 public static partial class QrPayload
 {
     public static bool TryReadToken(string? payload, out string token)
