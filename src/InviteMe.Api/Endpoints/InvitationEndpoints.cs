@@ -1,4 +1,5 @@
 using InviteMe.Application.Features.Invitations.Lifecycle;
+using InviteMe.Application.Features.Invitations.PersonalQr;
 using InviteMe.Application.Ports.Invitations;
 
 namespace InviteMe.Api.Endpoints;
@@ -26,6 +27,15 @@ internal static class InvitationEndpoints
         group.MapGet("/{id:guid}/link", async (Guid weddingId, Guid id, InvitationHandler h, CancellationToken ct) => Results.Ok(new { publicPath = await h.LinkAsync(weddingId, id, ct) }));
         endpoints.MapGet("/api/public/invitations/{token}", (string token, IInvitationStore store, CancellationToken ct) => store.PublicAsync(token, false, ct))
             .AllowAnonymous().RequireRateLimiting("PublicInvitation").WithTags("Public Invitations");
+        // Guest06: personal QR for the invitation page; no-store because the image carries the guest's token.
+        endpoints.MapGet("/api/public/invitations/{token}/qr", async (string token, PersonalQrHandler h, HttpContext http, CancellationToken ct,
+            string format = "svg", bool download = false) =>
+        {
+            var qr = await h.RenderAsync(token, new PersonalQrQuery(format, download), ct);
+            http.Response.Headers.CacheControl = "no-store";
+            http.Response.Headers["Referrer-Policy"] = "no-referrer";
+            return Results.File(qr.Content, qr.ContentType, qr.DownloadName);
+        }).AllowAnonymous().RequireRateLimiting("PublicInvitation").WithTags("Public Invitations");
         endpoints.MapPost("/api/public/invitations/{token}/opened", (string token, IInvitationStore store, CancellationToken ct) => store.PublicAsync(token, true, ct))
             .AllowAnonymous().RequireRateLimiting("PublicInvitation").WithTags("Public Invitations");
         return endpoints;
