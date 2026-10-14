@@ -60,6 +60,7 @@ internal static class ApiExtensions
             frontendUri.AbsolutePath != "/" || !string.IsNullOrEmpty(frontendUri.Query) ||
             !string.IsNullOrEmpty(frontendUri.Fragment) || !string.IsNullOrEmpty(frontendUri.UserInfo))
             throw new InvalidOperationException("Frontend:Url must be an HTTP(S) origin without a path.");
+        services.AddSingleton(new InviteMe.Application.Features.Invitations.PersonalQr.PersonalQrOptions(frontendUri.GetLeftPart(UriPartial.Authority)));
         services.AddCors(options => options.AddPolicy("Frontend", policy =>
             policy.WithOrigins(frontendUri.GetLeftPart(UriPartial.Authority))
                 .AllowAnyHeader().AllowAnyMethod().AllowCredentials()));

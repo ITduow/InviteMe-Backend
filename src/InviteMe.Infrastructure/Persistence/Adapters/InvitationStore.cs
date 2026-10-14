@@ -132,7 +132,7 @@ public sealed class InvitationStore(InviteMeDbContext db, IDataProtectionProvide
         }
         Audit(x, actorId, action); await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return new(Dto(x), path);
     }
-    private static string PublicPath(string token) => "/invitation/" + token;
+    private static string PublicPath(string token) => InvitationLinks.PublicPath(token);
     private string GetToken(Invitation x)
     {
         try { return protector.Unprotect(x.ProtectedToken ?? throw new CryptographicException()); }
