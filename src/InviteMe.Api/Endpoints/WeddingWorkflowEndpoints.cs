@@ -1,3 +1,4 @@
+using InviteMe.Application.Features.Dashboard;
 using InviteMe.Application.Common.Models;
 using InviteMe.Application.Features.Guests.Import;
 using InviteMe.Application.Features.Rsvps.Workflow;
@@ -48,6 +49,19 @@ internal static class WeddingWorkflowEndpoints
         g.MapGet("/gifts", (Guid weddingId, GiftHandler h, CancellationToken ct, int page = 1, int pageSize = 25) => h.ListAsync(weddingId, new PageRequest(page, pageSize), ct));
         g.MapPost("/gifts", (Guid weddingId, RecordGift input, GiftHandler h, CancellationToken ct) => h.RecordAsync(weddingId, input, ct));
         g.MapPost("/gifts/{id:guid}/confirm", (Guid weddingId, Guid id, GiftHandler h, CancellationToken ct) => h.ConfirmAsync(weddingId, id, ct));
+        // Couple06 headcount dashboard; clients refetch on RsvpChanged / WaitlistPromoted / GuestsChanged / CheckedIn events.
+        g.MapGet("/dashboard/headcount", (Guid weddingId, HeadcountDashboard h, CancellationToken ct, string? side = null, Guid? groupId = null) =>
+            h.HeadcountAsync(weddingId, new DashboardFilter(side, groupId), ct));
+        g.MapGet("/dashboard/guests", (Guid weddingId, HeadcountDashboard h, CancellationToken ct, string? side = null, Guid? groupId = null,
+            string? rsvpStatus = null, string? search = null, int page = 1, int pageSize = 25) =>
+            h.GuestsAsync(weddingId, new DashboardGuestQuery(side, groupId, rsvpStatus, search, page, pageSize), ct));
+        g.MapGet("/dashboard/guests/export", async (Guid weddingId, HeadcountDashboard h, HttpContext http, CancellationToken ct, string? side = null,
+            Guid? groupId = null, string? rsvpStatus = null, string? search = null) =>
+        {
+            var file = await h.ExportAsync(weddingId, new DashboardGuestQuery(side, groupId, rsvpStatus, search), ct);
+            http.Response.Headers.CacheControl = "no-store";
+            return Results.File(file.Content, "text/csv; charset=utf-8", file.FileName);
+        });
         g.MapGet("/reports/summary", (Guid weddingId, WeddingReportHandler h, CancellationToken ct, bool includeGifts = false) => h.GetAsync(weddingId, includeGifts, ct));
         var p = endpoints.MapGroup("/api/public/invitations/{token}").AllowAnonymous().RequireRateLimiting("PublicInvitation").WithTags("Public Invitations");
         // RSVP-02: the RSVP is a sub-resource of the invitation; the 64-hex invitation token in the path is the Wedding-Guest credential.

@@ -5,6 +5,7 @@ using InviteMe.Application.Common.Models;
 using InviteMe.Application.Features.Guests.Import;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Application.Ports.Authorization;
+using InviteMe.Application.Ports.Realtime;
 using InviteMe.Application.Ports.Workflows;
 using InviteMe.Domain.Weddings;
 
@@ -37,22 +38,36 @@ public sealed class SubmitRsvpValidator : AbstractValidator<SubmitRsvp>
             .WithMessage("Select at least one attendee.");
     }
 }
-public sealed class RsvpHandler(IRsvpStore store, IWeddingPermissionService permissions, ICurrentUser user,
+// Couple06: every committed RSVP change is broadcast so the headcount dashboard refetches instead of polling.
+public sealed class RsvpHandler(IRsvpStore store, IWeddingPermissionService permissions, ICurrentUser user, IWeddingChangePublisher changes,
     RequestValidation<SubmitRsvp> validation, RequestValidation<PageRequest> pageValidation)
 {
     public Task<RsvpDto> PublicGetAsync(string token, CancellationToken ct) => store.PublicGetAsync(token, ct);
     public async Task<RsvpDto> PublicCreateAsync(string token, SubmitRsvp input, CancellationToken ct)
-    { await validation.ValidateAsync(input, ct); return await store.PublicSubmitAsync(token, input, RsvpWriteMode.Create, ct); }
+    { await validation.ValidateAsync(input, ct); return await PublishPublic(await store.PublicSubmitAsync(token, input, RsvpWriteMode.Create, ct), ct); }
     public async Task<RsvpDto> PublicReplaceAsync(string token, SubmitRsvp input, CancellationToken ct)
-    { await validation.ValidateAsync(input, ct); return await store.PublicSubmitAsync(token, input, RsvpWriteMode.Replace, ct); }
+    { await validation.ValidateAsync(input, ct); return await PublishPublic(await store.PublicSubmitAsync(token, input, RsvpWriteMode.Replace, ct), ct); }
     public async Task<RsvpDto> GetAsync(Guid weddingId, Guid invitationId, CancellationToken ct)
     { await permissions.RequireAsync(weddingId, WeddingPermission.RSVP_VIEW, ct); return await store.GetAsync(weddingId, invitationId, ct); }
     public async Task<RsvpDto> SubmitAsync(Guid weddingId, Guid invitationId, SubmitRsvp input, CancellationToken ct)
-    { await permissions.RequireAsync(weddingId, WeddingPermission.GUEST_EDIT, ct); await validation.ValidateAsync(input, ct); return await store.SubmitAsync(weddingId, invitationId, user.UserId!.Value, input, ct); }
+    {
+        await permissions.RequireAsync(weddingId, WeddingPermission.GUEST_EDIT, ct); await validation.ValidateAsync(input, ct);
+        var rsvp = await store.SubmitAsync(weddingId, invitationId, user.UserId!.Value, input, ct);
+        await changes.PublishAsync(weddingId, new("RsvpChanged", rsvp.InvitationId, rsvp.Version), ct); return rsvp;
+    }
     public async Task<PagedResult<ParticipantDto>> ParticipantsAsync(Guid weddingId, PageRequest page, CancellationToken ct)
     { await permissions.RequireAsync(weddingId, WeddingPermission.GUEST_VIEW, ct); await pageValidation.ValidateAsync(page, ct); return await store.ParticipantsAsync(weddingId, page, ct); }
     public async Task<PagedResult<WaitlistDto>> WaitlistAsync(Guid weddingId, PageRequest page, CancellationToken ct)
     { await permissions.RequireAsync(weddingId, WeddingPermission.RSVP_VIEW, ct); await pageValidation.ValidateAsync(page, ct); return await store.WaitlistAsync(weddingId, page, ct); }
     public async Task<RsvpDto> PromoteAsync(Guid weddingId, Guid entryId, CancellationToken ct)
-    { await permissions.RequireAsync(weddingId, WeddingPermission.GUEST_EDIT, ct); return await store.PromoteAsync(weddingId, entryId, user.UserId!.Value, ct); }
+    {
+        await permissions.RequireAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
+        var rsvp = await store.PromoteAsync(weddingId, entryId, user.UserId!.Value, ct);
+        await changes.PublishAsync(weddingId, new("WaitlistPromoted", rsvp.InvitationId, rsvp.Version), ct); return rsvp;
+    }
+    private async Task<RsvpDto> PublishPublic(RsvpDto rsvp, CancellationToken ct)
+    {
+        await changes.PublishAsync(await store.WeddingOfInvitationAsync(rsvp.InvitationId, ct), new("RsvpChanged", rsvp.InvitationId, rsvp.Version), ct);
+        return rsvp;
+    }
 }

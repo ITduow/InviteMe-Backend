@@ -2,8 +2,10 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using InviteMe.Application.Common.Models;
+using InviteMe.Application.Features.Dashboard;
 using InviteMe.Application.Features.Guests.Import;
 using InviteMe.Application.Features.Identity.Accounts;
 using InviteMe.Application.Features.Invitations.Lifecycle;
@@ -100,6 +102,64 @@ public sealed class SeatingCheckInApiTests
         Assert.Equal((2, 8, 25.0m, 0), (report.SeatedPeople, report.ActiveCapacity, report.FillRate, report.Unseated));
         Assert.Equal((1, 1, 0, 0), (report.TablesByFillLevel["UNDERFILLED"], report.TablesByFillLevel["EMPTY"],
             report.TablesByFillLevel["NORMAL"], report.TablesByFillLevel["FULL"]));
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task HeadcountDashboardFollowsRsvpsLiveWithFiltersListAndExport() => WithApi(async (db, factory, owner) =>
+    {
+        var w = await Wedding(owner, "dashboard", 20); var root = Root(w);
+        var import = await Read<ImportResult>(await owner.PostAsJsonAsync(root + "/guests/import", new ImportGuests([
+            new GuestInput("G001", "Nguyễn Văn An", Phone: "0912 345 678", Side: "BRIDE", MaxPlusOne: 1, Companions: [new("Spouse", "SPOUSE")]),
+            new GuestInput("G002", "Trần Thị Bình", Email: "binh@example.test", Side: "GROOM"),
+            new GuestInput("G003", "Lê Cường")])));
+        Assert.Contains(factory.Changes, x => x.Type == "GuestsChanged" && x.EntityId == w.Id);
+        var (an, binh) = (import.Guests.Single(x => x.GuestCode == "G001"), import.Guests.Single(x => x.GuestCode == "G002"));
+        var group = Guid.NewGuid();
+        await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO inviteme.guest_groups (id, wedding_id, name) VALUES ({group}, {w.Id}, 'Đồng nghiệp')");
+        await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE inviteme.guests SET group_id = {group} WHERE id = {an.Id}");
+        await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE inviteme.guests SET notes = 'Gửi quà trước' WHERE id = {binh.Id}");
+        await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE inviteme.guest_participants SET dietary_note = 'Ăn chay' WHERE id = {an.Participants[1].Id}");
+
+        // Wedding Guests answer through their links; each answer is broadcast for the dashboard.
+        var anPub = await Publish(owner, w, an.Id); var binhPub = await Publish(owner, w, binh.Id);
+        using var guest = factory.CreateClient();
+        async Task Answer(PublicationDto pub, Func<int, SubmitRsvp> answer)
+        {
+            var rsvp = (await guest.GetFromJsonAsync<RsvpDto>($"/api/public/invitations/{pub.PublicPath.Split('/')[^1]}/rsvp"))!;
+            await Read<RsvpDto>(await guest.PostAsJsonAsync($"/api/public/invitations/{pub.PublicPath.Split('/')[^1]}/rsvp", answer(rsvp.Version)));
+        }
+        await Answer(anPub, v => new SubmitRsvp(v, "ATTENDING", an.Participants.Select(x => x.Id).ToArray(), ["Bạn của An"]));
+        await Answer(binhPub, v => new SubmitRsvp(v, "DECLINED", []));
+        Assert.Contains(factory.Changes, x => x.Type == "RsvpChanged" && x.EntityId == anPub.Invitation.Id);
+        Assert.Contains(factory.Changes, x => x.Type == "RsvpChanged" && x.EntityId == binhPub.Invitation.Id);
+
+        var all = (await owner.GetFromJsonAsync<HeadcountDto>(root + "/dashboard/headcount"))!;
+        Assert.Equal((20, 3L, 17L), (all.Capacity!.Value, all.Occupied, all.RemainingCapacity!.Value));
+        Assert.Equal((3, 2, 1, 2, 0), (all.TotalGuests, all.InvitedGuests, all.NotInvitedGuests, all.RespondedGuests, all.NotRespondedGuests));
+        Assert.Equal((3, 1, 1, 0, 1), (all.AttendingPeople, all.DeclinedPeople, all.PendingPeople, all.WaitlistedPeople, all.PlusOnes));
+        Assert.Equal((1, 1), (all.Notes.AttendingWithDietaryNote, all.Notes.GuestsWithNotes));
+        Assert.Equal(new[] { "BRIDE", "GROOM", "MUTUAL" }, all.BySide.Select(x => x.Key));
+        Assert.Equal(new[] { "Đồng nghiệp", "Ungrouped" }, all.ByGroup.Select(x => x.Label));
+        var bride = (await owner.GetFromJsonAsync<HeadcountDto>(root + "/dashboard/headcount?side=BRIDE"))!;
+        Assert.Equal((1, 3, 17L), (bride.TotalGuests, bride.AttendingPeople, bride.RemainingCapacity!.Value));
+        Assert.Equal(1, (await owner.GetFromJsonAsync<HeadcountDto>(root + $"/dashboard/headcount?groupId={group}"))!.TotalGuests);
+
+        var attending = (await owner.GetFromJsonAsync<PagedResult<DashboardGuestDto>>(root + "/dashboard/guests?rsvpStatus=ATTENDING"))!;
+        var row = Assert.Single(attending.Items);
+        Assert.Equal(("G001", "Đồng nghiệp", 3, 1), (row.GuestCode, row.GroupName, row.Attending, row.PlusOnes));
+        Assert.Matches(@"^\*+678$", row.MaskedPhone!); // only the last three digits are shown
+        Assert.Equal("Spouse: Ăn chay", row.DietaryNotes);
+        Assert.Equal("G002", Assert.Single((await owner.GetFromJsonAsync<PagedResult<DashboardGuestDto>>(root + "/dashboard/guests?search=binh"))!.Items).GuestCode);
+        Assert.Equal("NOT_INVITED", Assert.Single((await owner.GetFromJsonAsync<PagedResult<DashboardGuestDto>>(root + "/dashboard/guests?rsvpStatus=NOT_INVITED"))!.Items).RsvpStatus);
+
+        var export = await owner.GetAsync(root + "/dashboard/guests/export?side=GROOM");
+        Assert.Equal(("text/csv", "inviteme-guests.csv"), (export.Content.Headers.ContentType!.MediaType, export.Content.Headers.ContentDisposition!.FileName));
+        var csv = Encoding.UTF8.GetString((await export.Content.ReadAsByteArrayAsync())[3..]).Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(2, csv.Length);
+        Assert.StartsWith("G002,Trần Thị Bình,GROOM,,,binh@example.test,DECLINED", csv[1], StringComparison.Ordinal);
+
+        await AssertProblem(HttpStatusCode.BadRequest, "VALIDATION_FAILED", await owner.GetAsync(root + "/dashboard/headcount?side=LEFT"));
+        await AssertProblem(HttpStatusCode.BadRequest, "VALIDATION_FAILED", await owner.GetAsync(root + "/dashboard/guests?rsvpStatus=MAYBE"));
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]

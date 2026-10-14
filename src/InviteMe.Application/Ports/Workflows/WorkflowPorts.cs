@@ -19,6 +19,7 @@ public interface IRsvpStore
     Task<PagedResult<ParticipantDto>> ParticipantsAsync(Guid weddingId, PageRequest page, CancellationToken ct);
     Task<PagedResult<WaitlistDto>> WaitlistAsync(Guid weddingId, PageRequest page, CancellationToken ct);
     Task<RsvpDto> PromoteAsync(Guid weddingId, Guid entryId, Guid actor, CancellationToken ct);
+    Task<Guid> WeddingOfInvitationAsync(Guid invitationId, CancellationToken ct);
 }
 public interface ISeatingStore
 {
