@@ -47,5 +47,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
         public Task<PasswordResetRequest?> CreatePasswordResetAsync(string email, CancellationToken ct) => throw new NotImplementedException();
         public Task<Guid> ResetPasswordAsync(ResetPassword input, CancellationToken ct) => throw new NotImplementedException();
         public Task ChangePasswordAsync(Guid userId, ChangePassword input, CancellationToken ct) => throw new NotImplementedException();
+        public Task<EmailConfirmationRequest?> CreateEmailConfirmationAsync(string email, CancellationToken ct) => Task.FromResult<EmailConfirmationRequest?>(null);
+        public Task ConfirmEmailAsync(ConfirmEmail input, CancellationToken ct) => Task.CompletedTask;
     }
 }

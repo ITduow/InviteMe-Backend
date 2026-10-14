@@ -13,6 +13,7 @@ public sealed class AccountStore(
     InviteMeDbContext db) : IAccountStore
 {
     private const string ResetPurpose = "ResetPassword";
+    private const string ConfirmationPurpose = "EmailConfirmation";
 
     public async Task<AccountIdentity> RegisterAsync(RegisterAccount input, CancellationToken ct)
     {
@@ -219,6 +220,46 @@ public sealed class AccountStore(
         EnsureSuccess(await users.UpdateSecurityStampAsync(user));
     }
 
+    public async Task<EmailConfirmationRequest?> CreateEmailConfirmationAsync(string email, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var user = await users.FindByEmailAsync(email.Trim());
+        if (user is not { Status: "ACTIVE" } || await users.IsLockedOutAsync(user) || user.EmailConfirmed)
+        {
+            return null;
+        }
+
+        var code = await users.GenerateUserTokenAsync(user, TokenOptions.DefaultEmailProvider, ConfirmationPurpose);
+        return new EmailConfirmationRequest(user.Id, user.Email!, user.FullName, code);
+    }
+
+    public async Task ConfirmEmailAsync(ConfirmEmail input, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var user = await users.FindByEmailAsync(input.Email.Trim());
+        if (user is not { Status: "ACTIVE" } || await users.IsLockedOutAsync(user))
+        {
+            throw InvalidConfirmationCode();
+        }
+
+        if (user.EmailConfirmed)
+        {
+            return;
+        }
+
+        if (!await users.VerifyUserTokenAsync(user, TokenOptions.DefaultEmailProvider, ConfirmationPurpose, input.Code))
+        {
+            EnsureSuccess(await users.AccessFailedAsync(user));
+            throw InvalidConfirmationCode();
+        }
+
+        user.EmailConfirmed = true;
+        EnsureSuccess(await users.UpdateAsync(user));
+        EnsureSuccess(await users.ResetAccessFailedCountAsync(user));
+    }
+
     private static ValidationException InvalidCurrentPassword()
     {
         return new ValidationException([new ValidationFailure("CurrentPassword", "Current password is incorrect.")]);
@@ -232,7 +273,8 @@ public sealed class AccountStore(
             user.FullName,
             user.Email!,
             role,
-            user.SecurityStamp!);
+            user.SecurityStamp!,
+            user.EmailConfirmed);
     }
 
     private static ApplicationProblemException InvalidLogin()
@@ -246,6 +288,11 @@ public sealed class AccountStore(
     private static ValidationException InvalidResetCode()
     {
         return new ValidationException([new ValidationFailure("Code", "The code is invalid or has expired.")]);
+    }
+
+    private static ValidationException InvalidConfirmationCode()
+    {
+        return new ValidationException([new ValidationFailure("Code", "The confirmation code is invalid or has expired.")]);
     }
 
     private static void EnsureSuccess(IdentityResult result)
