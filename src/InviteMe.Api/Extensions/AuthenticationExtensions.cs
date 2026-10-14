@@ -55,11 +55,22 @@ internal static class AuthenticationExtensions
                 OnTokenValidated = async context =>
                 {
                     if (!Guid.TryParse(context.Principal?.FindFirst("sub")?.Value, out var id) || id == Guid.Empty)
-                    { context.Fail("Invalid subject."); return; }
-                    if (context.Principal?.FindFirst("session_stamp")?.Value is { } stamp)
                     {
-                        var account = await context.HttpContext.RequestServices.GetRequiredService<IAccountStore>().GetAsync(id, context.HttpContext.RequestAborted);
-                        if (account is null || !string.Equals(account.SessionStamp, stamp, StringComparison.Ordinal)) context.Fail("Session revoked.");
+                        context.Fail("Invalid subject.");
+                        return;
+                    }
+
+                    var stamp = context.Principal?.FindFirst("session_stamp")?.Value;
+                    if (string.IsNullOrWhiteSpace(stamp))
+                    {
+                        context.Fail("Missing session stamp.");
+                        return;
+                    }
+
+                    var account = await context.HttpContext.RequestServices.GetRequiredService<IAccountStore>().GetAsync(id, context.HttpContext.RequestAborted);
+                    if (account is null || !string.Equals(account.SessionStamp, stamp, StringComparison.Ordinal))
+                    {
+                        context.Fail("Session revoked.");
                     }
                 }
             };

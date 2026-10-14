@@ -25,11 +25,26 @@ public sealed class RefreshTokenStore(
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
 
         var current = await db.Set<RefreshToken>()
+            .FromSqlInterpolated($"SELECT * FROM inviteme.refresh_tokens WHERE token_hash = {hash} FOR UPDATE")
             .AsNoTracking()
-            .SingleOrDefaultAsync(x => x.TokenHash == hash, ct);
+            .SingleOrDefaultAsync(ct);
 
         if (current is null)
         {
+            return null;
+        }
+
+        if (current.ExpiresAt <= now)
+        {
+            return null;
+        }
+
+        if (current.UsedAt is not null || current.RevokedAt is not null)
+        {
+            await db.Set<RefreshToken>()
+                .Where(x => x.FamilyId == current.FamilyId && x.RevokedAt == null)
+                .ExecuteUpdateAsync(x => x.SetProperty(t => t.RevokedAt, now), ct);
+            await transaction.CommitAsync(ct);
             return null;
         }
 
@@ -39,10 +54,14 @@ public sealed class RefreshTokenStore(
 
         if (claimed == 0)
         {
-            if (current.UsedAt is not null || current.RevokedAt is not null)
+            var latest = await db.Set<RefreshToken>()
+                .AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == current.Id, ct);
+
+            if (latest is not null && (latest.UsedAt is not null || latest.RevokedAt is not null))
             {
                 await db.Set<RefreshToken>()
-                    .Where(x => x.FamilyId == current.FamilyId && x.RevokedAt == null)
+                    .Where(x => x.FamilyId == latest.FamilyId && x.RevokedAt == null)
                     .ExecuteUpdateAsync(x => x.SetProperty(t => t.RevokedAt, now), ct);
                 await transaction.CommitAsync(ct);
             }
