@@ -181,8 +181,6 @@ Business concurrency tests are milestone acceptance criteria, not simulated succ
 5. Update: `PUT` the same URL with the new `version` from the response → 200. An identical body is a no-op.
 6. `SELECT old_status,new_status,old_confirmed_party_size,new_confirmed_party_size,actor_type,reason,changed_at FROM inviteme.rsvp_history ORDER BY changed_at;` shows one row per real change. `UPDATE`/`DELETE` on it are rejected.
 
-Captured results: [evidence/RSVP-02](evidence/RSVP-02/README.md).
-
 ## Packages
 
 Versions are pinned centrally in `Directory.Packages.props`:
