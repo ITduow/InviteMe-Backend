@@ -4,11 +4,29 @@ using InviteMe.Application.Common.Errors;
 using InviteMe.Application.Features.Identity.Accounts;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Application.Ports.Authorization;
+using InviteMe.Infrastructure.Authentication;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace InviteMe.UnitTests;
 
 public sealed class GoogleLoginValidationTests
 {
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("<your-google-client-id>")]
+    public async Task GoogleTokenValidatorRejectsUnconfiguredOrPlaceholderClientId(string? clientId)
+    {
+        var options = Options.Create(new GoogleAuthOptions { ClientId = clientId });
+        var validator = new GoogleTokenValidator(options, NullLogger<GoogleTokenValidator>.Instance);
+
+        var result = await validator.ValidateAsync("any-token", default);
+
+        Assert.Null(result);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
