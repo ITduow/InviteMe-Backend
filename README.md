@@ -40,7 +40,7 @@ $env:PATH = "$env:DOTNET_ROOT;$env:PATH"
 
 1. Copy `.env.example` to `.env`. Set a local database password and a fresh base64 signing key.
 2. Start PostgreSQL: `docker compose up -d postgres`.
-3. Set API configuration using the environment or user secrets. Compose's `.env` is **not** automatically loaded by `dotnet run`.
+3. Fill in the API and SMTP settings in `.env`, then run `dotnet run --project src/InviteMe.Api --launch-profile https`. `Program.cs` uses DotNetEnv to load the nearest `.env` from the working directory or its parents before building configuration. This works from the repository root or API directory. Existing host environment variables take precedence; command-line configuration also retains its normal precedence. Restart the API after editing `.env`. The local file is ignored by Git; SMTP placeholders must be replaced before emails can be sent. User Secrets remain an alternative, but loaded environment settings override them.
 
 `appsettings.json` and `appsettings.example.json` show the configuration shape for an installed local PostgreSQL server: host `localhost`, port `5432`, database `InviteMe`, username `postgres`, frontend `http://localhost:3000`. The password and signing key are placeholders, so a clone requires personal configuration before startup. Change database/user names to match your installation. The Compose database instead uses `inviteme` for both database and username; use the connection string below when starting PostgreSQL through Compose.
 
@@ -97,7 +97,7 @@ Optional local containers: `docker compose --profile app up --build -d` serves H
 | `INVITEME_TEST_POSTGRES` | Set to 1 to enable Docker-backed tests |
 | `INVITEME_TEST_CONNECTION_STRING` | Optional disposable PostgreSQL connection for the database test |
 
-`appsettings.example.json` is a reference, not an automatically loaded configuration file. Email, SMS, Storage and AI provider settings will be added when their adapters are introduced.
+`appsettings.example.json` is a reference, not an automatically loaded configuration file. SMTP settings (`Smtp__Host`, `Smtp__Port`, `Smtp__EnableSsl`, `Smtp__UserName`, `Smtp__Password`, `Smtp__From`) are included in `.env.example` for confirmation and password reset emails. Use credentials supported by your SMTP provider. Google login uses `Authentication__Google__ClientId` separately.
 
 ## Authentication and authorization
 
