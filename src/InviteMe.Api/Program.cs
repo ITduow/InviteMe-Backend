@@ -12,6 +12,10 @@ using Microsoft.EntityFrameworkCore;
 // Environment variables supplied by the host take precedence over local values.
 DotNetEnv.Env.NoClobber().TraversePath().Load();
 
+// Load the nearest .env (including the repository root) before configuration is built.
+// Environment variables supplied by the host take precedence over local values.
+DotNetEnv.Env.NoClobber().TraversePath().Load();
+
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);

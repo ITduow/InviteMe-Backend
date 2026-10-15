@@ -1,6 +1,7 @@
 # InviteMe backend
 
 InviteMe is a .NET 10 modular monolith with vertical slices, PostgreSQL/EF Core 10, Identity, JWT, SignalR and two test projects. Accounts and Wedding Workspace APIs are implemented alongside `GET /api/health/application`.
+InviteMe is a .NET 10 modular monolith with vertical slices, PostgreSQL/EF Core 10, Identity, JWT, SignalR and two test projects. Accounts and Wedding Workspace APIs are implemented alongside `GET /api/health/application`.
 
 **Scope:** EF maps all 37 v2 business tables, four Identity support tables and three reporting views. Register/login/current-user/logout and wedding create/list/get/settings/access are available. Workspace edits use version checks, wedding row locking, capacity validation and atomic audit/settings/event/venue writes. RSVP, invitation lifecycle, seating/check-in/gift APIs and delivery workers remain pending. Pending EF migrations run automatically at API startup only in Development, before requests are served. Production migrations run separately during deployment. See [implemented API and evidence](docs/workspace-api.md).
 
@@ -26,11 +27,15 @@ flowchart TD
 Application owns provider-independent contracts in `Ports/`. Infrastructure implements persistence ports in `Persistence/Adapters/` using EF Core/Npgsql; API supplies the request-scoped current-user port and wires dependencies at the composition root. Application and Domain must not reference EF Core, Npgsql, Infrastructure or provider SDKs. Future persisted slices introduce use-case-specific ports such as `IRsvpStore`; expose domain data/application results, never DbContext, DbSet, IQueryable or SDK types. Introduce transaction/outbox ports only with an implementing workflow. Do not introduce generic repositories or a service/manager/unit-of-work chain.
 
 The supplied Review 1 architecture diagram is the structural reference; see [component alignment](docs/architecture-diagram-alignment.md) for implemented and planned components. Frontend deployment, external adapters, background processing and AWS deployment are still planned capabilities.
+Application owns provider-independent contracts in `Ports/`. Infrastructure implements persistence ports in `Persistence/Adapters/` using EF Core/Npgsql; API supplies the request-scoped current-user port and wires dependencies at the composition root. Application and Domain must not reference EF Core, Npgsql, Infrastructure or provider SDKs. Future persisted slices introduce use-case-specific ports such as `IRsvpStore`; expose domain data/application results, never DbContext, DbSet, IQueryable or SDK types. Introduce transaction/outbox ports only with an implementing workflow. Do not introduce generic repositories or a service/manager/unit-of-work chain.
+
+The supplied Review 1 architecture diagram is the structural reference; see [component alignment](docs/architecture-diagram-alignment.md) for implemented and planned components. Frontend deployment, external adapters, background processing and AWS deployment are still planned capabilities.
 
 See [full source tree](docs/solution-tree.md), [architecture and module ownership](docs/architecture.md), and [database baseline decisions](docs/database.md).
 
 ## Prerequisites and startup
 
+Install the .NET 10 SDK and use an installed PostgreSQL server or Docker Compose. `global.json` permits newer .NET 10 feature bands. The workspace-local SDK used during initialization is ignored by Git. To use it in PowerShell:
 Install the .NET 10 SDK and use an installed PostgreSQL server or Docker Compose. `global.json` permits newer .NET 10 feature bands. The workspace-local SDK used during initialization is ignored by Git. To use it in PowerShell:
 
 ```powershell
@@ -89,6 +94,7 @@ Optional local containers: `docker compose --profile app up --build -d` serves H
 | `Jwt__SigningKey` | Required base64 random key, at least 32 bytes |
 | `Jwt__ExpirationMinutes` | Future issuing lifetime, 1–60; default 15 |
 | `Jwt__RefreshExpirationDays` | Refresh token sliding lifetime, 1–90; default 30 |
+| `Jwt__RefreshExpirationDays` | Refresh token sliding lifetime, 1–90; default 30 |
 | `Frontend__Url` | Exact HTTP(S) origin for CORS; default http://localhost:5173 |
 | `AllowedHosts` | Deployment hostname allowlist; default localhost |
 | `ASPNETCORE_ENVIRONMENT` | Development enables documentation; use Production when deployed |
@@ -97,6 +103,7 @@ Optional local containers: `docker compose --profile app up --build -d` serves H
 | `INVITEME_TEST_POSTGRES` | Set to 1 to enable Docker-backed tests |
 | `INVITEME_TEST_CONNECTION_STRING` | Optional disposable PostgreSQL connection for the database test |
 
+`appsettings.example.json` is a reference, not an automatically loaded configuration file. SMTP settings (`Smtp__Host`, `Smtp__Port`, `Smtp__EnableSsl`, `Smtp__UserName`, `Smtp__Password`, `Smtp__From`) are included in `.env.example` for confirmation and password reset emails. Use credentials supported by your SMTP provider. Google login uses `Authentication__Google__ClientId` separately.
 `appsettings.example.json` is a reference, not an automatically loaded configuration file. SMTP settings (`Smtp__Host`, `Smtp__Port`, `Smtp__EnableSsl`, `Smtp__UserName`, `Smtp__Password`, `Smtp__From`) are included in `.env.example` for confirmation and password reset emails. Use credentials supported by your SMTP provider. Google login uses `Authentication__Google__ClientId` separately.
 
 ## Authentication and authorization
@@ -108,6 +115,8 @@ JWT validation requires HS256, a valid signature, issuer, audience, expiry, and 
 Milestone 2 will implement register/login/current-user using Identity, rate limiting, and JWT issuance. `ExpirationMinutes` is reserved for issuance; it does not shorten externally issued tokens. Proposed logout: discard short-lived access tokens locally. Access tokens remain valid until expiry; Identity security-stamp changes do not automatically revoke bearer JWTs. Decide whether persistent rotating, hashed refresh tokens and immediate revocation are needed before adding their schema.
 
 Wedding authorization uses `IWeddingPermissionService.RequireAsync(weddingId, permission, cancellationToken)`. It obtains the actor from the authenticated context and `WeddingAccessReader` performs a read-only query scoped by wedding and user. An `ACTIVE` user is allowed as owner or as an `ACTIVE` co-host with an explicit wedding-scoped permission. ADMIN is not an implicit wedding-data bypass. Missing weddings and denied access both produce 403 to avoid revealing existence.
+
+Refresh tokens: `POST /api/auth/login` also returns `refreshToken` and `refreshExpiresIn`. `POST /api/auth/refresh` with `{ "refreshToken": "..." }` returns a new access token and a new refresh token (rotation, sliding lifetime of `Jwt__RefreshExpirationDays`). Only the SHA-256 hash is stored in `inviteme.refresh_tokens`. Reusing an already rotated token revokes the whole token family and returns `401 INVALID_REFRESH_TOKEN`. `POST /api/auth/logout` changes the security stamp and revokes every refresh token of the user, so all devices are signed out.
 
 Refresh tokens: `POST /api/auth/login` also returns `refreshToken` and `refreshExpiresIn`. `POST /api/auth/refresh` with `{ "refreshToken": "..." }` returns a new access token and a new refresh token (rotation, sliding lifetime of `Jwt__RefreshExpirationDays`). Only the SHA-256 hash is stored in `inviteme.refresh_tokens`. Reusing an already rotated token revokes the whole token family and returns `401 INVALID_REFRESH_TOKEN`. `POST /api/auth/logout` changes the security stamp and revokes every refresh token of the user, so all devices are signed out.
 
@@ -123,6 +132,7 @@ JSON console logs include a server-generated correlation scope and response head
 
 ## Database migrations
 
+See [database.md](docs/database.md) before running these commands. Four migrations are checked in: the frozen v1 `ExistingSchemaBaseline`, additive `AddIdentitySupport`, `AlignBusinessSchemaV2`, and the metadata-only `AdoptV2EntityMappings`. The last migration records existing tables/views in the EF snapshot without creating them again. A fresh database finishes on schema v2 plus Identity and legacy gift provenance. The authoritative v2 source is `Persistence/Schema/BaselineV2.sql`; historical migrations remain unchanged.
 See [database.md](docs/database.md) before running these commands. Four migrations are checked in: the frozen v1 `ExistingSchemaBaseline`, additive `AddIdentitySupport`, `AlignBusinessSchemaV2`, and the metadata-only `AdoptV2EntityMappings`. The last migration records existing tables/views in the EF snapshot without creating them again. A fresh database finishes on schema v2 plus Identity and legacy gift provenance. The authoritative v2 source is `Persistence/Schema/BaselineV2.sql`; historical migrations remain unchanged.
 
 After reconciliation and review:
