@@ -110,10 +110,17 @@ public sealed class ForgotPasswordApiTests
     private sealed class CapturingEmailSender : IAccountEmailSender
     {
         public List<PasswordResetRequest> Sent { get; } = [];
+        public List<EmailConfirmationRequest> ConfirmationsSent { get; } = [];
 
         public Task SendPasswordResetAsync(PasswordResetRequest request, CancellationToken ct)
         {
             Sent.Add(request);
+            return Task.CompletedTask;
+        }
+
+        public Task SendEmailConfirmationAsync(EmailConfirmationRequest request, CancellationToken ct)
+        {
+            ConfirmationsSent.Add(request);
             return Task.CompletedTask;
         }
     }
