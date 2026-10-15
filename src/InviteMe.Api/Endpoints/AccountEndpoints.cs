@@ -81,6 +81,13 @@ internal static class AccountEndpoints
             return Results.NoContent();
         }).RequireAuthorization();
 
+        group.MapDelete("/account", async ([Microsoft.AspNetCore.Mvc.FromBody] DeleteAccount? input, AccountHandler handler, HttpContext context, CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            await handler.DeleteAccountAsync(input ?? new DeleteAccount(), ct);
+            return Results.NoContent();
+        }).RequireAuthorization().RequireRateLimiting("auth");
+
         return endpoints;
     }
 }

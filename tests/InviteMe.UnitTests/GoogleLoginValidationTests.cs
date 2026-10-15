@@ -126,7 +126,8 @@ public sealed class GoogleLoginValidationTests
             new RequestValidation<ResendConfirmation>([]),
             new RequestValidation<ChangePassword>([]),
             validator,
-            googleValidation);
+            googleValidation,
+            new RequestValidation<DeleteAccount>([]));
 
         return (handler, store);
     }
@@ -155,6 +156,7 @@ public sealed class GoogleLoginValidationTests
         public Task ChangePasswordAsync(Guid userId, ChangePassword input, CancellationToken ct) => Task.CompletedTask;
         public Task<EmailConfirmationRequest?> CreateEmailConfirmationAsync(string email, CancellationToken ct) => Task.FromResult<EmailConfirmationRequest?>(null);
         public Task ConfirmEmailAsync(ConfirmEmail input, CancellationToken ct) => Task.CompletedTask;
+        public Task DeleteAccountAsync(Guid userId, DeleteAccount input, GoogleUserPayload? googlePayload, CancellationToken ct) => Task.CompletedTask;
     }
 
     private sealed class FakeRefreshTokenStore : IRefreshTokenStore
