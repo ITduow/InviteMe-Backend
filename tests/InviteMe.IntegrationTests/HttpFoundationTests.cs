@@ -55,6 +55,8 @@ public sealed class HttpFoundationTests(ApiFactory factory) : IClassFixture<ApiF
     [InlineData("audience", HttpStatusCode.Unauthorized)]
     [InlineData("signature", HttpStatusCode.Unauthorized)]
     [InlineData("subject", HttpStatusCode.Unauthorized)]
+    [InlineData("missing_stamp", HttpStatusCode.Unauthorized)]
+    [InlineData("wrong_stamp", HttpStatusCode.Unauthorized)]
     public async Task HubNegotiationValidatesJwt(string scenario, HttpStatusCode expected)
     {
         using var client = factory.CreateHttpsClient();
@@ -87,10 +89,21 @@ public sealed class HttpFoundationTests(ApiFactory factory) : IClassFixture<ApiF
     private static string CreateToken(string scenario)
     {
         var key = scenario == "signature" ? new byte[32] : ApiFactory.SigningKey;
+        var claims = new List<Claim>
+        {
+            new("sub", scenario == "subject" ? "not-a-uuid" : Guid.NewGuid().ToString()),
+            new("role", "USER")
+        };
+
+        if (scenario != "missing_stamp")
+        {
+            claims.Add(new("session_stamp", scenario == "wrong_stamp" ? "wrong-stamp" : ApiFactory.DefaultSessionStamp));
+        }
+
         var token = new JwtSecurityToken(
             issuer: scenario == "issuer" ? "wrong" : "InviteMe.Tests",
             audience: scenario == "audience" ? "wrong" : "InviteMe.Tests.Web",
-            claims: [new Claim("sub", scenario == "subject" ? "not-a-uuid" : Guid.NewGuid().ToString()), new Claim("role", "USER")],
+            claims: claims,
             notBefore: DateTime.UtcNow.AddHours(-1),
             expires: scenario == "expired" ? DateTime.UtcNow.AddMinutes(-5) : DateTime.UtcNow.AddMinutes(5),
             signingCredentials: new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256));
