@@ -4,7 +4,7 @@
 
 - `dotnet build`: 0 warnings, 0 errors. Unit tests 61/61; integration tests 66/66 against real PostgreSQL 16, including `RsvpSubmitHistoryApiTests` (4) and the fresh-migration schema-equivalence test with `RsvpImmutableHistory.sql`.
 - `dotnet ef migrations has-pending-model-changes`: no changes, on both Windows and Linux.
-- Upgrade of a seeded pre-RSVP-02 database, actor backfill, and the UPDATE/DELETE/TRUNCATE guards were checked in psql. API smoke run against database `InviteMe`. See [evidence/RSVP-02](../evidence/RSVP-02/README.md).
+- Upgrade of a seeded pre-RSVP-02 database, actor backfill, and the UPDATE/DELETE/TRUNCATE guards were checked in psql. API smoke run against database `InviteMe`.
 
 ## Seating lifecycle and reception extensions — 2026-10-07
 

@@ -17,7 +17,7 @@ Scope: RSVP submit/update with append-only `rsvp_history`. Audited against schem
 
 - `changed_by IS NOT NULL` becomes `actor_type = 'USER'`.
 - `changed_by IS NULL` becomes `actor_type = 'WEDDING_GUEST'` with `actor_guest_id = invitations.guest_id` of that RSVP. Every application version wrote `NULL` only on the public token path, whose actor is the invitation's own guest.
-- The upgrade was verified on a seeded v2+workflow database in [evidence 08](../evidence/RSVP-02/08_migration_upgrade_and_db_guards.txt). Data was preserved, the backfill was correct, and every guard rejected tampering.
+- The upgrade was verified on a seeded v2+workflow database. Data was preserved, the backfill was correct, and every guard rejected tampering.
 
 ## Delete semantics after RSVP-02
 
