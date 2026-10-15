@@ -4,7 +4,9 @@ using InviteMe.Api.Hubs;
 using InviteMe.Api.Middleware;
 using InviteMe.Application;
 using InviteMe.Infrastructure;
+using InviteMe.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.EntityFrameworkCore;
 
 // Load the nearest .env (including the repository root) before configuration is built.
 // Environment variables supplied by the host take precedence over local values.
@@ -16,6 +18,15 @@ builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
 builder.Services.AddApplication().AddInfrastructure(builder.Configuration).AddApi(builder.Configuration);
 
 var app = builder.Build();
+
+// Keep local databases up to date; production migrations run during deployment.
+if (app.Environment.IsDevelopment())
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    var db = scope.ServiceProvider.GetRequiredService<InviteMeDbContext>();
+    await db.Database.MigrateAsync();
+}
+
 app.UseMiddleware<CorrelationMiddleware>();
 app.UseExceptionHandler();
 app.UseStatusCodePages();

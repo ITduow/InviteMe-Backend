@@ -6,7 +6,7 @@ The authoritative PostgreSQL 15+ business DDL is schema v2, checked in byte-for-
 
 `Baseline.sql` (SHA-256 `CBEED8FB3E0F76C4F3E0B2140C92AB87CD37C54772FAA1DC327B4C838C0A1A24`) remains frozen as the historical v1 migration input. Replacing an already-applied migration would leave existing databases on v1 while fresh databases silently receive v2. Instead, `AlignBusinessSchemaV2` upgrades both to the same business structure. `AdoptV2EntityMappings` records the complete EF table/view model with no DDL, because the preceding SQL migrations already created those objects. A matching database/model does not mean application workflows or APIs are implemented.
 
-No schema has been applied to the user's database by this work.
+Development startup applies pending EF migrations to the configured database before serving requests; migration failures stop startup. Production does not migrate on startup: apply migrations separately during deployment.
 
 ## Identity additions
 
@@ -20,7 +20,7 @@ The business schema already has `users`, `roles`, and `user_roles`, but lacks fi
 
 ## Migration workflow
 
-For a fresh development database, generate the idempotent script, review it, and run `dotnet ef database update`. EF applies `ExistingSchemaBaseline`, `AddIdentitySupport`, `AlignBusinessSchemaV2`, then `AdoptV2EntityMappings`. The final schema matches v2 plus Identity fields and the gift provenance table described below.
+For a fresh development database, API startup applies pending migrations automatically. You can also generate and review the idempotent script or run `dotnet ef database update` manually. EF applies `ExistingSchemaBaseline`, `AddIdentitySupport`, `AlignBusinessSchemaV2`, then `AdoptV2EntityMappings`. The final schema matches v2 plus Identity fields and the gift provenance table described below.
 
 For an existing v1 database without EF history, first compare the live schema to `Baseline.sql` in an isolated copy and back up the database. Then run `Persistence/Schema/MarkExistingBaseline.sql`; it checks the 37 tables and v1 column signatures. Apply the remaining migrations through EF. If the two historical migrations are already recorded, simply apply the pending v2 migration.
 
@@ -60,7 +60,7 @@ The model explicitly maps foreign keys, delete rules, composite/alternate keys, 
 
 `BusinessMappingTests` checks live PostgreSQL column types/nullability, key/FK names and index uniqueness, executes a real EF query for every mapped entity/view, round-trips JSON/decimal/default fields, checks estimated vs confirmed view values, and proves stale table and assignment writes fail. Mapping classes do not yet expose workflow mutation methods, and do not themselves enforce append-only history/audit or invitation transition rules.
 
-The additive script is also available as `Persistence/Schema/IdentitySupport.sql` for review. Production execution remains a deployment operation and is never performed by API startup.
+The additive script is also available as `Persistence/Schema/IdentitySupport.sql` for review. Pending migrations are applied automatically on Development startup; its database user must have schema migration permissions. Production migrations run separately during deployment.
 
 No automatic seeder creates ADMIN users. The supplied baseline seeds role and permission definitions only.
 

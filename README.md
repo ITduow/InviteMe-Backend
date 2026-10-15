@@ -2,7 +2,7 @@
 
 InviteMe is a .NET 10 modular monolith with vertical slices, PostgreSQL/EF Core 10, Identity, JWT, SignalR and two test projects. Accounts and Wedding Workspace APIs are implemented alongside `GET /api/health/application`.
 
-**Scope:** EF maps all 37 v2 business tables, four Identity support tables and three reporting views. Register/login/current-user/logout and wedding create/list/get/settings/access are available. Workspace edits use version checks, wedding row locking, capacity validation and atomic audit/settings/event/venue writes. RSVP, invitation lifecycle, seating/check-in/gift APIs and delivery workers remain pending. No migration runs automatically at API startup. See [implemented API and evidence](docs/workspace-api.md).
+**Scope:** EF maps all 37 v2 business tables, four Identity support tables and three reporting views. Register/login/current-user/logout and wedding create/list/get/settings/access are available. Workspace edits use version checks, wedding row locking, capacity validation and atomic audit/settings/event/venue writes. RSVP, invitation lifecycle, seating/check-in/gift APIs and delivery workers remain pending. Pending EF migrations run automatically at API startup only in Development, before requests are served. Production migrations run separately during deployment. See [implemented API and evidence](docs/workspace-api.md).
 
 ## Architecture
 
@@ -54,7 +54,7 @@ dotnet user-secrets set "Jwt:SigningKey" $localJwtKey --project src/InviteMe.Api
 dotnet user-secrets set "Frontend:Url" "http://localhost:5173" --project src/InviteMe.Api
 ```
 
-Replace the password placeholder before running the first command. Development User Secrets override the shared JSON; environment variables override both. User Secrets are machine-local and are not distributed by Git. A configured connection does not create or upgrade the schema; follow `docs/database.md` for a fresh or existing database.
+Replace the password placeholder before running the first command. Development User Secrets override the shared JSON; environment variables override both. User Secrets are machine-local and are not distributed by Git. Development startup applies pending EF migrations to the configured database; follow `docs/database.md` for a fresh or existing database.
 
 ```powershell
 # Generate a signing key in memory; do not put real values in source control.
@@ -75,7 +75,7 @@ Development endpoints:
 - PostgreSQL connectivity readiness: `/health/ready`
 - Protected SignalR: `/hubs/weddings`
 
-Readiness only checks connectivity, not schema readiness; no usable business database is implied. Liveness works without a database connection, but startup requires valid configuration.
+Startup requires valid configuration. In Development, startup also requires a reachable database and applies pending EF migrations before exposing any endpoints; migration failures stop startup. Production migrations run separately during deployment. Readiness checks database connectivity.
 
 Optional local containers: `docker compose --profile app up --build -d` serves HTTP on loopback port 5043. This profile deliberately uses Development for local Swagger access. Production uses the Dockerfile with Production configuration and HTTPS termination. Configure trusted proxy forwarding before relying on forwarded scheme/client-IP headers; never trust arbitrary forwarded headers. The runtime container runs as the built-in non-root user.
 
@@ -133,7 +133,7 @@ dotnet ef migrations script --idempotent --project src/InviteMe.Infrastructure -
 dotnet ef database update --project src/InviteMe.Infrastructure --startup-project src/InviteMe.Api
 ```
 
-Create the `artifacts` directory before requesting the script output. The design-time factory only needs `ConnectionStrings__PostgreSQL`; it does not require JWT configuration or a live connection for script generation. Review SQL before applying it. For externally installed v1 use `MarkExistingBaseline.sql`; for externally installed v2 use `MarkExistingV2.sql`, after comparing the entire live schema with its reference. Databases with valid EF history apply only pending migrations. Follow `docs/database.md` for preflight failures and data conversion. Production migrations are a separate deployment step. Never call `EnsureCreated` in application startup or delete existing data to repair a migration.
+Create the `artifacts` directory before requesting the script output. The design-time factory only needs `ConnectionStrings__PostgreSQL`; it does not require JWT configuration or a live connection for script generation. Review SQL before applying it. For externally installed v1 use `MarkExistingBaseline.sql`; for externally installed v2 use `MarkExistingV2.sql`, after comparing the entire live schema with its reference. Databases with valid EF history apply only pending migrations. Follow `docs/database.md` for preflight failures and data conversion. Development startup applies pending migrations; its database user needs schema migration permissions. Production migrations must be applied separately during deployment. The manual update command remains available when needed. Never call `EnsureCreated` in application startup or delete existing data to repair a migration.
 
 ## Transactions, concurrency and realtime
 
