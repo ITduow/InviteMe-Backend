@@ -28,7 +28,35 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db) : IPlanningSeatin
         if (plan is null) { plan = new() { WeddingId = weddingId }; db.Add(plan); }
         var tables = await db.Set<PlanningTable>().Where(x => x.WeddingId == weddingId).ToListAsync(ct);
         var table = input.TableId is { } id ? tables.SingleOrDefault(x => x.Id == id) ?? throw Missing("TABLE_NOT_FOUND") : null;
-        if (input.Action == "CREATE_TABLE")
+        if (input.Action == "APPLY_SUGGESTION")
+        {
+            var source = await Snapshot(weddingId, ct);
+            if (!string.Equals(SeatingSuggestions.Fingerprint(source), input.SourceFingerprint, StringComparison.OrdinalIgnoreCase))
+                throw Conflict("SEATING_SOURCE_CHANGED");
+            // Recompute on BE; never accept client-supplied assignments as a trusted suggestion.
+            var suggestion = SeatingSuggestions.Generate(source, new(input.Strategy!, input.Mode));
+            if (suggestion.ChangedPlaceCount == 0) throw Rule("NO_SEATING_CHANGES", "Phương án không thay đổi vị trí nào.");
+            var old = await (from a in db.Set<PlanningSeatAssignment>() join t in db.Set<PlanningTable>() on a.TableId equals t.Id
+                where t.WeddingId == weddingId select a).ToListAsync(ct);
+            db.RemoveRange(old);
+            await db.SaveChangesAsync(ct);
+            db.AddRange(suggestion.Assignments.Select(a => new PlanningSeatAssignment { PlaceId = a.PlaceId, TableId = a.TableId, SeatNumber = a.SeatNumber }));
+        }
+        else if (input.Action == "CREATE_TABLES")
+        {
+            var count = input.TableCount!.Value;
+            if (tables.Count + count > 100) throw Rule("TABLE_LIMIT", "Tối đa 100 bàn; giảm số bàn cần thêm.");
+            var names = tables.Select(t => t.Name.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var number = 1;
+            for (var i = 0; i < count; i++)
+            {
+                while (names.Contains($"Bàn {number}")) number++;
+                var name = $"Bàn {number++}";
+                names.Add(name);
+                db.Add(new PlanningTable { Id = Guid.NewGuid(), WeddingId = weddingId, Name = name, Capacity = input.Capacity!.Value });
+            }
+        }
+        else if (input.Action == "CREATE_TABLE")
         {
             if (tables.Count >= 100) throw Rule("TABLE_LIMIT", "Tối đa 100 bàn.");
             db.Add(new PlanningTable { Id = Guid.NewGuid(), WeddingId = weddingId, Name = input.Name!.Trim(), Capacity = input.Capacity!.Value });
