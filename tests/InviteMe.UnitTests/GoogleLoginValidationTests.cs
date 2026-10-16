@@ -4,11 +4,29 @@ using InviteMe.Application.Common.Errors;
 using InviteMe.Application.Features.Identity.Accounts;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Application.Ports.Authorization;
+using InviteMe.Infrastructure.Authentication;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace InviteMe.UnitTests;
 
 public sealed class GoogleLoginValidationTests
 {
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("<your-google-client-id>")]
+    public async Task GoogleTokenValidatorRejectsUnconfiguredOrPlaceholderClientId(string? clientId)
+    {
+        var options = Options.Create(new GoogleAuthOptions { ClientId = clientId });
+        var validator = new GoogleTokenValidator(options, NullLogger<GoogleTokenValidator>.Instance);
+
+        var result = await validator.ValidateAsync("any-token", default);
+
+        Assert.Null(result);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
@@ -104,9 +122,12 @@ public sealed class GoogleLoginValidationTests
             new FakeEmailSender(),
             new RequestValidation<ForgotPassword>([]),
             new RequestValidation<ResetPassword>([]),
+            new RequestValidation<ConfirmEmail>([]),
+            new RequestValidation<ResendConfirmation>([]),
             new RequestValidation<ChangePassword>([]),
             validator,
-            googleValidation);
+            googleValidation,
+            new RequestValidation<DeleteAccount>([]));
 
         return (handler, store);
     }
@@ -133,6 +154,9 @@ public sealed class GoogleLoginValidationTests
         public Task<PasswordResetRequest?> CreatePasswordResetAsync(string email, CancellationToken ct) => throw new NotImplementedException();
         public Task<Guid> ResetPasswordAsync(ResetPassword input, CancellationToken ct) => throw new NotImplementedException();
         public Task ChangePasswordAsync(Guid userId, ChangePassword input, CancellationToken ct) => Task.CompletedTask;
+        public Task<EmailConfirmationRequest?> CreateEmailConfirmationAsync(string email, CancellationToken ct) => Task.FromResult<EmailConfirmationRequest?>(null);
+        public Task ConfirmEmailAsync(ConfirmEmail input, CancellationToken ct) => Task.CompletedTask;
+        public Task DeleteAccountAsync(Guid userId, DeleteAccount input, GoogleUserPayload? googlePayload, CancellationToken ct) => Task.CompletedTask;
     }
 
     private sealed class FakeRefreshTokenStore : IRefreshTokenStore
@@ -161,5 +185,6 @@ public sealed class GoogleLoginValidationTests
     private sealed class FakeEmailSender : IAccountEmailSender
     {
         public Task SendPasswordResetAsync(PasswordResetRequest request, CancellationToken ct) => Task.CompletedTask;
+        public Task SendEmailConfirmationAsync(EmailConfirmationRequest request, CancellationToken ct) => Task.CompletedTask;
     }
 }

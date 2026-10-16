@@ -9,7 +9,8 @@ public sealed record AccountDto(
     Guid Id,
     string DisplayName,
     string Email,
-    string Role);
+    string Role,
+    bool EmailConfirmed = false);
 
 public sealed record TokenDto(
     string AccessToken,
@@ -94,6 +95,32 @@ public sealed class ResetPasswordValidator : AbstractValidator<ResetPassword>
     }
 }
 
+public sealed class ConfirmEmailValidator : AbstractValidator<ConfirmEmail>
+{
+    public ConfirmEmailValidator()
+    {
+        RuleFor(x => x.Email)
+            .NotEmpty()
+            .EmailAddress()
+            .MaximumLength(255);
+
+        RuleFor(x => x.Code)
+            .NotEmpty()
+            .Matches("^[0-9]{6}$");
+    }
+}
+
+public sealed class ResendConfirmationValidator : AbstractValidator<ResendConfirmation>
+{
+    public ResendConfirmationValidator()
+    {
+        RuleFor(x => x.Email)
+            .NotEmpty()
+            .EmailAddress()
+            .MaximumLength(255);
+    }
+}
+
 public sealed class ChangePasswordValidator : AbstractValidator<ChangePassword>
 {
     public ChangePasswordValidator()
@@ -123,6 +150,28 @@ public sealed class GoogleLoginValidator : AbstractValidator<GoogleLogin>
     }
 }
 
+public sealed class DeleteAccountValidator : AbstractValidator<DeleteAccount>
+{
+    public DeleteAccountValidator()
+    {
+        RuleFor(x => x)
+            .Must(x => !string.IsNullOrWhiteSpace(x.Password) || !string.IsNullOrWhiteSpace(x.GoogleIdToken))
+            .WithMessage("Either password or Google ID token is required for account deletion.");
+
+        When(x => !string.IsNullOrWhiteSpace(x.Password), () =>
+        {
+            RuleFor(x => x.Password)
+                .MaximumLength(128);
+        });
+
+        When(x => !string.IsNullOrWhiteSpace(x.GoogleIdToken), () =>
+        {
+            RuleFor(x => x.GoogleIdToken)
+                .MaximumLength(4096);
+        });
+    }
+}
+
 public sealed class AccountHandler(
     IAccountStore store,
     IRefreshTokenStore refreshTokens,
@@ -134,14 +183,22 @@ public sealed class AccountHandler(
     IAccountEmailSender emailSender,
     RequestValidation<ForgotPassword> forgotValidation,
     RequestValidation<ResetPassword> resetValidation,
+    RequestValidation<ConfirmEmail> confirmValidation,
+    RequestValidation<ResendConfirmation> resendValidation,
     RequestValidation<ChangePassword> changeValidation,
     IGoogleTokenValidator googleValidator,
-    RequestValidation<GoogleLogin> googleValidation)
+    RequestValidation<GoogleLogin> googleValidation,
+    RequestValidation<DeleteAccount> deleteValidation)
 {
     public async Task<AccountDto> RegisterAsync(RegisterAccount input, CancellationToken ct)
     {
         await registerValidation.ValidateAsync(input, ct);
         var account = await store.RegisterAsync(input, ct);
+        var confirmation = await store.CreateEmailConfirmationAsync(account.Email, ct);
+        if (confirmation is not null)
+        {
+            await emailSender.SendEmailConfirmationAsync(confirmation, ct);
+        }
         return MapToDto(account);
     }
 
@@ -211,6 +268,24 @@ public sealed class AccountHandler(
         await refreshTokens.RevokeAllAsync(userId, ct);
     }
 
+    public async Task ConfirmEmailAsync(ConfirmEmail input, CancellationToken ct)
+    {
+        await confirmValidation.ValidateAsync(input, ct);
+        await store.ConfirmEmailAsync(input, ct);
+    }
+
+    public async Task ResendConfirmationAsync(ResendConfirmation input, CancellationToken ct)
+    {
+        await resendValidation.ValidateAsync(input, ct);
+
+        // Same outcome whether or not the email exists, so callers cannot probe for accounts.
+        var confirmation = await store.CreateEmailConfirmationAsync(input.Email, ct);
+        if (confirmation is not null)
+        {
+            await emailSender.SendEmailConfirmationAsync(confirmation, ct);
+        }
+    }
+
     public async Task ChangePasswordAsync(ChangePassword input, CancellationToken ct)
     {
         await changeValidation.ValidateAsync(input, ct);
@@ -239,6 +314,33 @@ public sealed class AccountHandler(
     {
         var userId = GetCurrentUserId();
         await store.RevokeSessionsAsync(userId, ct);
+        await refreshTokens.RevokeAllAsync(userId, ct);
+    }
+
+    public async Task DeleteAccountAsync(DeleteAccount input, CancellationToken ct)
+    {
+        await deleteValidation.ValidateAsync(input, ct);
+        var userId = GetCurrentUserId();
+
+        GoogleUserPayload? googlePayload = null;
+        if (!string.IsNullOrWhiteSpace(input.GoogleIdToken))
+        {
+            googlePayload = await googleValidator.ValidateAsync(input.GoogleIdToken, ct)
+                ?? throw new ApplicationProblemException(
+                    ProblemKind.Unauthenticated,
+                    "INVALID_GOOGLE_TOKEN",
+                    "Google authentication token is invalid or expired.");
+
+            if (!googlePayload.EmailVerified || string.IsNullOrWhiteSpace(googlePayload.Email))
+            {
+                throw new ApplicationProblemException(
+                    ProblemKind.Unauthenticated,
+                    "UNVERIFIED_GOOGLE_EMAIL",
+                    "Google email is not verified.");
+            }
+        }
+
+        await store.DeleteAccountAsync(userId, input, googlePayload, ct);
         await refreshTokens.RevokeAllAsync(userId, ct);
     }
 
@@ -273,6 +375,7 @@ public sealed class AccountHandler(
             account.Id,
             account.DisplayName,
             account.Email,
-            account.Role);
+            account.Role,
+            account.EmailConfirmed);
     }
 }

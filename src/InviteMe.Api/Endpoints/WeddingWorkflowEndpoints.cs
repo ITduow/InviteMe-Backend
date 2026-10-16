@@ -19,9 +19,22 @@ internal static class WeddingWorkflowEndpoints
         g.MapPost("/guests/import", (Guid weddingId, ImportGuests input, GuestImportHandler h, CancellationToken ct) => h.ImportAsync(weddingId, input, ct));
         g.MapGet("/participants", (Guid weddingId, RsvpHandler h, CancellationToken ct, int page = 1, int pageSize = 25) => h.ParticipantsAsync(weddingId, new PageRequest(page, pageSize), ct));
         g.MapGet("/invitations/{id:guid}/rsvp", (Guid weddingId, Guid id, RsvpHandler h, CancellationToken ct) => h.GetAsync(weddingId, id, ct));
-        g.MapPut("/invitations/{id:guid}/rsvp", (Guid weddingId, Guid id, SubmitRsvp input, RsvpHandler h, CancellationToken ct) => h.SubmitAsync(weddingId, id, input, ct));
-        g.MapGet("/waitlist", (Guid weddingId, RsvpHandler h, CancellationToken ct, int page = 1, int pageSize = 25) => h.WaitlistAsync(weddingId, new PageRequest(page, pageSize), ct));
-        g.MapPost("/waitlist/{id:guid}/promote", (Guid weddingId, Guid id, RsvpHandler h, CancellationToken ct) => h.PromoteAsync(weddingId, id, ct));
+        // RSVP-03: capacity gate, waitlist and explicit promotion (JWT + wedding permission).
+        g.MapPut("/invitations/{id:guid}/rsvp", (Guid weddingId, Guid id, SubmitRsvp input, RsvpHandler h, CancellationToken ct) => h.SubmitAsync(weddingId, id, input, ct))
+            .WithName("SubmitRsvpForGuest")
+            .WithSummary("Host/Co-host (GUEST_EDIT) creates or replaces a guest's RSVP under the capacity gate. capacityOutcome tells whether the party is CONFIRMED, PARTIALLY_WAITLISTED or WAITLISTED.")
+            .Produces<RsvpDto>().ProducesValidationProblem()
+            .ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+        g.MapGet("/waitlist", (Guid weddingId, RsvpHandler h, CancellationToken ct, int page = 1, int pageSize = 25) => h.WaitlistAsync(weddingId, new PageRequest(page, pageSize), ct))
+            .WithName("ListWaitlist")
+            .WithSummary("WAITING entries (RSVP_VIEW) in request order. kind is FULL_PARTY or ADDITIONAL_MEMBER; requestedSlots counts only the places still waiting.")
+            .Produces<PagedResult<WaitlistDto>>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden);
+        g.MapPost("/waitlist/{id:guid}/promote", (Guid weddingId, Guid id, RsvpHandler h, CancellationToken ct) => h.PromoteAsync(weddingId, id, ct))
+            .WithName("PromoteWaitlistEntry")
+            .WithSummary("Explicitly promote a WAITING entry (GUEST_EDIT) when its slots fit capacity; returns the updated RSVP. 404 WAITLIST_NOT_FOUND, 409 WAITLIST_CHANGED, 422 CAPACITY_FULL / WAITLIST_NOT_WAITING / EVENT_STARTED.")
+            .Produces<RsvpDto>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
         g.MapGet("/tables", (Guid weddingId, SeatingHandler h, CancellationToken ct, int page = 1, int pageSize = 25) => h.TablesAsync(weddingId, new PageRequest(page, pageSize), ct));
         g.MapPost("/tables", (Guid weddingId, CreateTable input, SeatingHandler h, CancellationToken ct) => h.CreateAsync(weddingId, input, ct));
         g.MapPut("/tables/{id:guid}", (Guid weddingId, Guid id, UpdateTable input, SeatingHandler h, CancellationToken ct) => h.UpdateAsync(weddingId, id, input, ct));
@@ -73,7 +86,7 @@ internal static class WeddingWorkflowEndpoints
                 // Location is omitted on purpose: it would echo the raw invitation token into response headers/logs.
                 Results.Created((string?)null, await h.PublicCreateAsync(token, input, ct)))
             .WithName("CreatePublicRsvp")
-            .WithSummary("First RSVP submission. Appends the first rsvp_history row in the same transaction.")
+            .WithSummary("First RSVP submission. Appends the first rsvp_history row in the same transaction. When capacity is full the party is waitlisted (201, capacityOutcome WAITLISTED), not rejected.")
             .Produces<RsvpDto>(StatusCodes.Status201Created)
             .ProducesValidationProblem()
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -81,7 +94,7 @@ internal static class WeddingWorkflowEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
         p.MapPut("/rsvp", (string token, SubmitRsvp input, RsvpHandler h, CancellationToken ct) => h.PublicReplaceAsync(token, input, ct))
             .WithName("ReplacePublicRsvp")
-            .WithSummary("Replace the existing RSVP (full representation, expectedVersion required). Each real change appends one rsvp_history row; an identical body is a no-op.")
+            .WithSummary("Replace the existing RSVP (full representation, expectedVersion required). Each confirmed change appends one rsvp_history row; an identical body is a no-op. Extra people that do not fit are waitlisted while the confirmed party keeps its places (capacityOutcome PARTIALLY_WAITLISTED).")
             .Produces<RsvpDto>()
             .ProducesValidationProblem()
             .ProducesProblem(StatusCodes.Status404NotFound)

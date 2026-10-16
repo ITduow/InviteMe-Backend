@@ -17,13 +17,28 @@ public sealed record SubmitRsvp(int ExpectedVersion, string Decision, IReadOnlyL
 /// <summary>Current RSVP state. Status is PENDING with RsvpId null until the Wedding-Guest first submits.</summary>
 public sealed record RsvpDto(Guid InvitationId, Guid GuestId, int Version, Guid? RsvpId, string Status,
     int ConfirmedPartySize, int WaitlistedPartySize, IReadOnlyList<ParticipantDto> Participants,
-    DateTimeOffset? SubmittedAt = null, DateTimeOffset? UpdatedAt = null);
+    DateTimeOffset? SubmittedAt = null, DateTimeOffset? UpdatedAt = null, string CapacityOutcome = RsvpCapacityOutcome.None);
+/// <summary>
+/// RSVP-03 capacity outcome, derived from persisted state. CONFIRMED: everyone attending holds a place.
+/// PARTIALLY_WAITLISTED: the confirmed party keeps its places and only the extra slots wait (waitlistedPartySize).
+/// WAITLISTED: nobody is confirmed yet and the whole party waits. NONE: not attending / not answered.
+/// </summary>
+public static class RsvpCapacityOutcome
+{
+    public const string None = "NONE", Confirmed = "CONFIRMED", PartiallyWaitlisted = "PARTIALLY_WAITLISTED", Waitlisted = "WAITLISTED";
+}
+/// <summary>FULL_PARTY: no member is confirmed yet. ADDITIONAL_MEMBER: extra slots for an already confirmed party.</summary>
+public static class WaitlistKind
+{
+    public const string FullParty = "FULL_PARTY", AdditionalMember = "ADDITIONAL_MEMBER";
+}
 /// <summary>
 /// RSVP-02 write semantics. Create = first submission only (409 RSVP_ALREADY_EXISTS otherwise);
 /// Replace = update an existing RSVP (404 RSVP_NOT_FOUND otherwise); Upsert = Host/Co-host management route.
 /// </summary>
 public enum RsvpWriteMode { Create, Replace, Upsert }
-public sealed record WaitlistDto(Guid Id, Guid GuestId, int RequestedSlots, string Status, DateTimeOffset RequestedAt);
+public sealed record WaitlistDto(Guid Id, Guid GuestId, int RequestedSlots, string Status, DateTimeOffset RequestedAt,
+    string Kind = WaitlistKind.FullParty);
 public sealed class SubmitRsvpValidator : AbstractValidator<SubmitRsvp>
 {
     public SubmitRsvpValidator()

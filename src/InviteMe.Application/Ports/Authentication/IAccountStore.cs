@@ -5,7 +5,8 @@ public sealed record AccountIdentity(
     string DisplayName,
     string Email,
     string Role,
-    string SessionStamp);
+    string SessionStamp,
+    bool EmailConfirmed = false);
 
 public sealed record RegisterAccount(
     string Email,
@@ -25,11 +26,28 @@ public sealed record ResetPassword(
     string Code,
     string NewPassword);
 
+public sealed record ConfirmEmail(
+    string Email,
+    string Code);
+
+public sealed record ResendConfirmation(
+    string Email);
+
 public sealed record ChangePassword(
     string CurrentPassword,
     string NewPassword);
 
+public sealed record DeleteAccount(
+    string? Password = null,
+    string? GoogleIdToken = null);
+
 public sealed record PasswordResetRequest(
+    Guid UserId,
+    string Email,
+    string DisplayName,
+    string Code);
+
+public sealed record EmailConfirmationRequest(
     Guid UserId,
     string Email,
     string DisplayName,
@@ -71,11 +89,15 @@ public interface IAccountStore
     Task<PasswordResetRequest?> CreatePasswordResetAsync(string email, CancellationToken ct);
     Task<Guid> ResetPasswordAsync(ResetPassword input, CancellationToken ct);
     Task ChangePasswordAsync(Guid userId, ChangePassword input, CancellationToken ct);
+    Task<EmailConfirmationRequest?> CreateEmailConfirmationAsync(string email, CancellationToken ct);
+    Task ConfirmEmailAsync(ConfirmEmail input, CancellationToken ct);
+    Task DeleteAccountAsync(Guid userId, DeleteAccount input, GoogleUserPayload? googlePayload, CancellationToken ct);
 }
 
 public interface IAccountEmailSender
 {
     Task SendPasswordResetAsync(PasswordResetRequest request, CancellationToken ct);
+    Task SendEmailConfirmationAsync(EmailConfirmationRequest request, CancellationToken ct);
 }
 
 public interface IRefreshTokenStore

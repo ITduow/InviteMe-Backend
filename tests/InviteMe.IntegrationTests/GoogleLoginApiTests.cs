@@ -56,10 +56,14 @@ public sealed class GoogleLoginApiTests
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task GoogleLoginLinksExistingPasswordAccount() => WithApi(async (validator, client, db) =>
     {
-        // First, register standard account with password
+        // First, register standard account with password and confirm email
         var email = "existing@example.test";
         var reg = await client.PostAsJsonAsync("/api/auth/register", new RegisterAccount(email, Password, "Existing User"));
         Assert.Equal(HttpStatusCode.Created, reg.StatusCode);
+
+        var existingUser = await db.Set<ApplicationUser>().SingleAsync(u => u.Email == email);
+        existingUser.EmailConfirmed = true;
+        await db.SaveChangesAsync();
 
         // Next, log in with Google using same email
         validator.RegisterToken("token-existing-user", new GoogleUserPayload(
@@ -82,6 +86,35 @@ public sealed class GoogleLoginApiTests
         // User can log in with Google a second time
         var secondGoogle = await client.PostAsJsonAsync("/api/auth/google", new GoogleLogin("token-existing-user"));
         Assert.Equal(HttpStatusCode.OK, secondGoogle.StatusCode);
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task GoogleLoginUnconfirmedEmptyAccountWipesPasswordToPreventPreHijacking() => WithApi(async (validator, client, db) =>
+    {
+        // Attacker creates unconfirmed account with victim's email
+        var email = "victim@example.test";
+        var reg = await client.PostAsJsonAsync("/api/auth/register", new RegisterAccount(email, Password, "Unconfirmed Holder"));
+        Assert.Equal(HttpStatusCode.Created, reg.StatusCode);
+
+        // Victim authenticates with Google
+        validator.RegisterToken("token-victim", new GoogleUserPayload(
+            Subject: "google-sub-victim",
+            Email: email,
+            EmailVerified: true,
+            Name: "Victim Real Name",
+            Picture: null));
+
+        var googleResponse = await client.PostAsJsonAsync("/api/auth/google", new GoogleLogin("token-victim"));
+        Assert.Equal(HttpStatusCode.OK, googleResponse.StatusCode);
+
+        // Password hash was wiped, so attacker cannot log in with the previous password
+        var attackerLogin = await client.PostAsJsonAsync("/api/auth/login", new LoginAccount(email, Password));
+        Assert.Equal(HttpStatusCode.Unauthorized, attackerLogin.StatusCode);
+
+        // Victim account is now email-confirmed
+        var user = await db.Set<ApplicationUser>().SingleAsync(u => u.Email == email);
+        Assert.True(user.EmailConfirmed);
+        Assert.Null(user.PasswordHash);
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]

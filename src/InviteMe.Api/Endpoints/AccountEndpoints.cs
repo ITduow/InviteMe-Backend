@@ -49,6 +49,19 @@ internal static class AccountEndpoints
             return Results.NoContent();
         }).AllowAnonymous().RequireRateLimiting("auth");
 
+        group.MapPost("/confirm-email", async (ConfirmEmail input, AccountHandler handler, HttpContext context, CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            await handler.ConfirmEmailAsync(input, ct);
+            return Results.NoContent();
+        }).AllowAnonymous().RequireRateLimiting("auth");
+
+        group.MapPost("/resend-confirmation", async (ResendConfirmation input, AccountHandler handler, CancellationToken ct) =>
+        {
+            await handler.ResendConfirmationAsync(input, ct);
+            return Results.Accepted();
+        }).AllowAnonymous().RequireRateLimiting("auth");
+
         group.MapPost("/change-password", async (ChangePassword input, AccountHandler handler, HttpContext context, CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
@@ -67,6 +80,13 @@ internal static class AccountEndpoints
             await handler.LogoutAsync(ct);
             return Results.NoContent();
         }).RequireAuthorization();
+
+        group.MapDelete("/account", async ([Microsoft.AspNetCore.Mvc.FromBody] DeleteAccount? input, AccountHandler handler, HttpContext context, CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            await handler.DeleteAccountAsync(input ?? new DeleteAccount(), ct);
+            return Results.NoContent();
+        }).RequireAuthorization().RequireRateLimiting("auth");
 
         return endpoints;
     }

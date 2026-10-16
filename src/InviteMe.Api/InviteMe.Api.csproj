@@ -3,6 +3,7 @@
     <UserSecretsId>inviteme-api-development</UserSecretsId>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="DotNetEnv" />
     <ProjectReference Include="../InviteMe.Application/InviteMe.Application.csproj" />
     <ProjectReference Include="../InviteMe.Infrastructure/InviteMe.Infrastructure.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
