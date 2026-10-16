@@ -24,7 +24,7 @@ builder.Services.AddApplication().AddInfrastructure(builder.Configuration).AddAp
 var app = builder.Build();
 
 // Keep local databases up to date; production migrations run during deployment.
-if (app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment() && builder.Configuration.GetValue("Database:ApplyMigrationsOnStartup", true))
 {
     await using var scope = app.Services.CreateAsyncScope();
     var db = scope.ServiceProvider.GetRequiredService<InviteMeDbContext>();
@@ -54,12 +54,8 @@ app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => fa
 app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") }).AllowAnonymous();
 app.MapApplicationHealth();
 app.MapAccounts();
-app.MapWorkspaces();
 app.MapCoHosts();
 app.MapAuditLogs();
-app.MapInvitations();
-app.MapWeddingGuests();
-app.MapWeddingWorkflow();
 app.MapHub<WeddingHub>("/hubs/weddings", options => options.CloseOnAuthenticationExpiration = true)
     .RequireAuthorization();
 app.Run();

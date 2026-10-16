@@ -21,7 +21,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
             ["Jwt:Issuer"] = "InviteMe.Tests",
             ["Jwt:Audience"] = "InviteMe.Tests.Web",
             ["Jwt:SigningKey"] = Convert.ToBase64String(SigningKey),
-            ["Frontend:Url"] = "http://localhost:5173", ["Invitations:DispatchEnabled"] = "false"
+            ["Frontend:Url"] = "http://localhost:5173", ["Database:ApplyMigrationsOnStartup"] = "false"
         }));
         builder.ConfigureServices(services =>
         {

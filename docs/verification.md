@@ -1,5 +1,14 @@
 # Foundation verification
 
+## API and workflow removal — 2026-10-16
+
+- Removed the Invitations, Wedding Workflow, Wedding Guests, Public Invitations and Wedding Workspace HTTP groups. Remaining API groups: Accounts, Co-Hosts, Audit and System. The authorized wedding hub remains; its workflow event publisher was removed.
+- Removed the associated workspace, guest, invitation/QR/delivery, RSVP/waitlist, seating, reception, gift, report and dashboard application features/ports and persistence adapters; removed the invitation worker, QR renderer/QRCoder dependency, workflow publisher and obsolete dispatch configuration. Domain entities/rules, EF mappings, migration files, SQL schema artifacts and existing business data were retained. The legacy Data Protection directory setting remains usable for Identity token-provider key continuity.
+- Removed tests dedicated to deleted workflows. Kept account/authentication, co-host, audit, authorization, domain-rule and schema/mapping tests. Co-host/audit fixtures now create wedding rows directly; audit pagination expectations reflect the removal of the workspace creation event. The common database API factory is separate from the removed workspace tests.
+- Development migration startup still defaults to enabled. Added Database:ApplyMigrationsOnStartup=false for the HTTP-only test factory so its intentionally unavailable database does not prevent startup. Production startup behavior is unchanged. OpenAPI regression checks confirm retained groups and absence of all five removed groups/public paths; bearer documentation is checked on /api/auth/me.
+- Release build succeeded with zero warnings/errors. Full retained suite against a newly initialized, disposable PostgreSQL 17 cluster on loopback port 55439: **67 unit + 76 integration = 143 Passed, zero Failed/Skipped**. This includes live authentication/co-host/audit and schema tests. The cluster was stopped after execution; the existing InviteMe database was not used. Logs and integration TRX remain ignored under .local/workflow-removal-20261016 (the fixed-name logger overwrote the unit TRX with integration results; both suite totals are retained in tests.log).
+- README, architecture scope notices and source tree were updated. Previously running API processes must be restarted to expose the reduced API surface. No commit or push was performed.
+
 ## Seating lifecycle and reception extensions — 2026-10-07
 
 - Builds on the PR #4 seating/reception workflow without changing its routes or request contracts; new request fields are optional.

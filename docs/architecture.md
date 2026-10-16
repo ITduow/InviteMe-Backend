@@ -1,5 +1,7 @@
 # Architecture and implementation contracts
 
+Current scope after workflow removal (2026-10-16): only Accounts, Co-Hosts, Audit, System and the authorized wedding hub remain exposed. Wedding Workspace, Guests, Invitations/Public Invitations and all guest/RSVP/seating/reception/gift/report/dashboard workflows, adapters and worker registrations were removed. Domain entities, EF mappings and migrations remain for schema/data retention. The module and delivery diagrams below describe the historical/target design, not current implemented workflows.
+
 The supplied Review 1 detailed architecture diagram is the structural reference. See [architecture-diagram-alignment.md](architecture-diagram-alignment.md) for component locations, request flow and implementation status. Provider-independent ports are mandatory; Application must not expose EF types.
 
 ## Module map

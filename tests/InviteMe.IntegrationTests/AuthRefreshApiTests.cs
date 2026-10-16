@@ -113,10 +113,10 @@ public sealed class AuthRefreshApiTests
         Assert.Equal(0, await Count(db, "SELECT count(*)::int AS \"Value\" FROM inviteme.refresh_tokens WHERE revoked_at IS NULL"));
     });
 
-    private static Task WithApi(Func<InviteMeDbContext, WorkspaceApiFactory, Task> action) => SchemaV2MigrationTests.InDatabase(async db =>
+    private static Task WithApi(Func<InviteMeDbContext, DatabaseApiFactory, Task> action) => SchemaV2MigrationTests.InDatabase(async db =>
     {
         await db.Database.MigrateAsync();
-        await using var factory = new WorkspaceApiFactory(db.Database.GetConnectionString()!);
+        await using var factory = new DatabaseApiFactory(db.Database.GetConnectionString()!);
         await action(db, factory);
     });
 

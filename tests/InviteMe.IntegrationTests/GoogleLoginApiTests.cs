@@ -164,7 +164,7 @@ public sealed class GoogleLoginApiTests
     {
         await db.Database.MigrateAsync();
         var validator = new TestGoogleTokenValidator();
-        await using var baseFactory = new WorkspaceApiFactory(db.Database.GetConnectionString()!);
+        await using var baseFactory = new DatabaseApiFactory(db.Database.GetConnectionString()!);
         await using var factory = baseFactory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<IGoogleTokenValidator>();
