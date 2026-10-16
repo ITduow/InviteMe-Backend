@@ -113,6 +113,38 @@ public sealed class AuthRefreshApiTests
         Assert.Equal(0, await Count(db, "SELECT count(*)::int AS \"Value\" FROM inviteme.refresh_tokens WHERE revoked_at IS NULL"));
     });
 
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task RepeatedWrongPasswordsLockTheAccountEvenForTheCorrectPassword() => WithApi(async (_, factory) =>
+    {
+        using var client = factory.CreateHttpsClient();
+        await Register(client, "lockout");
+
+        for (var i = 0; i < 5; i++)
+        {
+            var bad = await client.PostAsJsonAsync("/api/auth/login", new LoginAccount("lockout@example.test", "Wrong-Pass123!"));
+            Assert.Equal(HttpStatusCode.Unauthorized, bad.StatusCode);
+        }
+
+        // 6th attempt with the CORRECT password is still rejected because the account is temporarily locked out (15 minutes)
+        var locked = await client.PostAsJsonAsync("/api/auth/login", new LoginAccount("lockout@example.test", Password));
+        Assert.Equal(HttpStatusCode.Unauthorized, locked.StatusCode);
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task ExceedingAuthRateLimitReturns429TooManyRequests() => WithApi(async (_, factory) =>
+    {
+        using var client = factory.CreateHttpsClient();
+
+        HttpStatusCode lastStatus = HttpStatusCode.OK;
+        for (var i = 0; i < 21; i++)
+        {
+            var res = await client.PostAsJsonAsync("/api/auth/forgot-password", new ForgotPassword("ratelimit@example.test"));
+            lastStatus = res.StatusCode;
+        }
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, lastStatus);
+    });
+
     private static Task WithApi(Func<InviteMeDbContext, DatabaseApiFactory, Task> action) => SchemaV2MigrationTests.InDatabase(async db =>
     {
         await db.Database.MigrateAsync();

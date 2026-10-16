@@ -27,9 +27,15 @@ public static class DependencyInjection
             options.Password.RequiredLength = 12;
             options.Lockout.MaxFailedAccessAttempts = 5;
             options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
+            options.Tokens.PasswordResetTokenProvider = "PasswordReset";
         }).AddRoles<ApplicationRole>()
           .AddEntityFrameworkStores<InviteMeDbContext>()
-          .AddDefaultTokenProviders();
+          .AddDefaultTokenProviders()
+          .AddTokenProvider<PasswordResetTokenProvider<ApplicationUser>>("PasswordReset");
+        services.Configure<DataProtectionTokenProviderOptions>(options =>
+            options.TokenLifespan = TimeSpan.FromHours(24));
+        services.Configure<PasswordResetTokenProviderOptions>(options =>
+            options.TokenLifespan = TimeSpan.FromMinutes(15));
         services.AddOptions<SmtpOptions>().BindConfiguration("Smtp");
         services.AddScoped<InviteMe.Application.Ports.Authentication.IAccountEmailSender, SmtpAccountEmailSender>();
         services.AddOptions<InviteMe.Infrastructure.Authentication.GoogleAuthOptions>().BindConfiguration("Authentication:Google");
@@ -47,3 +53,19 @@ public static class DependencyInjection
         return services;
     }
 }
+
+public sealed class PasswordResetTokenProviderOptions : DataProtectionTokenProviderOptions
+{
+    public PasswordResetTokenProviderOptions()
+    {
+        Name = "PasswordResetDataProtectorTokenProvider";
+        TokenLifespan = TimeSpan.FromMinutes(15);
+    }
+}
+
+public sealed class PasswordResetTokenProvider<TUser>(
+    IDataProtectionProvider dataProtectionProvider,
+    Microsoft.Extensions.Options.IOptions<PasswordResetTokenProviderOptions> options,
+    Microsoft.Extensions.Logging.ILogger<DataProtectorTokenProvider<TUser>> logger)
+    : DataProtectorTokenProvider<TUser>(dataProtectionProvider, options, logger)
+    where TUser : class;

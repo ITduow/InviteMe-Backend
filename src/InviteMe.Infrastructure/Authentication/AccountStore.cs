@@ -15,8 +15,6 @@ public sealed class AccountStore(
     UserManager<ApplicationUser> users,
     InviteMeDbContext db) : IAccountStore
 {
-    private const string ResetPurpose = "ResetPassword";
-    private const string ConfirmationPurpose = "EmailConfirmation";
 
     public async Task<AccountIdentity> RegisterAsync(RegisterAccount input, CancellationToken ct)
     {
@@ -53,6 +51,14 @@ public sealed class AccountStore(
         {
             EnsureSuccess(await users.AccessFailedAsync(user));
             throw InvalidLogin();
+        }
+
+        if (!user.EmailConfirmed)
+        {
+            throw new ApplicationProblemException(
+                ProblemKind.Forbidden,
+                "EMAIL_NOT_CONFIRMED",
+                "Please confirm your email to activate your account.");
         }
 
         EnsureSuccess(await users.ResetAccessFailedCountAsync(user));
@@ -222,7 +228,7 @@ public sealed class AccountStore(
             return null;
         }
 
-        var code = await users.GenerateUserTokenAsync(user, TokenOptions.DefaultEmailProvider, ResetPurpose);
+        var code = await users.GeneratePasswordResetTokenAsync(user);
         return new PasswordResetRequest(user.Id, user.Email!, user.FullName, code);
     }
 
@@ -236,15 +242,26 @@ public sealed class AccountStore(
             throw InvalidResetCode();
         }
 
-        if (!await users.VerifyUserTokenAsync(user, TokenOptions.DefaultEmailProvider, ResetPurpose, input.Code))
+        var token = input.Code.Contains('%') ? Uri.UnescapeDataString(input.Code) : input.Code;
+        if (!await users.VerifyUserTokenAsync(
+                user,
+                users.Options.Tokens.PasswordResetTokenProvider,
+                UserManager<ApplicationUser>.ResetPasswordTokenPurpose,
+                token))
         {
-            // Wrong codes count toward the normal lockout so a 6-digit code cannot be brute-forced.
+            // Wrong tokens count toward the normal lockout.
             EnsureSuccess(await users.AccessFailedAsync(user));
             throw InvalidResetCode();
         }
 
-        var resetToken = await users.GeneratePasswordResetTokenAsync(user);
-        EnsureSuccess(await users.ResetPasswordAsync(user, resetToken, input.NewPassword));
+        EnsureSuccess(await users.ResetPasswordAsync(user, token, input.NewPassword));
+
+        // Proving email ownership via a password reset link also confirms an unconfirmed email.
+        if (!user.EmailConfirmed)
+        {
+            user.EmailConfirmed = true;
+            EnsureSuccess(await users.UpdateAsync(user));
+        }
 
         // A successful reset also lifts any lockout caused by earlier failed sign-ins.
         EnsureSuccess(await users.SetLockoutEndDateAsync(user, null));
@@ -286,7 +303,9 @@ public sealed class AccountStore(
             return null;
         }
 
-        var code = await users.GenerateUserTokenAsync(user, TokenOptions.DefaultEmailProvider, ConfirmationPurpose);
+        // Rotate security stamp so any previously issued confirmation link is immediately invalidated.
+        EnsureSuccess(await users.UpdateSecurityStampAsync(user));
+        var code = await users.GenerateEmailConfirmationTokenAsync(user);
         return new EmailConfirmationRequest(user.Id, user.Email!, user.FullName, code);
     }
 
@@ -305,14 +324,14 @@ public sealed class AccountStore(
             return;
         }
 
-        if (!await users.VerifyUserTokenAsync(user, TokenOptions.DefaultEmailProvider, ConfirmationPurpose, input.Code))
+        var token = input.Code.Contains('%') ? Uri.UnescapeDataString(input.Code) : input.Code;
+        var result = await users.ConfirmEmailAsync(user, token);
+        if (!result.Succeeded)
         {
             EnsureSuccess(await users.AccessFailedAsync(user));
             throw InvalidConfirmationCode();
         }
 
-        user.EmailConfirmed = true;
-        EnsureSuccess(await users.UpdateAsync(user));
         EnsureSuccess(await users.ResetAccessFailedCountAsync(user));
     }
 

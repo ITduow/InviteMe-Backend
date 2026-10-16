@@ -25,11 +25,9 @@ public sealed class PasswordResetValidationTests
 
     [Theory]
     [InlineData("user@example.test", "", "Long-enough-Pass1!")]
-    [InlineData("user@example.test", "12345", "Long-enough-Pass1!")]
-    [InlineData("user@example.test", "1234567", "Long-enough-Pass1!")]
-    [InlineData("user@example.test", "12a456", "Long-enough-Pass1!")]
-    [InlineData("user@example.test", "123456", "short")]
-    [InlineData("bad", "123456", "Long-enough-Pass1!")]
+    [InlineData("user@example.test", "   ", "Long-enough-Pass1!")]
+    [InlineData("user@example.test", "CfDJ8ValidResetToken==", "short")]
+    [InlineData("bad", "CfDJ8ValidResetToken==", "Long-enough-Pass1!")]
     public async Task ResetPasswordRejectsBadCodeWeakPasswordOrBadEmail(string email, string code, string password)
     {
         var validation = new RequestValidation<ResetPassword>([new ResetPasswordValidator()]);
@@ -37,9 +35,17 @@ public sealed class PasswordResetValidationTests
     }
 
     [Fact]
+    public async Task ResetPasswordRejectsTooLongToken()
+    {
+        var validation = new RequestValidation<ResetPassword>([new ResetPasswordValidator()]);
+        var tooLongToken = new string('a', 2049);
+        await Assert.ThrowsAsync<ValidationException>(() => validation.ValidateAsync(new("user@example.test", tooLongToken, "Long-enough-Pass1!"), default));
+    }
+
+    [Fact]
     public async Task ResetPasswordAcceptsValidInput()
     {
         await new RequestValidation<ResetPassword>([new ResetPasswordValidator()])
-            .ValidateAsync(new("user@example.test", "123456", "Long-enough-Pass1!"), default);
+            .ValidateAsync(new("user@example.test", "CfDJ8ValidResetToken+123/abc==", "Long-enough-Pass1!"), default);
     }
 }

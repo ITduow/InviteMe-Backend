@@ -24,28 +24,25 @@ public sealed class EmailConfirmationApiTests
         var regResponse = await client.PostAsJsonAsync("/api/auth/register", new RegisterAccount(email, Password, "Confirm User"));
         Assert.Equal(HttpStatusCode.Created, regResponse.StatusCode);
 
-        // Confirmation email should be sent with a 6-digit code
+        // Confirmation email should be sent with a non-empty signed token
         var sent = Assert.Single(sender.ConfirmationsSent);
         Assert.Equal(email, sent.Email);
-        Assert.Matches("^[0-9]{6}$", sent.Code);
+        Assert.False(string.IsNullOrWhiteSpace(sent.Code));
+        Assert.True(sent.Code.Length > 20);
 
-        // Login before confirmation succeeds, but EmailConfirmed is false
+        // Login before confirmation is rejected with 403 Forbidden (EMAIL_NOT_CONFIRMED)
+        var loginBeforeResponse = await client.PostAsJsonAsync("/api/auth/login", new LoginAccount(email, Password));
+        Assert.Equal(HttpStatusCode.Forbidden, loginBeforeResponse.StatusCode);
+
+        // Confirm email with the token
+        var confirmResponse = await client.PostAsJsonAsync("/api/auth/confirm-email", new ConfirmEmail(email, sent.Code));
+        Assert.Equal(HttpStatusCode.NoContent, confirmResponse.StatusCode);
+
+        // Login after confirmation succeeds and /api/auth/me reflects EmailConfirmed = true
         var loginResponse = await client.PostAsJsonAsync("/api/auth/login", new LoginAccount(email, Password));
         Assert.Equal(HttpStatusCode.OK, loginResponse.StatusCode);
         var token = (await loginResponse.Content.ReadFromJsonAsync<TokenDto>())!;
 
-        using var meReq = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
-        meReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
-        var meBefore = await client.SendAsync(meReq);
-        Assert.Equal(HttpStatusCode.OK, meBefore.StatusCode);
-        var accountBefore = (await meBefore.Content.ReadFromJsonAsync<AccountDto>())!;
-        Assert.False(accountBefore.EmailConfirmed);
-
-        // Confirm email with the code
-        var confirmResponse = await client.PostAsJsonAsync("/api/auth/confirm-email", new ConfirmEmail(email, sent.Code));
-        Assert.Equal(HttpStatusCode.NoContent, confirmResponse.StatusCode);
-
-        // /api/auth/me now reflects EmailConfirmed = true
         using var meAfterReq = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
         meAfterReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
         var meAfter = await client.SendAsync(meAfterReq);
@@ -53,7 +50,7 @@ public sealed class EmailConfirmationApiTests
         var accountAfter = (await meAfter.Content.ReadFromJsonAsync<AccountDto>())!;
         Assert.True(accountAfter.EmailConfirmed);
 
-        // Idempotent: calling confirm again with the same code or when already confirmed returns NoContent
+        // Idempotent: calling confirm again with the same token or when already confirmed returns NoContent
         var reConfirmResponse = await client.PostAsJsonAsync("/api/auth/confirm-email", new ConfirmEmail(email, sent.Code));
         Assert.Equal(HttpStatusCode.NoContent, reConfirmResponse.StatusCode);
     });
@@ -65,8 +62,8 @@ public sealed class EmailConfirmationApiTests
         await client.PostAsJsonAsync("/api/auth/register", new RegisterAccount(email, Password, "Wrong User"));
         var sent = Assert.Single(sender.ConfirmationsSent);
 
-        // Wrong code
-        var wrongCode = sent.Code == "123456" ? "654321" : "123456";
+        // Wrong token
+        var wrongCode = sent.Code + "-tampered";
         var badResponse = await client.PostAsJsonAsync("/api/auth/confirm-email", new ConfirmEmail(email, wrongCode));
         Assert.Equal(HttpStatusCode.BadRequest, badResponse.StatusCode);
 
@@ -88,12 +85,16 @@ public sealed class EmailConfirmationApiTests
         await client.PostAsJsonAsync("/api/auth/register", new RegisterAccount(email, Password, "Resend User"));
         Assert.Single(sender.ConfirmationsSent);
 
-        // Resend confirmation
+        // Resend confirmation invalidates the previous token
+        var firstCode = sender.ConfirmationsSent.First().Code;
         var resendResponse = await client.PostAsJsonAsync("/api/auth/resend-confirmation", new ResendConfirmation(email));
         Assert.Equal(HttpStatusCode.Accepted, resendResponse.StatusCode);
         Assert.Equal(2, sender.ConfirmationsSent.Count);
 
-        var latestCode = sender.ConfirmationsSent.Last().Code;
+        var oldTokenAttempt = await client.PostAsJsonAsync("/api/auth/confirm-email", new ConfirmEmail(email, firstCode));
+        Assert.Equal(HttpStatusCode.BadRequest, oldTokenAttempt.StatusCode);
+
+        var latestCode = Uri.EscapeDataString(sender.ConfirmationsSent.Last().Code);
         var confirmResponse = await client.PostAsJsonAsync("/api/auth/confirm-email", new ConfirmEmail(email, latestCode));
         Assert.Equal(HttpStatusCode.NoContent, confirmResponse.StatusCode);
 
@@ -101,6 +102,43 @@ public sealed class EmailConfirmationApiTests
         var afterConfirmedResend = await client.PostAsJsonAsync("/api/auth/resend-confirmation", new ResendConfirmation(email));
         Assert.Equal(HttpStatusCode.Accepted, afterConfirmedResend.StatusCode);
         Assert.Equal(2, sender.ConfirmationsSent.Count);
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task ExpiredConfirmationTokenIsRejectedAfterWaitingForLifespan() => SchemaV2MigrationTests.InDatabase(async db =>
+    {
+        await db.Database.MigrateAsync();
+        var sender = new CapturingEmailSender();
+        await using var baseFactory = new DatabaseApiFactory(db.Database.GetConnectionString()!);
+
+        // Verify default configured lifespan is 24 hours
+        var defaultLifespan = baseFactory.Services
+            .GetRequiredService<Microsoft.Extensions.Options.IOptions<Microsoft.AspNetCore.Identity.DataProtectionTokenProviderOptions>>()
+            .Value.TokenLifespan;
+        Assert.Equal(TimeSpan.FromHours(24), defaultLifespan);
+
+        await using var factory = baseFactory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IAccountEmailSender>();
+            services.AddSingleton<IAccountEmailSender>(sender);
+            services.Configure<Microsoft.AspNetCore.Identity.DataProtectionTokenProviderOptions>(options =>
+                options.TokenLifespan = TimeSpan.FromSeconds(1));
+        }));
+
+        using var client = factory.CreateClient(new() { BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false });
+        var email = "expired-confirm@example.test";
+        Assert.Equal(HttpStatusCode.Created, (await client.PostAsJsonAsync("/api/auth/register", new RegisterAccount(email, Password, "Expired User"))).StatusCode);
+        var sent = Assert.Single(sender.ConfirmationsSent);
+
+        // Wait in real time for the token to expire
+        await Task.Delay(TimeSpan.FromMilliseconds(1500));
+
+        var expiredConfirm = await client.PostAsJsonAsync("/api/auth/confirm-email", new ConfirmEmail(email, sent.Code));
+        Assert.Equal(HttpStatusCode.BadRequest, expiredConfirm.StatusCode);
+
+        // Account remains unconfirmed and cannot log in
+        var loginAttempt = await client.PostAsJsonAsync("/api/auth/login", new LoginAccount(email, Password));
+        Assert.Equal(HttpStatusCode.Forbidden, loginAttempt.StatusCode);
     });
 
     private static Task WithApi(Func<CapturingEmailSender, HttpClient, Task> action) => SchemaV2MigrationTests.InDatabase(async db =>
