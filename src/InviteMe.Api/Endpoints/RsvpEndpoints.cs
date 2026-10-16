@@ -48,7 +48,7 @@ internal static class RsvpEndpoints
             .WithName("GetGuestRsvp").WithSummary("RSVP of one invitation (RSVP_VIEW).")
             .Produces<RsvpDto>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound);
         host.MapPut("/rsvps/{invitationId:guid}", (Guid weddingId, Guid invitationId, SubmitRsvp input, RsvpHandler h, CancellationToken ct) => h.SubmitAsync(weddingId, invitationId, input, ct))
-            .WithName("SubmitGuestRsvp").WithSummary("Create or replace a guest's RSVP on their behalf (GUEST_EDIT), under the same capacity gate.")
+            .WithName("SubmitGuestRsvp").WithSummary("Create or replace a guest's RSVP on their behalf (GUEST_EDIT), under the same capacity gate. Optional source: PHONE, CHAT, IN_PERSON or OTHER (kept in the audit log).")
             .Produces<RsvpDto>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
         host.MapGet("/rsvps/waitlist", (Guid weddingId, RsvpHandler h, CancellationToken ct, int page = 1, int pageSize = 25) => h.WaitlistAsync(weddingId, new PageRequest(page, pageSize), ct))
