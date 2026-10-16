@@ -9,7 +9,9 @@ using InviteMe.Application.Features.Weddings.CoHosts;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Domain.Guests;
 using InviteMe.Domain.Invitations;
+using InviteMe.Domain.CheckIn;
 using InviteMe.Domain.Rsvps;
+using InviteMe.Domain.Seating;
 using InviteMe.Domain.Weddings;
 using InviteMe.Infrastructure.Authentication;
 using InviteMe.Infrastructure.Persistence;
@@ -169,6 +171,56 @@ public sealed class RsvpApiTests
         Assert.Equal(0, await db.Rsvps.CountAsync(x => x.InvitationId == d.InvitationId));
         Assert.Equal(0, await db.WaitlistEntries.CountAsync()); Assert.Equal(0, await db.GuestNotes.CountAsync());
         Assert.Equal(frozen, await HistoryFingerprint(db)); Assert.Equal(audits, await db.AuditLogs.CountAsync());
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task SeatedGuestWhoStopsAttendingKeepsTheSeatAndIsFlaggedForTheHost() => WithApi(async (db, factory, owner, ownerId) =>
+    {
+        // Committee Q8 / F3-E2: RSVP never removes or moves seated guests; the host decides.
+        var w = await Wedding(db, ownerId, "rsvp-seat-flag", 10); var a = await Party(db, w, ownerId, "A", companions: 1);
+        using var c = factory.CreateHttpsClient();
+        var first = await Created(await c.PostAsJsonAsync(a.Url, new SubmitRsvp(a.Version, "ATTENDING", a.All)));
+        var table = ReceptionTable.Create(w, "T1", 10, "ACTIVE"); db.Tables.Add(table); await db.SaveChangesAsync();
+        db.SeatingAssignments.AddRange(SeatingAssignment.Create(w, a.Main, table.Id, null, ownerId), SeatingAssignment.Create(w, a.Others[0], table.Id, null, ownerId));
+        await db.SaveChangesAsync();
+        var tableVersion = (await db.Tables.AsNoTracking().SingleAsync(x => x.Id == table.Id)).Version;
+
+        // The companion drops out: their seat assignment stays, is flagged, and the table version is bumped.
+        var reduced = await Read<RsvpDto>(await c.PutAsJsonAsync(a.Url, new SubmitRsvp(first.Version, "ATTENDING", [a.Main])));
+        Assert.Equal(1, reduced.ConfirmedPartySize);
+        Assert.Equal(2, await db.SeatingAssignments.CountAsync(x => x.TableId == table.Id));
+        Assert.Equal(0, await db.SeatingChangeLogs.CountAsync());
+        Assert.Equal(tableVersion + 1, (await db.Tables.AsNoTracking().SingleAsync(x => x.Id == table.Id)).Version);
+        var flag = await db.AuditLogs.AsNoTracking().SingleAsync(x => x.Action == "SEAT_NEEDS_ATTENTION");
+        Assert.Equal(("seating_assignments", "WEDDING_GUEST"), (flag.EntityType, flag.ActorType));
+        using (var meta = JsonDocument.Parse(flag.Metadata!))
+        {
+            Assert.Equal(a.Others[0], meta.RootElement.GetProperty("participantId").GetGuid());
+            Assert.Equal("DECLINED", meta.RootElement.GetProperty("attendanceStatus").GetString());
+        }
+
+        // Checked-in people cannot be taken out of the RSVP.
+        db.CheckIns.Add(CheckInRecord.Create(w, a.Main, null, ownerId)); await db.SaveChangesAsync();
+        await AssertProblem(HttpStatusCode.UnprocessableEntity, "ATTENDANCE_LOCKED", await c.PutAsJsonAsync(a.Url, new SubmitRsvp(reduced.Version, "DECLINED", [])));
+        Assert.Equal(2, await db.SeatingAssignments.CountAsync());
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task AnswerSourceIsRecordedForHostEntriesAndRejectedOnTheGuestLink() => WithApi(async (db, factory, owner, ownerId) =>
+    {
+        // Committee Q6: hosts enter answers received by phone/chat/in person; the source is kept in the audit log.
+        var w = await Wedding(db, ownerId, "rsvp-source", 10); var a = await Party(db, w, ownerId, "A"); var b = await Party(db, w, ownerId, "B");
+        using var c = factory.CreateHttpsClient();
+        await AssertProblem(HttpStatusCode.BadRequest, "VALIDATION_FAILED", await c.PostAsJsonAsync(a.Url, new SubmitRsvp(a.Version, "ATTENDING", a.All, Source: RsvpSource.Phone)));
+        await Created(await c.PostAsJsonAsync(a.Url, new SubmitRsvp(a.Version, "ATTENDING", a.All)));
+        var host = $"/api/weddings/{w}/rsvps/{b.InvitationId}";
+        await AssertProblem(HttpStatusCode.BadRequest, "VALIDATION_FAILED", await owner.PutAsJsonAsync(host, new SubmitRsvp(b.Version, "ATTENDING", b.All, Source: "FAX")));
+        await Read<RsvpDto>(await owner.PutAsJsonAsync(host, new SubmitRsvp(b.Version, "ATTENDING", b.All, Source: RsvpSource.Phone)));
+        var sources = await db.AuditLogs.AsNoTracking().Where(x => x.EntityType == "rsvps").OrderBy(x => x.CreatedAt)
+            .Select(x => new { x.ActorType, x.Metadata }).ToListAsync();
+        Assert.Equal(2, sources.Count);
+        Assert.Equal(("WEDDING_GUEST", RsvpSource.GuestLink), (sources[0].ActorType, JsonDocument.Parse(sources[0].Metadata!).RootElement.GetProperty("source").GetString()));
+        Assert.Equal(("USER", RsvpSource.Phone), (sources[1].ActorType, JsonDocument.Parse(sources[1].Metadata!).RootElement.GetProperty("source").GetString()));
     });
 
     // ---------------- Guest04: capacity / waitlist / promotion ----------------

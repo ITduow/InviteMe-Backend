@@ -32,6 +32,9 @@ public sealed class RsvpValidationTests
         Assert.False(Valid(new SubmitRsvp(1, "ATTENDING", [A], DietaryNotes: [new(A, new string('y', 201))])));
         Assert.False(Valid(new SubmitRsvp(1, "ATTENDING", [A], DietaryNotes: [new(A, "a"), new(A, "b")])));
         Assert.False(Valid(new SubmitRsvp(1, "ATTENDING", [A], DietaryNotes: [new(Guid.Empty, "a")])));
+        Assert.False(Valid(new SubmitRsvp(1, "ATTENDING", [A], Source: "FAX")));
+        Assert.False(Valid(new SubmitRsvp(1, "ATTENDING", [A], Source: RsvpSource.GuestLink))); // set by the system, not by callers
+        Assert.True(Valid(new SubmitRsvp(1, "ATTENDING", [A], Source: RsvpSource.Phone)));
     }
 
     [Fact]
