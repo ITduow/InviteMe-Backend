@@ -1,5 +1,6 @@
 using InviteMe.Application.Features.Guests.Planning;
 using Microsoft.AspNetCore.Mvc;
+using InviteMe.Application.Features.Seating.Planning;
 
 namespace InviteMe.Api.Endpoints;
 
@@ -28,6 +29,8 @@ internal static class GuestPlanningEndpoints
             return Results.Ok(new { x.Id, x.Version, x.RecipientName, x.Honorific, x.InvitationKind,
                 x.ExpectedPeople, x.Side, x.Group, x.Phone, x.Note, detail.Places });
         });
+        g.MapGet("/seating-plan", (Guid weddingId, PlanningSeatingHandler handler, CancellationToken ct) => handler.GetAsync(weddingId, ct));
+        g.MapPatch("/seating-plan", (Guid weddingId, ChangePlanningSeating input, PlanningSeatingHandler handler, CancellationToken ct) => handler.ChangeAsync(weddingId, input, ct));
         return endpoints;
     }
 }

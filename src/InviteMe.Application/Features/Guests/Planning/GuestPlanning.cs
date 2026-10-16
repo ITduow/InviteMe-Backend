@@ -2,6 +2,7 @@ using FluentValidation;
 using InviteMe.Application.Common.Behaviors;
 using InviteMe.Application.Ports.Authorization;
 using InviteMe.Domain.Weddings;
+using InviteMe.Application.Ports.Realtime;
 
 namespace InviteMe.Application.Features.Guests.Planning;
 
@@ -30,7 +31,7 @@ public interface IGuestPlanningStore
 }
 
 public sealed class GuestPlanningHandler(IGuestPlanningStore store, IWeddingPermissionService permissions,
-    RequestValidation<PlanningImport> imports, RequestValidation<PlanningGuestQuery> queries)
+    RequestValidation<PlanningImport> imports, RequestValidation<PlanningGuestQuery> queries, IWeddingChangePublisher changes)
 {
     public async Task<PlanningImportOutcome> ImportAsync(Guid weddingId, string? idempotencyKey, PlanningImport input, CancellationToken ct)
     {
@@ -42,7 +43,10 @@ public sealed class GuestPlanningHandler(IGuestPlanningStore store, IWeddingPerm
         {
             return new(null, PlanningImportValidator.Issues(input, error.Errors));
         }
-        return await store.ImportAsync(weddingId, key, input, ct);
+        var result = await store.ImportAsync(weddingId, key, input, ct);
+        if (result.Result is not null && !result.Replayed)
+            await changes.PublishAsync(weddingId, new("PlanningGuestsImported", weddingId), ct);
+        return result;
     }
 
     public async Task<PlanningGuestPage> ListAsync(Guid weddingId, PlanningGuestQuery query, CancellationToken ct)

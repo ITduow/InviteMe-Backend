@@ -1980,6 +1980,69 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Seating.PlanningSeatAssignment", b =>
+                {
+                    b.Property<Guid>("PlaceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SeatNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("TableId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("PlaceId");
+
+                    b.HasIndex("TableId", "SeatNumber")
+                        .IsUnique();
+
+                    b.ToTable("planning_seat_assignments", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_planning_seat_number", "\"SeatNumber\" BETWEEN 1 AND 20");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Seating.PlanningSeatingPlan", b =>
+                {
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
+                    b.HasKey("WeddingId");
+
+                    b.ToTable("planning_seating_plans", "inviteme");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Seating.PlanningTable", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Capacity")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WeddingId");
+
+                    b.ToTable("planning_tables", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_planning_table_capacity", "\"Capacity\" BETWEEN 1 AND 20");
+                        });
+                });
+
             modelBuilder.Entity("InviteMe.Domain.Seating.ReceptionTable", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3710,6 +3773,39 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_waitlist_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Seating.PlanningSeatAssignment", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Guests.PlanningPlace", null)
+                        .WithMany()
+                        .HasForeignKey("PlaceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("InviteMe.Domain.Seating.PlanningTable", null)
+                        .WithMany()
+                        .HasForeignKey("TableId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Seating.PlanningSeatingPlan", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Seating.PlanningTable", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Seating.ReceptionTable", b =>

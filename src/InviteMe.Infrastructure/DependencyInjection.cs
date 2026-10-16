@@ -49,6 +49,7 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Ports.Guests.IWeddingGuestReader, WeddingGuestReader>();
         services.AddScoped<InviteMe.Application.Ports.Workflows.IGuestImportStore, GuestImportStore>();
         services.AddScoped<InviteMe.Application.Features.Guests.Planning.IGuestPlanningStore, GuestPlanningStore>();
+        services.AddScoped<InviteMe.Application.Features.Seating.Planning.IPlanningSeatingStore, PlanningSeatingStore>();
         services.AddScoped<InviteMe.Application.Ports.Workflows.IRsvpStore, RsvpStore>();
         services.AddScoped<InviteMe.Application.Ports.Workflows.ISeatingStore, SeatingStore>();
         services.AddScoped<InviteMe.Application.Ports.Workflows.IReceptionStore, ReceptionStore>();
