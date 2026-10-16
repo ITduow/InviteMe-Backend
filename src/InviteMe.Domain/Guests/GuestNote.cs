@@ -11,4 +11,10 @@ public sealed class GuestNote
     public string Content { get; private set; } = "";
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
+
+    /// <summary>note_type of the single free-text note a Wedding-Guest leaves on the RSVP form (one per guest).</summary>
+    public const string RsvpNoteType = "RSVP";
+    public static GuestNote ForRsvp(Guid guestId, string content) => new()
+    { Id = Guid.NewGuid(), GuestId = guestId, NoteType = RsvpNoteType, Content = content.Trim() };
+    public void Rewrite(string content) => Content = content.Trim();
 }
