@@ -1,9 +1,14 @@
 # InviteMe backend
 
-InviteMe is a .NET 10 modular monolith with vertical slices, PostgreSQL/EF Core 10, Identity, JWT, SignalR and two test projects. Accounts and Wedding Workspace APIs are implemented alongside `GET /api/health/application`.
-InviteMe is a .NET 10 modular monolith with vertical slices, PostgreSQL/EF Core 10, Identity, JWT, SignalR and two test projects. Accounts and Wedding Workspace APIs are implemented alongside `GET /api/health/application`.
+InviteMe is a .NET 10 modular monolith with vertical slices, PostgreSQL/EF Core, ASP.NET Core Identity, JWT and SignalR.
 
-**Scope:** EF maps all 37 v2 business tables, four Identity support tables and three reporting views. Register/login/current-user/logout and wedding create/list/get/settings/access are available. Workspace edits use version checks, wedding row locking, capacity validation and atomic audit/settings/event/venue writes. RSVP, invitation lifecycle, seating/check-in/gift APIs and delivery workers remain pending. Pending EF migrations run automatically at API startup only in Development, before requests are served. Production migrations run separately during deployment. See [implemented API and evidence](docs/workspace-api.md).
+**Current API scope (2026-10-16):** Accounts, Co-Hosts, Audit and System. The `Invitations`, `Wedding Workflow`, `Wedding Guests`, `Public Invitations` and `Wedding Workspace` API groups have been removed, together with their application handlers/DTOs/ports, persistence adapters, invitation delivery worker, QR renderer and workflow realtime publisher. There are no HTTP APIs for creating weddings, importing guests, invitations/QR/RSVP/waitlist, seating/check-in, gifts, dashboard/export or summary reports.
+
+Authentication (including Google, email confirmation, password reset/change, refresh/logout and account deactivation), wedding-scoped co-host administration, owner-only audit reads and the authorized wedding SignalR hub remain. Co-Hosts/Audit operate on existing wedding records; a new wedding cannot be created through this API. The hub supports joining/leaving groups but has no workflow event producer.
+
+Database migrations, historical SQL resources, EF mappings and domain persistence entities are retained. Removing a workflow does not drop its tables or delete data. The shared random-token/hash helper remains because authentication refresh tokens use it. Data Protection remains for Identity token providers. Historical documentation below describes earlier foundations/target rules; use this scope and [verification](docs/verification.md) for the current removal status.
+
+Development startup applies migrations by default. HTTP-only test hosts set `Database:ApplyMigrationsOnStartup=false`; production migrations remain a separate deployment step. Dedicated workflow tests were removed, while authentication, co-host, audit, authorization and schema/mapping tests remain. Co-host/audit test fixtures now seed weddings directly rather than calling a removed workspace API.
 
 ## Architecture
 

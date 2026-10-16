@@ -12,9 +12,6 @@ internal static class ApiExtensions
         services.AddRateLimiter(options =>
         {
             options.RejectionStatusCode = 429;
-            options.AddPolicy("PublicInvitation", context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
-                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-                _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
             options.AddPolicy("auth", context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
                 context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
                 _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
@@ -30,13 +27,12 @@ internal static class ApiExtensions
         });
         services.AddExceptionHandler<ApiExceptionHandler>();
         services.AddSignalR(options => options.EnableDetailedErrors = false);
-        services.AddScoped<InviteMe.Application.Ports.Realtime.IWeddingChangePublisher, InviteMe.Api.Hubs.SignalRWeddingChangePublisher>();
         services.AddOpenApi(options =>
         {
             options.AddDocumentTransformer((document, _, _) =>
             {
                 document.Info.Title = "InviteMe API";
-                document.Info.Description = "InviteMe Accounts, Wedding Workspace and Invitation Lifecycle API. Invitation delivery uses a sandbox.";
+                document.Info.Description = "InviteMe Accounts, Co-Hosts, Audit and System API.";
                 document.Components ??= new OpenApiComponents();
                 document.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
                 document.Components.SecuritySchemes["Bearer"] = new OpenApiSecurityScheme
@@ -60,7 +56,6 @@ internal static class ApiExtensions
             frontendUri.AbsolutePath != "/" || !string.IsNullOrEmpty(frontendUri.Query) ||
             !string.IsNullOrEmpty(frontendUri.Fragment) || !string.IsNullOrEmpty(frontendUri.UserInfo))
             throw new InvalidOperationException("Frontend:Url must be an HTTP(S) origin without a path.");
-        services.AddSingleton(new InviteMe.Application.Features.Invitations.PersonalQr.PersonalQrOptions(frontendUri.GetLeftPart(UriPartial.Authority)));
         services.AddCors(options => options.AddPolicy("Frontend", policy =>
             policy.WithOrigins(frontendUri.GetLeftPart(UriPartial.Authority))
                 .AllowAnyHeader().AllowAnyMethod().AllowCredentials()));

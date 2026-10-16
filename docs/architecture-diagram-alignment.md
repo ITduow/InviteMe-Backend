@@ -1,5 +1,7 @@
 # Architecture diagram alignment
 
+Current scope after workflow removal (2026-10-16): only Accounts, Co-Hosts, Audit, System and the authorized wedding hub remain exposed. Wedding Workspace, Guests, Invitations/Public Invitations and all guest/RSVP/seating/reception/gift/report/dashboard workflows, adapters and worker registrations were removed. Domain entities, EF mappings and migrations remain for schema/data retention. The module and delivery diagrams below describe the historical/target design, not current implemented workflows.
+
 Structural reference: `D:/codei/InviteMe-Architecture Diagram.drawio (1).png`, InviteMe Detailed System Architecture / Review 1. This is a request/response design and target deployment view, not evidence that every box has been implemented.
 
 ## Boundaries and request flow

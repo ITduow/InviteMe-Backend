@@ -3,9 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using InviteMe.Application.Common.Models;
 using InviteMe.Application.Features.Audit;
-using InviteMe.Application.Features.Guests.Import;
 using InviteMe.Application.Features.Identity.Accounts;
-using InviteMe.Application.Features.Seating.Workflow;
 using InviteMe.Application.Features.Weddings.CoHosts;
 using InviteMe.Domain.Weddings;
 using Microsoft.EntityFrameworkCore;
@@ -21,7 +19,7 @@ public sealed class AuditHistoryTests
         using var outsider = await CoHostPermissionTests.SignIn(factory, "audit-auth-outsider");
         using var cohost = await CoHostPermissionTests.SignIn(factory, "audit-auth-cohost");
         using var anonymous = factory.CreateHttpsClient();
-        var wedding = await CoHostPermissionTests.CreateWedding(owner, "audit-auth");
+        var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "audit-auth");
         var cohostAccount = await Me(cohost);
         var url = Url(wedding.Id);
 
@@ -45,7 +43,7 @@ public sealed class AuditHistoryTests
     {
         using var owner = await CoHostPermissionTests.SignIn(factory, "audit-life-owner");
         using var cohost = await CoHostPermissionTests.SignIn(factory, "audit-life-cohost");
-        var wedding = await CoHostPermissionTests.CreateWedding(owner, "audit-life");
+        var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "audit-life");
         var ownerAccount = await Me(owner);
         var cohostAccount = await Me(cohost);
         var root = CoHostRoot(wedding.Id);
@@ -99,7 +97,7 @@ public sealed class AuditHistoryTests
     {
         using var owner = await CoHostPermissionTests.SignIn(factory, "audit-noise-owner");
         using var cohost = await CoHostPermissionTests.SignIn(factory, "audit-noise-cohost");
-        var wedding = await CoHostPermissionTests.CreateWedding(owner, "audit-noise");
+        var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "audit-noise");
         var cohostAccount = await Me(cohost);
         var root = CoHostRoot(wedding.Id);
 
@@ -123,7 +121,7 @@ public sealed class AuditHistoryTests
     {
         using var owner = await CoHostPermissionTests.SignIn(factory, "audit-filter-owner");
         using var cohost = await CoHostPermissionTests.SignIn(factory, "audit-filter-cohost");
-        var wedding = await CoHostPermissionTests.CreateWedding(owner, "audit-filter");
+        var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "audit-filter");
         var cohostAccount = await Me(cohost);
         var root = CoHostRoot(wedding.Id);
 
@@ -151,7 +149,7 @@ public sealed class AuditHistoryTests
         var pageThree = await Query(owner, wedding.Id, "pageSize=2&page=3");
         Assert.Equal(expectedTotal, pageOne.TotalCount);
         Assert.Equal(2, pageOne.Items.Count);
-        Assert.Equal(2, pageTwo.Items.Count);
+        Assert.Single(pageTwo.Items);
         Assert.Empty(pageThree.Items);
         Assert.Equal(expectedTotal, pageOne.Items.Concat(pageTwo.Items).Select(x => x.Id).Distinct().Count());
         Assert.Equal(everything.Items.Take(4).Select(x => x.Id), pageOne.Items.Concat(pageTwo.Items).Select(x => x.Id));
@@ -176,8 +174,8 @@ public sealed class AuditHistoryTests
         using var ownerA = await CoHostPermissionTests.SignIn(factory, "audit-scope-a");
         using var ownerB = await CoHostPermissionTests.SignIn(factory, "audit-scope-b");
         using var cohost = await CoHostPermissionTests.SignIn(factory, "audit-scope-cohost");
-        var weddingA = await CoHostPermissionTests.CreateWedding(ownerA, "audit-scope-wa");
-        var weddingB = await CoHostPermissionTests.CreateWedding(ownerB, "audit-scope-wb");
+        var weddingA = await CoHostPermissionTests.CreateWedding(db, ownerA, "audit-scope-wa");
+        var weddingB = await CoHostPermissionTests.CreateWedding(db, ownerB, "audit-scope-wb");
         var cohostAccount = await Me(cohost);
 
         await AssertStatus(HttpStatusCode.Created, ownerA.PostAsJsonAsync(CoHostRoot(weddingA.Id), new AddCoHostInput(cohostAccount.Email, ["GUEST_VIEW"])), "add on A");
@@ -194,47 +192,6 @@ public sealed class AuditHistoryTests
         Assert.Equal(0, (await Query(ownerB, weddingB.Id, $"entityId={foreignEntity}")).TotalCount);
     });
 
-    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
-    public Task HistoryCoversGuestSeatingAndPermissionChanges() => CoHostPermissionTests.WithApi(async (db, factory) =>
-    {
-        using var owner = await CoHostPermissionTests.SignIn(factory, "audit-cover-owner");
-        using var cohost = await CoHostPermissionTests.SignIn(factory, "audit-cover-cohost");
-        var wedding = await CoHostPermissionTests.CreateWedding(owner, "audit-cover");
-        var ownerAccount = await Me(owner);
-        var cohostAccount = await Me(cohost);
-        var weddingUrl = $"/api/weddings/{wedding.Id}";
-
-        var guestResponse = await owner.PostAsJsonAsync($"{weddingUrl}/guests", new GuestInput("AUD-1", "Audit Guest"));
-        Assert.Equal(HttpStatusCode.Created, guestResponse.StatusCode);
-
-        var tableResponse = await owner.PostAsJsonAsync($"{weddingUrl}/tables", new CreateTable("A1", 8));
-        Assert.True(tableResponse.IsSuccessStatusCode, await tableResponse.Content.ReadAsStringAsync());
-        var table = (await tableResponse.Content.ReadFromJsonAsync<TableDto>())!;
-        var tableUpdate = await owner.PutAsJsonAsync($"{weddingUrl}/tables/{table.Id}", new UpdateTable(table.Version, 10, "PLANNED"));
-        Assert.True(tableUpdate.IsSuccessStatusCode, await tableUpdate.Content.ReadAsStringAsync());
-
-        await AssertStatus(HttpStatusCode.Created, owner.PostAsJsonAsync(CoHostRoot(wedding.Id), new AddCoHostInput(cohostAccount.Email, ["GUEST_VIEW"])), "add co-host");
-        await AssertStatus(HttpStatusCode.OK, owner.PutAsJsonAsync($"{CoHostRoot(wedding.Id)}/{cohostAccount.Id}/permissions", new UpdateCoHostPermissionsInput(["GUEST_VIEW", "SEATING_EDIT"])), "update co-host");
-
-        var page = await Query(owner, wedding.Id);
-        var actions = page.Items.Select(x => x.Action).ToList();
-        foreach (var expected in new[] { "WORKSPACE_CREATED", "GUEST_IMPORTED", "TABLE_CREATED", "TABLE_UPDATED", "COHOST_ADDED", "COHOST_PERMISSIONS_UPDATED" })
-            Assert.Contains(expected, actions);
-
-        Assert.Equal("guests", page.Items.Single(x => x.Action == "GUEST_IMPORTED").EntityType);
-        Assert.Equal("tables", page.Items.First(x => x.Action == "TABLE_UPDATED").EntityType);
-        Assert.Equal(table.Id, page.Items.First(x => x.Action == "TABLE_UPDATED").EntityId);
-        Assert.Equal(2, (await Query(owner, wedding.Id, $"entityId={table.Id}")).TotalCount);
-        Assert.All(page.Items, x =>
-        {
-            Assert.Equal("USER", x.ActorType);
-            Assert.Equal(ownerAccount.Id, x.ActorUserId);
-            Assert.Equal(ownerAccount.Email, x.ActorEmail);
-        });
-
-        await AssertStatus(HttpStatusCode.NotFound, owner.PostAsJsonAsync(CoHostRoot(wedding.Id), new AddCoHostInput("nobody@example.test", ["GUEST_VIEW"])), "unknown email");
-        Assert.Equal(page.TotalCount, (await Query(owner, wedding.Id)).TotalCount);
-    });
 
     private static string Url(Guid weddingId) => $"/api/weddings/{weddingId}/audit-logs";
 

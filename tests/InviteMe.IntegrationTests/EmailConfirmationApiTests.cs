@@ -107,7 +107,7 @@ public sealed class EmailConfirmationApiTests
     {
         await db.Database.MigrateAsync();
         var sender = new CapturingEmailSender();
-        await using var baseFactory = new WorkspaceApiFactory(db.Database.GetConnectionString()!);
+        await using var baseFactory = new DatabaseApiFactory(db.Database.GetConnectionString()!);
         await using var factory = baseFactory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<IAccountEmailSender>();

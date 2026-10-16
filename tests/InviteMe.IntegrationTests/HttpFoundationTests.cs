@@ -12,6 +12,28 @@ namespace InviteMe.IntegrationTests;
 public sealed class HttpFoundationTests(ApiFactory factory) : IClassFixture<ApiFactory>
 {
     [Fact]
+    public async Task OpenApiContainsOnlyRetainedApiGroups()
+    {
+        using var client = factory.CreateHttpsClient();
+        var document = await client.GetFromJsonAsync<JsonElement>("/openapi/v1.json");
+        var paths = document.GetProperty("paths").EnumerateObject().ToList();
+        Assert.Contains(paths, path => path.Name == "/api/auth/login");
+        Assert.Contains(paths, path => path.Name.EndsWith("/co-hosts", StringComparison.Ordinal));
+        Assert.Contains(paths, path => path.Name.EndsWith("/audit-logs", StringComparison.Ordinal));
+        string[] removedTags = ["Invitations", "Wedding Workflow", "Wedding Guests", "Public Invitations", "Wedding Workspace"];
+        foreach (var path in paths)
+        {
+            Assert.False(path.Name.StartsWith("/api/public/", StringComparison.Ordinal));
+            Assert.NotEqual("/api/weddings", path.Name);
+            foreach (var operation in path.Value.EnumerateObject())
+            {
+                if (!operation.Value.TryGetProperty("tags", out var tags)) continue;
+                Assert.DoesNotContain(tags.EnumerateArray(), tag => removedTags.Contains(tag.GetString()));
+            }
+        }
+    }
+
+    [Fact]
     public async Task DevelopmentSwaggerAndOpenApiAreAccessibleWithoutSigningIn()
     {
         using var client = factory.CreateHttpsClient();
@@ -79,7 +101,7 @@ public sealed class HttpFoundationTests(ApiFactory factory) : IClassFixture<ApiF
         using var client = factory.CreateHttpsClient();
         var document = await client.GetFromJsonAsync<JsonElement>("/openapi/v1.json");
         Assert.True(document.GetProperty("paths").TryGetProperty("/api/health/application", out _));
-        Assert.True(document.GetProperty("paths").GetProperty("/api/weddings").GetProperty("get").GetProperty("security")[0].TryGetProperty("Bearer", out _));
+        Assert.True(document.GetProperty("paths").GetProperty("/api/auth/me").GetProperty("get").GetProperty("security")[0].TryGetProperty("Bearer", out _));
         var login = document.GetProperty("paths").GetProperty("/api/auth/login").GetProperty("post");
         Assert.True(!login.TryGetProperty("security", out var security) || security.GetArrayLength() == 0);
         Assert.Equal("bearer", document.GetProperty("components").GetProperty("securitySchemes")

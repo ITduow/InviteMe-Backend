@@ -7,7 +7,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.DataProtection;
-using InviteMe.Application.Ports.Invitations;
 using InviteMe.Infrastructure.Notifications;
 
 namespace InviteMe.Infrastructure;
@@ -39,26 +38,11 @@ public static class DependencyInjection
         services.AddScoped<IWeddingAccessReader, WeddingAccessReader>();
         services.AddScoped<InviteMe.Application.Ports.Authentication.IAccountStore, InviteMe.Infrastructure.Authentication.AccountStore>();
         services.AddScoped<InviteMe.Application.Ports.Authentication.IRefreshTokenStore, InviteMe.Infrastructure.Authentication.RefreshTokenStore>();
-        services.AddScoped<InviteMe.Application.Ports.Weddings.IWorkspaceStore, WorkspaceStore>();
         services.AddScoped<InviteMe.Application.Ports.Weddings.ICoHostStore, CoHostStore>();
         services.AddScoped<InviteMe.Application.Ports.Audit.IAuditReader, AuditReader>();
-        services.AddScoped<InviteMe.Application.Ports.Guests.IWeddingGuestReader, WeddingGuestReader>();
-        services.AddScoped<InviteMe.Application.Ports.Workflows.IGuestImportStore, GuestImportStore>();
-        services.AddScoped<InviteMe.Application.Ports.Workflows.IRsvpStore, RsvpStore>();
-        services.AddScoped<InviteMe.Application.Ports.Workflows.ISeatingStore, SeatingStore>();
-        services.AddScoped<InviteMe.Application.Ports.Workflows.IReceptionStore, ReceptionStore>();
-        services.AddScoped<InviteMe.Application.Ports.Workflows.IGiftStore, GiftStore>();
-        services.AddScoped<InviteMe.Application.Ports.Workflows.IReportReader, WeddingReportReader>();
-        services.AddScoped<InviteMe.Application.Ports.Dashboard.IDashboardReader, DashboardReader>();
         services.AddDataProtection().SetApplicationName("InviteMe")
             .PersistKeysToFileSystem(new DirectoryInfo(configuration["Invitations:KeyDirectory"] ??
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "InviteMe", "DataProtectionKeys")));
-        services.AddScoped<InvitationStore>();
-        services.AddScoped<IInvitationStore>(p => p.GetRequiredService<InvitationStore>());
-        services.AddScoped<IInvitationDeliveryQueue>(p => p.GetRequiredService<InvitationStore>());
-        services.AddScoped<IInvitationSender, SandboxInvitationSender>();
-        services.AddSingleton<IQrCodeRenderer, InviteMe.Infrastructure.Invitations.QrCodeRenderer>();
-        services.AddHostedService<InvitationDeliveryWorker>();
         services.AddHealthChecks().AddCheck<PostgreSqlHealthCheck>("postgresql", tags: ["ready"]);
         return services;
     }
