@@ -1,3 +1,4 @@
+using FluentValidation;
 using InviteMe.Application.Common.Behaviors;
 using InviteMe.Application.Common.Models;
 using InviteMe.Application.Ports.Authentication;
@@ -17,10 +18,18 @@ public sealed class RsvpHandler(IRsvpStore store, IWeddingPermissionService perm
     public Task<RsvpDto> PublicGetAsync(string token, CancellationToken ct) => store.PublicGetAsync(token, ct);
 
     public async Task<RsvpDto> PublicCreateAsync(string token, SubmitRsvp input, CancellationToken ct)
-    { await validation.ValidateAsync(input, ct); return await store.PublicSubmitAsync(token, input, RsvpWriteMode.Create, ct); }
+    { await ValidateGuestAsync(input, ct); return await store.PublicSubmitAsync(token, input, RsvpWriteMode.Create, ct); }
 
     public async Task<RsvpDto> PublicReplaceAsync(string token, SubmitRsvp input, CancellationToken ct)
-    { await validation.ValidateAsync(input, ct); return await store.PublicSubmitAsync(token, input, RsvpWriteMode.Replace, ct); }
+    { await ValidateGuestAsync(input, ct); return await store.PublicSubmitAsync(token, input, RsvpWriteMode.Replace, ct); }
+
+    // The guest link is itself the source; only a host may state PHONE/CHAT/IN_PERSON/OTHER.
+    private async Task ValidateGuestAsync(SubmitRsvp input, CancellationToken ct)
+    {
+        await validation.ValidateAsync(input, ct);
+        if (input.Source is not null)
+            throw new ValidationException([new FluentValidation.Results.ValidationFailure(nameof(SubmitRsvp.Source), "Source is set by hosts only.")]);
+    }
 
     public async Task<RsvpDto> GetAsync(Guid weddingId, Guid invitationId, CancellationToken ct)
     { await permissions.RequireAsync(weddingId, WeddingPermission.RSVP_VIEW, ct); return await store.GetAsync(weddingId, invitationId, ct); }

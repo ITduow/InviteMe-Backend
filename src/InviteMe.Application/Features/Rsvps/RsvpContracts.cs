@@ -9,7 +9,18 @@ namespace InviteMe.Application.Features.Rsvps;
 /// </summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SubmitRsvp(int ExpectedVersion, string Decision, IReadOnlyList<Guid> ParticipantIds,
-    IReadOnlyList<string>? PlusOnes = null, string? Note = null, IReadOnlyList<DietaryNoteInput>? DietaryNotes = null);
+    IReadOnlyList<string>? PlusOnes = null, string? Note = null, IReadOnlyList<DietaryNoteInput>? DietaryNotes = null,
+    string? Source = null);
+
+/// <summary>
+/// Where an RSVP answer came from. The guest link always records GUEST_LINK; a host entering an answer on the guest's
+/// behalf states PHONE, CHAT, IN_PERSON or OTHER. Stored in the audit log of the change.
+/// </summary>
+public static class RsvpSource
+{
+    public const string GuestLink = "GUEST_LINK", Phone = "PHONE", Chat = "CHAT", InPerson = "IN_PERSON", Other = "OTHER";
+    public static readonly IReadOnlySet<string> HostEntered = new HashSet<string> { Phone, Chat, InPerson, Other };
+}
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record DietaryNoteInput(Guid ParticipantId, string? Note);
@@ -65,6 +76,8 @@ public sealed class SubmitRsvpValidator : AbstractValidator<SubmitRsvp>
         RuleFor(x => x).Must(x => x.Decision != "ATTENDING" || (x.ParticipantIds?.Count ?? 0) + (x.PlusOnes?.Count ?? 0) > 0)
             .WithMessage("Select at least one attendee.");
         RuleFor(x => x.Note).MaximumLength(NoteMaxLength);
+        RuleFor(x => x.Source).Must(x => x is null || RsvpSource.HostEntered.Contains(x))
+            .WithMessage("Source must be PHONE, CHAT, IN_PERSON or OTHER.");
         RuleFor(x => x.DietaryNotes).Must(x => x is null || (x.Count <= 41 && x.All(n => n is not null && n.ParticipantId != Guid.Empty)
             && x.Select(n => n.ParticipantId).Distinct().Count() == x.Count)).WithMessage("Dietary notes need distinct participant ids.");
         RuleForEach(x => x.DietaryNotes).ChildRules(n => n.RuleFor(x => x.Note).MaximumLength(DietaryNoteMaxLength)).When(x => x.DietaryNotes is not null);

@@ -7,7 +7,6 @@ using InviteMe.Domain.Audit;
 using InviteMe.Domain.Guests;
 using InviteMe.Domain.Invitations;
 using InviteMe.Domain.Rsvps;
-using InviteMe.Domain.Seating;
 using InviteMe.Domain.Weddings;
 using InviteMe.Infrastructure.Authentication;
 using Microsoft.EntityFrameworkCore;
@@ -130,7 +129,7 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
         if (attendanceUnchanged)
         {
             invitation.AdvanceRsvpVersion();
-            db.AuditLogs.Add(AuditLog.ForEntity(wedding.Id, "rsvps", rsvp!.Id, "RSVP_NOTE_UPDATED", actor, actor is null ? guest.Id : null));
+            db.AuditLogs.Add(AuditLog.ForEntity(wedding.Id, "rsvps", rsvp!.Id, "RSVP_NOTE_UPDATED", actor, actor is null ? guest.Id : null, SourceMetadata(input, actor)));
             await db.SaveChangesAsync(ct); return await State(invitation, ct);
         }
 
@@ -144,16 +143,18 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
             targets[p] = fitsAll ? "ATTENDING" : "WAITLISTED";
         }
 
-        // 6. Declining or reducing releases seats; checked-in attendance cannot be removed.
+        // 6. Checked-in attendance cannot be removed. A seated person who no longer attends KEEPS the seat assignment:
+        //    RSVP never moves or removes guests from tables (committee Q8 / F3-E2). The assignment is flagged for the
+        //    host (audit SEAT_NEEDS_ATTENTION) and the table version is bumped so seating editors refresh and decide.
         var removed = participants.Where(p => p.AttendanceStatus == "ATTENDING" && targets[p] != "ATTENDING").Select(p => p.Id).ToArray();
         if (await db.CheckIns.AnyAsync(x => x.WeddingId == wedding.Id && x.Status == "CHECKED_IN" && x.ParticipantId != null && removed.Contains(x.ParticipantId.Value), ct))
             throw Rule("ATTENDANCE_LOCKED", "Checked-in attendance cannot be removed.");
-        foreach (var seat in await db.SeatingAssignments.Where(x => x.WeddingId == wedding.Id && removed.Contains(x.ParticipantId)).ToListAsync(ct))
+        foreach (var seat in await db.SeatingAssignments.Where(x => x.WeddingId == wedding.Id && removed.Contains(x.ParticipantId)).OrderBy(x => x.TableId).ToListAsync(ct))
         {
             var table = await db.Tables.FromSqlInterpolated($"SELECT * FROM inviteme.tables WHERE id={seat.TableId} AND wedding_id={wedding.Id} FOR UPDATE").SingleAsync(ct);
-            db.SeatingChangeLogs.Add(SeatingChangeLog.Record(wedding.Id, seat.ParticipantId, actor ?? wedding.OwnerUserId, null, seat.TableId, seat.SeatId, null, null, "UNASSIGN"));
-            db.SeatingAssignments.Remove(seat); table.Touch();
-            db.AuditLogs.Add(AuditLog.ForEntity(wedding.Id, "seating_assignments", seat.Id, "SEAT_RELEASED_BY_RSVP", actor, actor is null ? guest.Id : null));
+            table.Touch();
+            db.AuditLogs.Add(AuditLog.ForEntity(wedding.Id, "seating_assignments", seat.Id, "SEAT_NEEDS_ATTENTION", actor, actor is null ? guest.Id : null,
+                JsonSerializer.Serialize(new { participantId = seat.ParticipantId, tableId = seat.TableId, attendanceStatus = targets.Single(t => t.Key.Id == seat.ParticipantId).Value }, SnapshotJson)));
         }
         foreach (var p in participants) p.SetAttendance(targets[p]);
 
@@ -176,7 +177,7 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
             db.RsvpHistory.Add(RsvpHistory.Record(rsvp.Id, oldStatus, oldSize, rsvp.Status, rsvp.ConfirmedPartySize,
                 oldSnapshot, Snapshot(rsvp.Status, rsvp.ConfirmedPartySize, participants), actorRef, reason));
         invitation.AdvanceRsvpVersion();
-        db.AuditLogs.Add(AuditLog.ForEntity(wedding.Id, "rsvps", rsvp.Id, confirmedChanged ? reason : "RSVP_WAITLIST_UPDATED", actor, actor is null ? guest.Id : null));
+        db.AuditLogs.Add(AuditLog.ForEntity(wedding.Id, "rsvps", rsvp.Id, confirmedChanged ? reason : "RSVP_WAITLIST_UPDATED", actor, actor is null ? guest.Id : null, SourceMetadata(input, actor)));
         await db.SaveChangesAsync(ct);
         return await State(invitation, ct);
     }
@@ -235,6 +236,10 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
         else if (wantedNote is not null && note!.Content != wantedNote) note.Rewrite(wantedNote);
         foreach (var (participant, value) in dietary) participant.SetDietaryNote(value);
     }
+
+    // Where the answer came from (committee Q6): the guest link, or a host entering an answer received by phone, chat or in person.
+    private static string SourceMetadata(SubmitRsvp input, Guid? actor) =>
+        JsonSerializer.Serialize(new { source = actor is null ? RsvpSource.GuestLink : input.Source ?? RsvpSource.Other }, SnapshotJson);
 
     private static string? Normalize(string? note) => string.IsNullOrWhiteSpace(note) ? null : note.Trim();
 
