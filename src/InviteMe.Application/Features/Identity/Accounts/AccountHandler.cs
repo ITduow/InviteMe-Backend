@@ -86,7 +86,8 @@ public sealed class ResetPasswordValidator : AbstractValidator<ResetPassword>
 
         RuleFor(x => x.Code)
             .NotEmpty()
-            .Matches("^[0-9]{6}$");
+            .Must(x => !string.IsNullOrWhiteSpace(x))
+            .MaximumLength(2048);
 
         RuleFor(x => x.NewPassword)
             .NotEmpty()
@@ -106,7 +107,8 @@ public sealed class ConfirmEmailValidator : AbstractValidator<ConfirmEmail>
 
         RuleFor(x => x.Code)
             .NotEmpty()
-            .Matches("^[0-9]{6}$");
+            .Must(x => !string.IsNullOrWhiteSpace(x))
+            .MaximumLength(2048);
     }
 }
 

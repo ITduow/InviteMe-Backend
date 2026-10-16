@@ -25,11 +25,9 @@ public sealed class EmailConfirmationValidationTests
 
     [Theory]
     [InlineData("user@example.test", "")]
-    [InlineData("user@example.test", "12345")]
-    [InlineData("user@example.test", "1234567")]
-    [InlineData("user@example.test", "12a456")]
-    [InlineData("not-an-email", "123456")]
-    [InlineData("", "123456")]
+    [InlineData("user@example.test", "   ")]
+    [InlineData("not-an-email", "CfDJ8ValidTokenString==")]
+    [InlineData("", "CfDJ8ValidTokenString==")]
     public async Task ConfirmEmailRejectsBadCodeOrBadEmail(string email, string code)
     {
         var validation = new RequestValidation<ConfirmEmail>([new ConfirmEmailValidator()]);
@@ -37,9 +35,17 @@ public sealed class EmailConfirmationValidationTests
     }
 
     [Fact]
+    public async Task ConfirmEmailRejectsTooLongToken()
+    {
+        var validation = new RequestValidation<ConfirmEmail>([new ConfirmEmailValidator()]);
+        var tooLongToken = new string('a', 2049);
+        await Assert.ThrowsAsync<ValidationException>(() => validation.ValidateAsync(new("user@example.test", tooLongToken), default));
+    }
+
+    [Fact]
     public async Task ConfirmEmailAcceptsValidInput()
     {
         await new RequestValidation<ConfirmEmail>([new ConfirmEmailValidator()])
-            .ValidateAsync(new("user@example.test", "123456"), default);
+            .ValidateAsync(new("user@example.test", "CfDJ8ValidConfirmationTokenString+123/abc=="), default);
     }
 }
