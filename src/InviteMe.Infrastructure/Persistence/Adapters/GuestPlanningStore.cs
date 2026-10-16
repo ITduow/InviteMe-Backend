@@ -12,8 +12,6 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
 {
     public async Task<PlanningImportOutcome> ImportAsync(Guid weddingId, Guid key, PlanningImport input, CancellationToken ct)
     {
-        var errors = PlanningValidation.Validate(input);
-        if (errors.Count > 0) return new(null, errors);
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(input))));
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await LockWedding(db, weddingId, ct);
@@ -23,6 +21,7 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
             if (prior.RequestHash != hash) throw Conflict("IDEMPOTENCY_KEY_REUSED");
             return new(JsonSerializer.Deserialize<PlanningImportResult>(prior.ResultJson)!, [], true);
         }
+        var errors = new List<ImportIssue>();
         var groups = await db.Set<PlanningGroup>().Where(x => x.WeddingId == weddingId).ToListAsync(ct);
         foreach (var row in input.Rows!)
             if (row!.Group?.ExistingId is { } id && groups.All(x => x.Id != id))
@@ -33,34 +32,38 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
         var createdGroups = new List<PlanningGroupDto>();
         var items = new List<PlanningImportedRow>();
         var warnings = new List<ImportIssue>();
-        var existing = await db.Set<PlanningGuest>().Where(x => x.WeddingId == weddingId).ToListAsync(ct);
+        var existing = await db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId)
+            .Select(x => new { x.RecipientName, x.Phone }).ToListAsync(ct);
+        var names = existing.Select(x => PlanningText.Key(x.RecipientName)).ToHashSet();
+        var phones = existing.Where(x => x.Phone != null).Select(x => x.Phone!).ToHashSet();
         foreach (var row in input.Rows!)
         {
             var r = row!;
             Guid? groupId = r.Group?.ExistingId;
             if (r.Group?.NewName is { } newName)
             {
-                var normalized = PlanningValidation.Key(newName);
+                var normalized = PlanningText.Key(newName);
                 var group = groups.SingleOrDefault(x => x.NormalizedName == normalized);
                 if (group is null)
                 {
-                    group = new() { Id = Guid.NewGuid(), WeddingId = weddingId, Name = PlanningValidation.Clean(newName), NormalizedName = normalized };
+                    group = new() { Id = Guid.NewGuid(), WeddingId = weddingId, Name = PlanningText.Clean(newName), NormalizedName = normalized };
                     groups.Add(group); db.Add(group); createdGroups.Add(new(group.Id, group.Name));
                 }
                 groupId = group.Id;
             }
-            string? Optional(string? value) => string.IsNullOrWhiteSpace(value) ? null : PlanningValidation.Clean(value);
+            string? Optional(string? value) => string.IsNullOrWhiteSpace(value) ? null : PlanningText.Clean(value);
             var guest = new PlanningGuest {
                 Id = Guid.NewGuid(), WeddingId = weddingId, ImportId = batch.Id, RowNumber = r.RowNumber,
-                RecipientName = PlanningValidation.Clean(r.RecipientName), Honorific = Optional(r.Honorific),
+                RecipientName = PlanningText.Clean(r.RecipientName), Honorific = Optional(r.Honorific),
                 InvitationKind = string.IsNullOrEmpty(r.InvitationKind) ? "INDIVIDUAL" : r.InvitationKind,
                 ExpectedPeople = r.ExpectedPeople ?? 1, Side = string.IsNullOrEmpty(r.Side) ? "UNSPECIFIED" : r.Side,
                 GroupId = groupId, Phone = Optional(r.Phone), Note = Optional(r.Note)
             };
-            if (existing.Any(x => PlanningValidation.Key(x.RecipientName) == PlanningValidation.Key(guest.RecipientName) ||
-                (guest.Phone is not null && x.Phone == guest.Phone)))
+            if (names.Contains(PlanningText.Key(guest.RecipientName)) || (guest.Phone is not null && phones.Contains(guest.Phone)))
                 warnings.Add(new(r.RowNumber, "recipientName", "POSSIBLE_DUPLICATE", "Có khách trùng tên hoặc SĐT; đã giữ thành đầu mối riêng."));
-            existing.Add(guest); db.Add(guest);
+            names.Add(PlanningText.Key(guest.RecipientName));
+            if (guest.Phone is not null) phones.Add(guest.Phone);
+            db.Add(guest);
             var person = new PlanningParticipant { Id = Guid.NewGuid(), GuestId = guest.Id, FullName = guest.RecipientName };
             db.Add(person);
             for (var i = 0; i < guest.ExpectedPeople; i++)
@@ -82,8 +85,6 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
 
     public async Task<PlanningGuestPage> ListAsync(Guid weddingId, int page, int pageSize, string? search, string? side, Guid? groupId, CancellationToken ct)
     {
-        if (page < 1 || page > 100000 || pageSize is < 1 or > 100 || search?.Length > 200 || (side is not null && !PlanningValidation.Sides.Contains(side)))
-            throw Rule("INVALID_FILTER", "Bộ lọc hoặc phân trang không hợp lệ.");
         var query = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId);
         if (!string.IsNullOrWhiteSpace(search)) { var text = search.Trim().ToUpper(); query = query.Where(x => x.RecipientName.ToUpper().Contains(text)); }
         if (side is not null) query = query.Where(x => x.Side == side);

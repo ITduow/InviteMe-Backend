@@ -4,14 +4,17 @@ namespace InviteMe.UnitTests;
 
 public sealed class PlanningImportValidationTests
 {
+    private static IReadOnlyList<ImportIssue> Validate(PlanningImport input) =>
+        PlanningImportValidator.Issues(input, new PlanningImportValidator().Validate(input).Errors);
+
     [Fact]
     public void MissingOptionalValuesAreAllowedWithoutInferringFamilyOrSide() =>
-        Assert.Empty(PlanningValidation.Validate(new([new(2, "An")])));
+        Assert.Empty(Validate(new([new(2, "An")])));
 
     [Fact]
     public void InvalidRowsAndAmbiguousGroupsAreRejectedTogether()
     {
-        var errors = PlanningValidation.Validate(new([
+        var errors = Validate(new([
             new(2, "An", ExpectedPeople: 0, Side: "Nhà gái"),
             new(2, "Hoa", Group: new(ExistingId: Guid.NewGuid(), NewName: "Họ ngoại", Confirmed: true)),
             new(4, "Nam", Group: new(NewName: "Công ty ABC")), null
@@ -27,7 +30,23 @@ public sealed class PlanningImportValidationTests
     [Fact]
     public void GroupNormalizationPreservesMeaningAndOnlyNormalizesUnicodeSpacingAndCase()
     {
-        Assert.Equal(PlanningValidation.Key("Họ ngoại"), PlanningValidation.Key("  họ   ngoại  "));
-        Assert.NotEqual(PlanningValidation.Key("Bạn đại học"), PlanningValidation.Key("Bạn đai học"));
+        Assert.Equal(PlanningText.Key("Họ ngoại"), PlanningText.Key("  họ   ngoại  "));
+        Assert.NotEqual(PlanningText.Key("Bạn đại học"), PlanningText.Key("Bạn đai học"));
+    }
+
+    [Fact]
+    public void ValidationErrorsUseSpreadsheetLineRatherThanArrayIndex()
+    {
+        var errors = Validate(new([new(17, "An", ExpectedPeople: 0), new(17, "Hoa")]));
+        Assert.Contains(errors, x => x.RowNumber == 17 && x.Field == "expectedPeople" && x.Code == "INVALID_EXPECTED_PEOPLE");
+        Assert.Contains(errors, x => x.RowNumber == 17 && x.Field == "rowNumber" && x.Code == "INVALID_ROW_NUMBER");
+        Assert.All(errors, x => Assert.Equal(17, x.RowNumber));
+    }
+
+    [Fact]
+    public void MissingOrOversizedBatchProducesRootErrorWithoutInspectingRows()
+    {
+        Assert.Contains(Validate(new(null)), x => x.RowNumber == 0 && x.Field == "rows" && x.Code == "INVALID_ROWS");
+        Assert.Single(Validate(new(Enumerable.Repeat<PlanningRow?>(null, 501).ToArray())));
     }
 }

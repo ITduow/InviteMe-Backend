@@ -1,5 +1,7 @@
-using System.Text;
-using System.Text.RegularExpressions;
+using FluentValidation;
+using InviteMe.Application.Common.Behaviors;
+using InviteMe.Application.Ports.Authorization;
+using InviteMe.Domain.Weddings;
 
 namespace InviteMe.Application.Features.Guests.Planning;
 
@@ -27,44 +29,32 @@ public interface IGuestPlanningStore
     Task<PlanningGuestDetail> DetailAsync(Guid weddingId, Guid guestId, CancellationToken ct);
 }
 
-public static class PlanningValidation
+public sealed class GuestPlanningHandler(IGuestPlanningStore store, IWeddingPermissionService permissions,
+    RequestValidation<PlanningImport> imports, RequestValidation<PlanningGuestQuery> queries)
 {
-    public static string Clean(string? value) => Regex.Replace((value ?? "").Normalize(NormalizationForm.FormC).Trim(), @"\s+", " ");
-    public static string Key(string? value) => Clean(value).ToUpperInvariant();
-    public static readonly string[] Sides = ["BRIDE", "GROOM", "MUTUAL", "UNSPECIFIED"];
-    public static List<ImportIssue> Validate(PlanningImport input)
+    public async Task<PlanningImportOutcome> ImportAsync(Guid weddingId, string? idempotencyKey, PlanningImport input, CancellationToken ct)
     {
-        var errors = new List<ImportIssue>();
-        if (input.Rows is not { Count: >= 1 and <= 500 })
-        { errors.Add(new(0, "rows", "INVALID_ROWS", "Nhập từ 1 đến 500 dòng.")); return errors; }
-        var lines = new HashSet<int>();
-        foreach (var row in input.Rows)
+        await permissions.RequireAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
+        if (!Guid.TryParse(idempotencyKey, out var key) || key == Guid.Empty)
+            throw new ValidationException([new("Idempotency-Key", "Idempotency-Key must be a non-empty UUID.")]);
+        try { await imports.ValidateAsync(input, ct); }
+        catch (ValidationException error)
         {
-            if (row is null) { errors.Add(new(0, "rows", "INVALID_ROW", "Dòng dữ liệu không được để null.")); continue; }
-            void Error(string field, string code, string message) => errors.Add(new(row.RowNumber, field, code, message));
-            if (row.RowNumber < 1 || !lines.Add(row.RowNumber)) Error("rowNumber", "INVALID_ROW_NUMBER", "Số dòng phải dương và không trùng.");
-            void Text(string field, string? value, int max, bool required = false)
-            {
-                var text = Clean(value);
-                if ((required && text.Length == 0) || text.Length > max || (text.Length > 0 && "=+@-".Contains(text[0]) && field != "phone"))
-                    Error(field, "INVALID_TEXT", $"Kiểm tra dữ liệu {field} (tối đa {max} ký tự).");
-            }
-            Text("recipientName", row.RecipientName, 150, true); Text("honorific", row.Honorific, 50);
-            Text("phone", row.Phone, 30); Text("note", row.Note, 2000);
-            if ((row.ExpectedPeople ?? 1) is < 1 or > 500) Error("expectedPeople", "INVALID_EXPECTED_PEOPLE", "Tổng người dự kiến phải từ 1 đến 500.");
-            if (row.InvitationKind is not (null or "" or "INDIVIDUAL" or "FAMILY" or "GROUP")) Error("invitationKind", "INVALID_KIND", "Kiểu lời mời không hợp lệ.");
-            if (!string.IsNullOrEmpty(row.Side) && !Sides.Contains(row.Side)) Error("side", "INVALID_SIDE", "Phía khách mời không hợp lệ.");
-            if (row.Group is { } group)
-            {
-                if (group.ExistingId is { } id)
-                { if (id == Guid.Empty || group.NewName is not null || group.Confirmed) Error("group", "INVALID_GROUP", "Chỉ chọn nhóm có sẵn hoặc tạo nhóm mới."); }
-                else
-                {
-                    Text("group", group.NewName, 100, true);
-                    if (!group.Confirmed) Error("group", "GROUP_CONFIRMATION_REQUIRED", "Xác nhận tên nhóm mới trước khi nhập.");
-                }
-            }
+            return new(null, PlanningImportValidator.Issues(input, error.Errors));
         }
-        return errors;
+        return await store.ImportAsync(weddingId, key, input, ct);
+    }
+
+    public async Task<PlanningGuestPage> ListAsync(Guid weddingId, PlanningGuestQuery query, CancellationToken ct)
+    {
+        await permissions.RequireAsync(weddingId, WeddingPermission.GUEST_VIEW, ct);
+        await queries.ValidateAsync(query, ct);
+        return await store.ListAsync(weddingId, query.Page, query.PageSize, query.Search, query.Side, query.GroupId, ct);
+    }
+
+    public async Task<PlanningGuestDetail> DetailAsync(Guid weddingId, Guid guestId, CancellationToken ct)
+    {
+        await permissions.RequireAsync(weddingId, WeddingPermission.GUEST_VIEW, ct);
+        return await store.DetailAsync(weddingId, guestId, ct);
     }
 }

@@ -95,6 +95,5 @@ public sealed class InviteMeDbContext(DbContextOptions<InviteMeDbContext> option
         base.OnModelCreating(builder);
         builder.HasDefaultSchema("inviteme");
         builder.ApplyConfigurationsFromAssembly(typeof(InviteMeDbContext).Assembly);
-        Configurations.GuestPlanningModel.Configure(builder);
     }
 }
