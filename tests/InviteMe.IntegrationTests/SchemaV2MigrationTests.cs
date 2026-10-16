@@ -108,6 +108,7 @@ public sealed class SchemaV2MigrationTests
             await ExecuteScript(db, "RefreshTokenSupport.sql");
             await ExecuteScript(db, "SeatingCheckInWorkflows.sql");
             await ExecuteScript(db, "RsvpImmutableHistory.sql");
+            await ExecuteScript(db, "RsvpGuestNote.sql");
             await db.Database.ExecuteSqlRawAsync("SET search_path TO inviteme, pg_temp");
             expected = await Scalar<string>(db, SchemaSignature);
         });

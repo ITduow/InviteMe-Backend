@@ -18,4 +18,6 @@ public sealed class GuestParticipant
         if (status is not ("PENDING" or "ATTENDING" or "DECLINED" or "WAITLISTED")) throw new ArgumentException("Invalid attendance.");
         AttendanceStatus = status;
     }
+    // RSVP-03: dietary/meal note given by the Wedding-Guest on the RSVP form (null clears it).
+    public void SetDietaryNote(string? note) => DietaryNote = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
 }

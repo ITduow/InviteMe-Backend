@@ -779,6 +779,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "ParticipantId" }, "ix_guest_notes_participant_id")
                         .HasDatabaseName("ix_guest_notes_participant_id");
 
+                    b.HasIndex(new[] { "GuestId" }, "uq_guest_notes_rsvp_note")
+                        .IsUnique()
+                        .HasDatabaseName("uq_guest_notes_rsvp_note")
+                        .HasFilter("note_type = 'RSVP' AND participant_id IS NULL");
+
                     b.ToTable("guest_notes", "inviteme");
                 });
 

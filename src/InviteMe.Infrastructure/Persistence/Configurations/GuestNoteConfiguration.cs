@@ -28,5 +28,8 @@ public sealed class GuestNoteConfiguration : IEntityTypeConfiguration<GuestNote>
         builder.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.CreatedBy).OnDelete(DeleteBehavior.SetNull).HasConstraintName("fk_guest_notes_created_by");
         builder.HasIndex(x => x.GuestId, "ix_guest_notes_guest_id").HasDatabaseName("ix_guest_notes_guest_id");
         builder.HasIndex(x => x.ParticipantId, "ix_guest_notes_participant_id").HasDatabaseName("ix_guest_notes_participant_id");
+        // RSVP-03: at most one RSVP-form note per guest (GuestNote.RsvpNoteType). DDL lives in Schema/RsvpGuestNote.sql.
+        builder.HasIndex(x => x.GuestId, "uq_guest_notes_rsvp_note").HasDatabaseName("uq_guest_notes_rsvp_note").IsUnique()
+            .HasFilter("note_type = 'RSVP' AND participant_id IS NULL");
     }
 }
