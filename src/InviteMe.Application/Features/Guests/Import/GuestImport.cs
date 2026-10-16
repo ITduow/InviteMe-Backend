@@ -3,6 +3,7 @@ using FluentValidation;
 using InviteMe.Application.Common.Behaviors;
 using InviteMe.Application.Ports.Authorization;
 using InviteMe.Application.Ports.Authentication;
+using InviteMe.Application.Ports.Realtime;
 using InviteMe.Application.Ports.Workflows;
 using InviteMe.Domain.Weddings;
 
@@ -45,12 +46,14 @@ public sealed class ImportGuestsValidator : AbstractValidator<ImportGuests>
     }
 }
 public sealed class GuestImportHandler(IGuestImportStore store, IWeddingPermissionService permissions, ICurrentUser user,
-    RequestValidation<ImportGuests> validation)
+    IWeddingChangePublisher changes, RequestValidation<ImportGuests> validation)
 {
     public async Task<ImportResult> ImportAsync(Guid weddingId, ImportGuests input, CancellationToken ct)
     {
         await permissions.RequireAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
         await validation.ValidateAsync(input, ct);
-        return await store.ImportAsync(weddingId, user.UserId!.Value, input, ct);
+        var result = await store.ImportAsync(weddingId, user.UserId!.Value, input, ct);
+        if (!result.DryRun && result.ImportedCount > 0) await changes.PublishAsync(weddingId, new("GuestsChanged", weddingId), ct);
+        return result;
     }
 }

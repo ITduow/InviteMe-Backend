@@ -152,6 +152,8 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
         rsvp is { Status: "ATTENDING" } && (input.PlusOnes?.Count ?? 0) == 0
         && (input.Decision == "DECLINED"
             || (selected.All(p => p.AttendanceStatus == "ATTENDING") && selected.Count < participants.Count(p => p.AttendanceStatus == "ATTENDING")));
+    public Task<Guid> WeddingOfInvitationAsync(Guid invitationId, CancellationToken ct) =>
+        db.Invitations.AsNoTracking().Where(x => x.Id == invitationId).Select(x => x.WeddingId).SingleAsync(ct);
     public async Task<RsvpDto> PromoteAsync(Guid weddingId, Guid entryId, Guid actor, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct); var wedding = await LockWedding(db, weddingId, ct);

@@ -30,6 +30,7 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Features.Reception.ReceptionHandler>();
         services.AddScoped<InviteMe.Application.Features.Gifts.Workflow.GiftHandler>();
         services.AddScoped<InviteMe.Application.Features.Reports.WeddingReportHandler>();
+        services.AddScoped<InviteMe.Application.Features.Dashboard.HeadcountDashboard>();
         services.AddScoped<IWeddingPermissionService, WeddingPermissionService>();
         return services;
     }
