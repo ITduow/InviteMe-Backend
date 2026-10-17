@@ -116,6 +116,11 @@
 					{
 						"key": "Content-Type",
 						"value": "application/json"
+					},
+					{
+						"key": "Origin",
+						"value": "{{frontendOrigin}}",
+						"description": "Must exactly match the configured Frontend:Url origin."
 					}
 				],
 				"body": {
@@ -186,7 +191,13 @@
 			],
 			"request": {
 				"method": "POST",
-				"header": [],
+				"header": [
+					{
+						"key": "Origin",
+						"value": "{{frontendOrigin}}",
+						"description": "Must exactly match the configured Frontend:Url origin."
+					}
+				],
 				"url": {
 					"raw": "{{baseUrl}}/api/auth/refresh",
 					"host": [
@@ -322,6 +333,11 @@
 					{
 						"key": "Content-Type",
 						"value": "application/json"
+					},
+					{
+						"key": "Origin",
+						"value": "{{frontendOrigin}}",
+						"description": "Must exactly match the configured Frontend:Url origin."
 					}
 				],
 				"body": {
@@ -366,6 +382,11 @@
 					{
 						"key": "Content-Type",
 						"value": "application/json"
+					},
+					{
+						"key": "Origin",
+						"value": "{{frontendOrigin}}",
+						"description": "Must exactly match the configured Frontend:Url origin."
 					}
 				],
 				"body": {
@@ -401,7 +422,13 @@
 					]
 				},
 				"method": "POST",
-				"header": [],
+				"header": [
+					{
+						"key": "Origin",
+						"value": "{{frontendOrigin}}",
+						"description": "Must exactly match the configured Frontend:Url origin."
+					}
+				],
 				"url": {
 					"raw": "{{baseUrl}}/api/auth/logout",
 					"host": [
@@ -465,6 +492,11 @@
 		{
 			"key": "accessToken",
 			"value": ""
+		},
+		{
+			"key": "frontendOrigin",
+			"value": "http://localhost:3000",
+			"type": "string"
 		}
 	]
 }

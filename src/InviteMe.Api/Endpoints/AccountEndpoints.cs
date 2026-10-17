@@ -23,7 +23,7 @@ internal static class AccountEndpoints
             var session = await handler.LoginAsync(input, ct);
             RefreshTokenCookie.Append(context.Response, session.IssuedRefresh);
             return Results.Ok(session.Token);
-        }).AllowAnonymous().RequireRateLimiting("auth");
+        }).AddEndpointFilter<AuthOriginFilter>().AllowAnonymous().RequireRateLimiting("auth");
 
         group.MapPost("/google", async (GoogleLogin input, AccountHandler handler, HttpContext context, CancellationToken ct) =>
         {
@@ -31,7 +31,7 @@ internal static class AccountEndpoints
             var session = await handler.LoginWithGoogleAsync(input, ct);
             RefreshTokenCookie.Append(context.Response, session.IssuedRefresh);
             return Results.Ok(session.Token);
-        }).AllowAnonymous().RequireRateLimiting("auth");
+        }).AddEndpointFilter<AuthOriginFilter>().AllowAnonymous().RequireRateLimiting("auth");
 
         group.MapPost("/refresh", async (AccountHandler handler, HttpContext context, CancellationToken ct) =>
         {
@@ -48,7 +48,7 @@ internal static class AccountEndpoints
                 RefreshTokenCookie.Delete(context.Response);
                 throw;
             }
-        }).AllowAnonymous().RequireRateLimiting("auth");
+        }).AddEndpointFilter<AuthOriginFilter>().AllowAnonymous().RequireRateLimiting("auth");
 
         group.MapPost("/forgot-password", async (ForgotPassword input, AccountHandler handler, CancellationToken ct) =>
         {
@@ -106,7 +106,7 @@ internal static class AccountEndpoints
                 RefreshTokenCookie.Delete(context.Response);
                 throw;
             }
-        }).AllowAnonymous();
+        }).AddEndpointFilter<AuthOriginFilter>().AllowAnonymous();
 
         group.MapDelete("/account", async ([Microsoft.AspNetCore.Mvc.FromBody] DeleteAccount? input, AccountHandler handler, HttpContext context, CancellationToken ct) =>
         {

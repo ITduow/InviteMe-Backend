@@ -1,4 +1,6 @@
 using InviteMe.Application.Ports.Authentication;
+using InviteMe.Api.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace InviteMe.Api.Authentication;
 
@@ -14,22 +16,26 @@ internal static class RefreshTokenCookie
 
     public static void Append(HttpResponse response, IssuedRefreshToken token)
     {
-        var options = CreateOptions();
+        var options = CreateOptions(response);
         options.MaxAge = TimeSpan.FromSeconds(token.ExpiresIn);
         response.Cookies.Append(CookieName, token.Value, options);
     }
 
     public static void Delete(HttpResponse response)
     {
-        response.Cookies.Delete(CookieName, CreateOptions());
+        response.Cookies.Delete(CookieName, CreateOptions(response));
     }
 
-    private static CookieOptions CreateOptions() => new()
+    private static CookieOptions CreateOptions(HttpResponse response)
     {
-        HttpOnly = true,
-        Secure = true,
-        SameSite = SameSiteMode.Lax,
-        Path = CookiePath,
-        IsEssential = true
-    };
+        var configured = response.HttpContext.RequestServices.GetRequiredService<IOptions<RefreshCookieOptions>>().Value;
+        return new()
+        {
+            HttpOnly = true,
+            Secure = configured.Secure,
+            SameSite = configured.SameSite,
+            Path = CookiePath,
+            IsEssential = true
+        };
+    }
 }

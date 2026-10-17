@@ -43,7 +43,7 @@ internal sealed class ApiExceptionHandler(IProblemDetailsService problems, ILogg
         if (context.Request.Path.StartsWithSegments("/api/auth", StringComparison.OrdinalIgnoreCase))
             context.Response.Headers.CacheControl = "no-store";
         if (code == "INVALID_REFRESH_TOKEN" ||
-            (exception is ApplicationProblemException &&
+            (exception is ApplicationProblemException && code != "CSRF_ORIGIN_DENIED" &&
              context.Request.Path.Equals("/api/auth/logout", StringComparison.OrdinalIgnoreCase)))
             RefreshTokenCookie.Delete(context.Response);
         await problems.WriteAsync(new ProblemDetailsContext { HttpContext = context, ProblemDetails = problemDetails });

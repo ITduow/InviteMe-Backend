@@ -20,6 +20,14 @@ internal static class AuthenticationExtensions
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUser, CurrentUser>();
         services.AddScoped<IAccessTokenIssuer, AccessTokenIssuer>();
+        services.AddOptions<RefreshCookieOptions>().BindConfiguration(RefreshCookieOptions.SectionName)
+            .Validate(x => x.SameSite is SameSiteMode.Lax or SameSiteMode.Strict or SameSiteMode.None,
+                "Refresh cookie SameSite must be Lax, Strict or None.")
+            .Validate(x => x.SameSite != SameSiteMode.None || x.Secure,
+                "SameSite=None requires a Secure refresh cookie.")
+            .Validate<IHostEnvironment>((x, environment) => x.Secure || environment.IsDevelopment(),
+                "Refresh cookies must be Secure outside Development.")
+            .ValidateOnStart();
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();
         services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
             .Configure<IOptions<JwtOptions>>((options, configuredJwt) =>

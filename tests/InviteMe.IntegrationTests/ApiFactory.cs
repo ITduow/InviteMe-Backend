@@ -30,6 +30,12 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
         });
     }
 
+    protected override void ConfigureClient(HttpClient client)
+    {
+        base.ConfigureClient(client);
+        client.DefaultRequestHeaders.Add("Origin", "http://localhost:5173");
+    }
+
     public HttpClient CreateHttpsClient() => CreateClient(new WebApplicationFactoryClientOptions
     {
         BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false, HandleCookies = false
