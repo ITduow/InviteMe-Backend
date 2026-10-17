@@ -39,7 +39,13 @@ public sealed class GuestPlanningApiTests
             return await owner.SendAsync(request);
         }
         var group = new PlanningGroupInput(NewName: "Họ ngoại", Confirmed: true);
-        var good = new PlanningRow(2, "Nguyễn Văn An", "Bác", "FAMILY", 4, "BRIDE", group);
+        var good = new PlanningRow(2, "Nguyễn Văn An", "Bác", "FAMILY", 4, "BRIDE", group,
+            Phone: "0900123456", Email: " an@example.com ");
+        var badContact = await Import(new([good, new(7, "Nam", Phone: "abc", Email: "invalid")]), Guid.NewGuid());
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, badContact.StatusCode);
+        var contactErrors = (await badContact.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errors");
+        Assert.Contains(contactErrors.EnumerateArray(), x => x.GetProperty("rowNumber").GetInt32() == 7 && x.GetProperty("field").GetString() == "email");
+        Assert.Equal(0, await db.Set<PlanningGuest>().CountAsync());
         var invalid = await Import(new([good, new(3, "Hoa", ExpectedPeople: 0)]), Guid.NewGuid());
         Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.StatusCode);
         Assert.Equal(0, await db.Set<PlanningGuest>().CountAsync());
@@ -60,11 +66,14 @@ public sealed class GuestPlanningApiTests
         Assert.Equal(HttpStatusCode.Conflict, (await Import(new([good]), key)).StatusCode);
         var detail = await owner.GetFromJsonAsync<JsonElement>(path + "/guests/" + result.Items[0].GuestId);
         var places = detail.GetProperty("places").EnumerateArray().ToArray();
+        Assert.Equal("0900123456", detail.GetProperty("phone").GetString());
+        Assert.Equal("an@example.com", detail.GetProperty("email").GetString());
         Assert.Equal(4, places.Length);
         Assert.Equal("PENDING", places[0].GetProperty("person").GetProperty("attendanceStatus").GetString());
         Assert.All(places.Skip(1), p => Assert.Equal(JsonValueKind.Null, p.GetProperty("person").ValueKind));
         var page = await owner.GetFromJsonAsync<PlanningGuestPage>(path + "/guests?search=Nguyễn&side=BRIDE");
         Assert.Equal(1, page!.TotalItems);
+        Assert.Equal("an@example.com", page.Items[0].Email);
         var badGroup = await Import(new([good with { Group = new(ExistingId: Guid.NewGuid()) }]), Guid.NewGuid());
         Assert.Equal(HttpStatusCode.UnprocessableEntity, badGroup.StatusCode);
         Assert.Equal(2, await db.Set<PlanningGuest>().CountAsync());

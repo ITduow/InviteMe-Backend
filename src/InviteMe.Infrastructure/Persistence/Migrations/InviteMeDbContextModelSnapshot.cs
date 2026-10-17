@@ -995,6 +995,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("Email")
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)");
+
                     b.Property<int>("ExpectedPeople")
                         .HasColumnType("integer");
 

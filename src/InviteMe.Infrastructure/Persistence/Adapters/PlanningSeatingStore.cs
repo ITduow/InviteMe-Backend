@@ -110,7 +110,7 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db) : IPlanningSeatin
             join groupName in db.Set<PlanningGroup>() on g.GroupId equals (Guid?)groupName.Id into groups
             from groupName in groups.DefaultIfEmpty() orderby g.RecipientName, g.Id
             select new PlanningGuestDto(g.Id, g.Version, g.RecipientName, g.Honorific, g.InvitationKind, g.ExpectedPeople, g.Side,
-                groupName == null ? null : new PlanningGroupDto(groupName.Id, groupName.Name), g.Phone, g.Note)).ToListAsync(ct);
+                groupName == null ? null : new PlanningGroupDto(groupName.Id, groupName.Name), g.Phone, g.Note, g.Email)).ToListAsync(ct);
         var places = await (from p in db.Set<PlanningPlace>().AsNoTracking()
             join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id where g.WeddingId == weddingId
             join person in db.Set<PlanningParticipant>() on p.ParticipantId equals (Guid?)person.Id into people

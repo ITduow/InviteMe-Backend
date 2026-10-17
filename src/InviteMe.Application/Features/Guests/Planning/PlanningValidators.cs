@@ -16,6 +16,14 @@ public static class PlanningText
             (phone || text.Length == 0 || !"=+@-".Contains(text[0]));
     }
     public static bool ValidSide(string? side) => side is null or "" or "BRIDE" or "GROOM" or "MUTUAL" or "UNSPECIFIED";
+    public static bool ValidPhone(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return true;
+        var text = value.Trim();
+        var digits = Regex.Replace(text, "[^0-9]", "");
+        return text.Length <= 30 && Regex.IsMatch(text, @"\A\+?[0-9][0-9 ().-]*\z") &&
+            digits.Length is >= 7 and <= 15;
+    }
 }
 
 public sealed class PlanningRowValidator : AbstractValidator<PlanningRow>
@@ -25,7 +33,13 @@ public sealed class PlanningRowValidator : AbstractValidator<PlanningRow>
         RuleFor(x => x.RowNumber).GreaterThan(0).WithErrorCode("INVALID_ROW_NUMBER");
         RuleFor(x => x.RecipientName).Must(x => PlanningText.Valid(x, 150, required: true)).WithErrorCode("INVALID_TEXT");
         RuleFor(x => x.Honorific).Must(x => PlanningText.Valid(x, 50)).WithErrorCode("INVALID_TEXT");
-        RuleFor(x => x.Phone).Must(x => PlanningText.Valid(x, 30, phone: true)).WithErrorCode("INVALID_TEXT");
+        RuleFor(x => x.Phone).Must(PlanningText.ValidPhone).WithErrorCode("INVALID_PHONE")
+            .WithMessage("SĐT cần 7–15 chữ số, có thể có dấu + ở đầu, khoảng trắng, dấu chấm, gạch nối hoặc ngoặc.");
+        RuleFor(x => x.Email).Cascade(CascadeMode.Stop)
+            .MaximumLength(254).WithErrorCode("INVALID_EMAIL")
+            .EmailAddress().WithErrorCode("INVALID_EMAIL")
+            .Must(x => PlanningText.Valid(x, 254)).WithErrorCode("INVALID_EMAIL")
+            .When(x => !string.IsNullOrWhiteSpace(x.Email));
         RuleFor(x => x.Note).Must(x => PlanningText.Valid(x, 2000)).WithErrorCode("INVALID_TEXT");
         RuleFor(x => x.ExpectedPeople).Must(x => (x ?? 1) is >= 1 and <= 500).WithErrorCode("INVALID_EXPECTED_PEOPLE");
         RuleFor(x => x.InvitationKind).Must(x => x is null or "" or "INDIVIDUAL" or "FAMILY" or "GROUP").WithErrorCode("INVALID_KIND");

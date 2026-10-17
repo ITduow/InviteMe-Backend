@@ -57,7 +57,7 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
                 RecipientName = PlanningText.Clean(r.RecipientName), Honorific = Optional(r.Honorific),
                 InvitationKind = string.IsNullOrEmpty(r.InvitationKind) ? "INDIVIDUAL" : r.InvitationKind,
                 ExpectedPeople = r.ExpectedPeople ?? 1, Side = string.IsNullOrEmpty(r.Side) ? "UNSPECIFIED" : r.Side,
-                GroupId = groupId, Phone = Optional(r.Phone), Note = Optional(r.Note)
+                GroupId = groupId, Phone = Optional(r.Phone), Note = Optional(r.Note), Email = Optional(r.Email)
             };
             if (names.Contains(PlanningText.Key(guest.RecipientName)) || (guest.Phone is not null && phones.Contains(guest.Phone)))
                 warnings.Add(new(r.RowNumber, "recipientName", "POSSIBLE_DUPLICATE", "Có khách trùng tên hoặc SĐT; đã giữ thành đầu mối riêng."));
@@ -81,7 +81,7 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
         join grp in db.Set<PlanningGroup>() on g.GroupId equals (Guid?)grp.Id into names
         from grp in names.DefaultIfEmpty()
         select new PlanningGuestDto(g.Id, g.Version, g.RecipientName, g.Honorific, g.InvitationKind,
-            g.ExpectedPeople, g.Side, grp == null ? null : new PlanningGroupDto(grp.Id, grp.Name), g.Phone, g.Note);
+            g.ExpectedPeople, g.Side, grp == null ? null : new PlanningGroupDto(grp.Id, grp.Name), g.Phone, g.Note, g.Email);
 
     public async Task<PlanningGuestPage> ListAsync(Guid weddingId, int page, int pageSize, string? search, string? side, Guid? groupId, CancellationToken ct)
     {
