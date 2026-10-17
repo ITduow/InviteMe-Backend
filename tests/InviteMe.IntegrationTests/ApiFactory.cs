@@ -32,7 +32,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
 
     public HttpClient CreateHttpsClient() => CreateClient(new WebApplicationFactoryClientOptions
     {
-        BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false
+        BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false, HandleCookies = false
     });
 
     private sealed class TestAccountStore : IAccountStore

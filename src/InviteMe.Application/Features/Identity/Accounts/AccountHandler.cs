@@ -14,9 +14,17 @@ public sealed record AccountDto(
 
 public sealed record TokenDto(
     string AccessToken,
-    int ExpiresIn,
-    string RefreshToken,
-    int RefreshExpiresIn);
+    int ExpiresIn);
+
+public sealed record AuthSessionDto(
+    TokenDto Token,
+    IssuedRefreshToken IssuedRefresh)
+{
+    public string AccessToken => Token.AccessToken;
+    public int ExpiresIn => Token.ExpiresIn;
+    public string RefreshToken => IssuedRefresh.Value;
+    public int RefreshExpiresIn => IssuedRefresh.ExpiresIn;
+}
 
 public sealed class RegisterAccountValidator : AbstractValidator<RegisterAccount>
 {
@@ -192,6 +200,8 @@ public sealed class AccountHandler(
     RequestValidation<GoogleLogin> googleValidation,
     RequestValidation<DeleteAccount> deleteValidation)
 {
+    private readonly RequestValidation<RefreshSession> _ = refreshValidation;
+
     public async Task<AccountDto> RegisterAsync(RegisterAccount input, CancellationToken ct)
     {
         await registerValidation.ValidateAsync(input, ct);
@@ -204,15 +214,15 @@ public sealed class AccountHandler(
         return MapToDto(account);
     }
 
-    public async Task<TokenDto> LoginAsync(LoginAccount input, CancellationToken ct)
+    public async Task<AuthSessionDto> LoginAsync(LoginAccount input, CancellationToken ct)
     {
         await loginValidation.ValidateAsync(input, ct);
         var account = await store.LoginAsync(input, ct);
         var refresh = await refreshTokens.IssueAsync(account.Id, issuer.RefreshLifetime, ct);
-        return MapToTokenDto(issuer.Issue(account), refresh);
+        return MapToSessionDto(issuer.Issue(account), refresh);
     }
 
-    public async Task<TokenDto> LoginWithGoogleAsync(GoogleLogin input, CancellationToken ct)
+    public async Task<AuthSessionDto> LoginWithGoogleAsync(GoogleLogin input, CancellationToken ct)
     {
         await googleValidation.ValidateAsync(input, ct);
 
@@ -232,12 +242,16 @@ public sealed class AccountHandler(
 
         var account = await store.LoginWithGoogleAsync(payload, ct);
         var refresh = await refreshTokens.IssueAsync(account.Id, issuer.RefreshLifetime, ct);
-        return MapToTokenDto(issuer.Issue(account), refresh);
+        return MapToSessionDto(issuer.Issue(account), refresh);
     }
 
-    public async Task<TokenDto> RefreshAsync(RefreshSession input, CancellationToken ct)
+    public async Task<AuthSessionDto> RefreshAsync(RefreshSession input, CancellationToken ct)
     {
-        await refreshValidation.ValidateAsync(input, ct);
+        if (string.IsNullOrWhiteSpace(input.RefreshToken) || input.RefreshToken.Length > 256)
+        {
+            throw InvalidRefreshToken();
+        }
+
         var rotation = await refreshTokens.RotateAsync(input.RefreshToken, issuer.RefreshLifetime, ct)
             ?? throw InvalidRefreshToken();
 
@@ -248,7 +262,7 @@ public sealed class AccountHandler(
             throw InvalidRefreshToken();
         }
 
-        return MapToTokenDto(issuer.Issue(account), rotation.Token);
+        return MapToSessionDto(issuer.Issue(account), rotation.Token);
     }
 
     public async Task ForgotPasswordAsync(ForgotPassword input, CancellationToken ct)
@@ -305,16 +319,59 @@ public sealed class AccountHandler(
         {
             throw new ApplicationProblemException(
                 ProblemKind.Unauthenticated,
-                "SESSION_REQUIRED",
+                "SESSION_REVOKED",
                 "Sign in again.");
         }
 
         return MapToDto(account);
     }
 
-    public async Task LogoutAsync(CancellationToken ct)
+    public Task LogoutAsync(CancellationToken ct) => LogoutAsync(null, null, ct);
+
+    public async Task LogoutAsync(string? bearerToken, string? refreshToken, CancellationToken ct)
     {
-        var userId = GetCurrentUserId();
+        Guid userId;
+        if (current.UserId is { } authenticatedId && authenticatedId != Guid.Empty)
+        {
+            userId = authenticatedId;
+        }
+        else if (!string.IsNullOrWhiteSpace(bearerToken))
+        {
+            var principal = issuer.ValidateIgnoringLifetime(bearerToken)
+                ?? throw new ApplicationProblemException(
+                    ProblemKind.Unauthenticated,
+                    "INVALID_ACCESS_TOKEN",
+                    "Access token is invalid.");
+
+            var account = await store.GetAsync(principal.UserId, ct);
+            if (account is null || !string.Equals(account.SessionStamp, principal.SessionStamp, StringComparison.Ordinal))
+            {
+                throw new ApplicationProblemException(
+                    ProblemKind.Unauthenticated,
+                    "SESSION_REVOKED",
+                    "Sign in again.");
+            }
+
+            userId = account.Id;
+        }
+        else if (!string.IsNullOrWhiteSpace(refreshToken))
+        {
+            var tokenUserId = await refreshTokens.FindUserIdByActiveTokenAsync(refreshToken, ct)
+                ?? throw InvalidRefreshToken();
+
+            var account = await store.GetAsync(tokenUserId, ct)
+                ?? throw InvalidRefreshToken();
+
+            userId = account.Id;
+        }
+        else
+        {
+            throw new ApplicationProblemException(
+                ProblemKind.Unauthenticated,
+                "AUTHENTICATION_REQUIRED",
+                "Sign in first.");
+        }
+
         await store.RevokeSessionsAsync(userId, ct);
         await refreshTokens.RevokeAllAsync(userId, ct);
     }
@@ -350,7 +407,7 @@ public sealed class AccountHandler(
     {
         return current.UserId ?? throw new ApplicationProblemException(
             ProblemKind.Unauthenticated,
-            "SESSION_REQUIRED",
+            "AUTHENTICATION_REQUIRED",
             "Sign in first.");
     }
 
@@ -362,13 +419,11 @@ public sealed class AccountHandler(
             "Sign in again.");
     }
 
-    private static TokenDto MapToTokenDto(AccessToken accessToken, IssuedRefreshToken refreshToken)
+    private static AuthSessionDto MapToSessionDto(AccessToken accessToken, IssuedRefreshToken refreshToken)
     {
-        return new TokenDto(
-            accessToken.AccessTokenValue,
-            accessToken.ExpiresIn,
-            refreshToken.Value,
-            refreshToken.ExpiresIn);
+        return new AuthSessionDto(
+            new TokenDto(accessToken.AccessTokenValue, accessToken.ExpiresIn),
+            refreshToken);
     }
 
     private static AccountDto MapToDto(AccountIdentity account)

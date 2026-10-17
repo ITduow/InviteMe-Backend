@@ -32,17 +32,18 @@ public sealed class ForgotPasswordApiTests
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task ResetWithTheEmailedCodeChangesThePasswordAndEndsOldSessions() => WithApi(async (sender, client) =>
     {
-        var session = await Register(sender, client, "reset");
+        var (session, refreshCookie) = await RegisterWithCookie(sender, client, "reset");
         await client.PostAsJsonAsync("/api/auth/forgot-password", new ForgotPassword("reset@example.test"));
         var code = sender.Sent.Single().Code;
 
         var reset = await client.PostAsJsonAsync("/api/auth/reset-password", new ResetPassword("reset@example.test", code, NewPassword));
         Assert.Equal(HttpStatusCode.NoContent, reset.StatusCode);
+        AuthRefreshApiTests.AssertCookieDeleted(reset);
 
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/api/auth/login", new LoginAccount("reset@example.test", Password))).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/auth/login", new LoginAccount("reset@example.test", NewPassword))).StatusCode);
 
-        Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/api/auth/refresh", new RefreshSession(session.RefreshToken))).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await AuthRefreshApiTests.SendRefresh(client, refreshCookie)).StatusCode);
         using var old = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
         old.Headers.Authorization = new AuthenticationHeaderValue("Bearer", session.AccessToken);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.SendAsync(old)).StatusCode);
@@ -131,11 +132,14 @@ public sealed class ForgotPasswordApiTests
             services.RemoveAll<IAccountEmailSender>();
             services.AddSingleton<IAccountEmailSender>(sender);
         }));
-        using var client = factory.CreateClient(new() { BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false });
+        using var client = factory.CreateClient(new() { BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false, HandleCookies = false });
         await action(sender, client);
     });
 
-    private static async Task<TokenDto> Register(CapturingEmailSender sender, HttpClient client, string name)
+    private static async Task<TokenDto> Register(CapturingEmailSender sender, HttpClient client, string name) =>
+        (await RegisterWithCookie(sender, client, name)).Token;
+
+    private static async Task<(TokenDto Token, string RefreshCookie)> RegisterWithCookie(CapturingEmailSender sender, HttpClient client, string name)
     {
         var email = $"{name}@example.test";
         Assert.Equal(HttpStatusCode.Created, (await client.PostAsJsonAsync("/api/auth/register", new RegisterAccount(email, Password, name))).StatusCode);
@@ -143,7 +147,7 @@ public sealed class ForgotPasswordApiTests
         Assert.Equal(HttpStatusCode.NoContent, (await client.PostAsJsonAsync("/api/auth/confirm-email", new ConfirmEmail(email, confirmCode))).StatusCode);
         var login = await client.PostAsJsonAsync("/api/auth/login", new LoginAccount(email, Password));
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
-        return (await login.Content.ReadFromJsonAsync<TokenDto>())!;
+        return ((await login.Content.ReadFromJsonAsync<TokenDto>())!, AuthRefreshApiTests.ExtractRefreshCookie(login));
     }
 
     private sealed class CapturingEmailSender : IAccountEmailSender

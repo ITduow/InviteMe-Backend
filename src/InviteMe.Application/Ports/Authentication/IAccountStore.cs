@@ -100,10 +100,15 @@ public interface IAccountEmailSender
     Task SendEmailConfirmationAsync(EmailConfirmationRequest request, CancellationToken ct);
 }
 
+public sealed record AccessTokenPrincipal(
+    Guid UserId,
+    string SessionStamp);
+
 public interface IRefreshTokenStore
 {
     Task<IssuedRefreshToken> IssueAsync(Guid userId, TimeSpan lifetime, CancellationToken ct);
     Task<RefreshRotation?> RotateAsync(string refreshToken, TimeSpan lifetime, CancellationToken ct);
+    Task<Guid?> FindUserIdByActiveTokenAsync(string refreshToken, CancellationToken ct);
     Task RevokeAllAsync(Guid userId, CancellationToken ct);
 }
 
@@ -111,4 +116,5 @@ public interface IAccessTokenIssuer
 {
     TimeSpan RefreshLifetime { get; }
     AccessToken Issue(AccountIdentity account);
+    AccessTokenPrincipal? ValidateIgnoringLifetime(string token);
 }

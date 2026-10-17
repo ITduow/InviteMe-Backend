@@ -1,13 +1,13 @@
 {
 	"info": {
 		"_postman_id": "8b512030-6883-4c6e-b7cb-b898acb7f7ae",
-		"name": "InviteMe - Authentication & Google Login",
-		"description": "Collection for testing all InviteMe Authentication endpoints including Register, Login, Google Login, Refresh, Forgot Password, and Reset Password.",
+		"name": "InviteMe - Accounts & Auth (HttpOnly Cookie)",
+		"description": "Full Postman Collection for all 12 InviteMe Accounts (/api/auth/*) endpoints with HttpOnly refresh_token cookie and standardized 401/403 error codes.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
 		{
-			"name": "1. Register Account",
+			"name": "1. Register Account (POST /api/auth/register)",
 			"request": {
 				"method": "POST",
 				"header": [
@@ -18,7 +18,7 @@
 				],
 				"body": {
 					"mode": "raw",
-					"raw": "{\n    \"email\": \"user@example.com\",\n    \"password\": \"SecurePass123!@#\",\n    \"displayName\": \"Nguyen Van A\"\n}"
+					"raw": "{\n    \"email\": \"user@example.com\",\n    \"password\": \"Password@123456\",\n    \"displayName\": \"Nguyen Van A\"\n}"
 				},
 				"url": {
 					"raw": "{{baseUrl}}/api/auth/register",
@@ -30,142 +30,13 @@
 						"auth",
 						"register"
 					]
-				}
+				},
+				"description": "Registers a new account and sends a confirmation email link."
 			},
 			"response": []
 		},
 		{
-			"name": "2. Login",
-			"event": [
-				{
-					"listen": "test",
-					"script": {
-						"exec": [
-							"if (pm.response.code === 200) {",
-							"    var data = pm.response.json();",
-							"    pm.environment.set(\"accessToken\", data.accessToken);",
-							"    pm.environment.set(\"refreshToken\", data.refreshToken);",
-							"}"
-						],
-						"type": "text/javascript"
-					}
-				}
-			],
-			"request": {
-				"method": "POST",
-				"header": [
-					{
-						"key": "Content-Type",
-						"value": "application/json"
-					}
-				],
-				"body": {
-					"mode": "raw",
-					"raw": "{\n    \"email\": \"user@example.com\",\n    \"password\": \"SecurePass123!@#\"\n}"
-				},
-				"url": {
-					"raw": "{{baseUrl}}/api/auth/login",
-					"host": [
-						"{{baseUrl}}"
-					],
-					"path": [
-						"api",
-						"auth",
-						"login"
-					]
-				}
-			},
-			"response": []
-		},
-		{
-			"name": "3. Google Login",
-			"event": [
-				{
-					"listen": "test",
-					"script": {
-						"exec": [
-							"if (pm.response.code === 200) {",
-							"    var data = pm.response.json();",
-							"    pm.environment.set(\"accessToken\", data.accessToken);",
-							"    pm.environment.set(\"refreshToken\", data.refreshToken);",
-							"}"
-						],
-						"type": "text/javascript"
-					}
-				}
-			],
-			"request": {
-				"method": "POST",
-				"header": [
-					{
-						"key": "Content-Type",
-						"value": "application/json"
-					}
-				],
-				"body": {
-					"mode": "raw",
-					"raw": "{\n    \"idToken\": \"<paste_google_id_token_here>\"\n}"
-				},
-				"url": {
-					"raw": "{{baseUrl}}/api/auth/google",
-					"host": [
-						"{{baseUrl}}"
-					],
-					"path": [
-						"api",
-						"auth",
-						"google"
-					]
-				},
-				"description": "Send Google id_token obtained from Google Sign-In SDK. Backend validates the token, links/creates the user account, and returns access and refresh tokens."
-			},
-			"response": []
-		},
-		{
-			"name": "4. Refresh Token",
-			"event": [
-				{
-					"listen": "test",
-					"script": {
-						"exec": [
-							"if (pm.response.code === 200) {",
-							"    var data = pm.response.json();",
-							"    pm.environment.set(\"accessToken\", data.accessToken);",
-							"    pm.environment.set(\"refreshToken\", data.refreshToken);",
-							"}"
-						],
-						"type": "text/javascript"
-					}
-				}
-			],
-			"request": {
-				"method": "POST",
-				"header": [
-					{
-						"key": "Content-Type",
-						"value": "application/json"
-					}
-				],
-				"body": {
-					"mode": "raw",
-					"raw": "{\n    \"refreshToken\": \"{{refreshToken}}\"\n}"
-				},
-				"url": {
-					"raw": "{{baseUrl}}/api/auth/refresh",
-					"host": [
-						"{{baseUrl}}"
-					],
-					"path": [
-						"api",
-						"auth",
-						"refresh"
-					]
-				}
-			},
-			"response": []
-		},
-		{
-			"name": "5. Forgot Password",
+			"name": "2. Resend Confirmation Email (POST /api/auth/resend-confirmation)",
 			"request": {
 				"method": "POST",
 				"header": [
@@ -179,21 +50,22 @@
 					"raw": "{\n    \"email\": \"user@example.com\"\n}"
 				},
 				"url": {
-					"raw": "{{baseUrl}}/api/auth/forgot-password",
+					"raw": "{{baseUrl}}/api/auth/resend-confirmation",
 					"host": [
 						"{{baseUrl}}"
 					],
 					"path": [
 						"api",
 						"auth",
-						"forgot-password"
+						"resend-confirmation"
 					]
-				}
+				},
+				"description": "Resends the confirmation email link and invalidates any previous confirmation token."
 			},
 			"response": []
 		},
 		{
-			"name": "6. Reset Password",
+			"name": "3. Confirm Email (POST /api/auth/confirm-email)",
 			"request": {
 				"method": "POST",
 				"header": [
@@ -204,24 +76,69 @@
 				],
 				"body": {
 					"mode": "raw",
-					"raw": "{\n    \"email\": \"user@example.com\",\n    \"code\": \"123456\",\n    \"newPassword\": \"NewSecurePass123!@#\"\n}"
+					"raw": "{\n    \"email\": \"user@example.com\",\n    \"code\": \"PASTE_CODE_FROM_CONFIRM_EMAIL_LINK_HERE\"\n}"
 				},
 				"url": {
-					"raw": "{{baseUrl}}/api/auth/reset-password",
+					"raw": "{{baseUrl}}/api/auth/confirm-email",
 					"host": [
 						"{{baseUrl}}"
 					],
 					"path": [
 						"api",
 						"auth",
-						"reset-password"
+						"confirm-email"
 					]
-				}
+				},
+				"description": "Paste the `code` query parameter from the confirmation email link (URL-encoded or decoded both work)."
 			},
 			"response": []
 		},
 		{
-			"name": "7. Get Current User (Me)",
+			"name": "4. Login (POST /api/auth/login)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"if (pm.response.code === 200) {",
+							"    var data = pm.response.json();",
+							"    pm.collectionVariables.set(\"accessToken\", data.accessToken);",
+							"    pm.environment.set(\"accessToken\", data.accessToken);",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"email\": \"user@example.com\",\n    \"password\": \"Password@123456\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/auth/login",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"auth",
+						"login"
+					]
+				},
+				"description": "Signs in, automatically saves `accessToken` to collection variables, and stores `refresh_token` in Postman's HttpOnly cookie jar."
+			},
+			"response": []
+		},
+		{
+			"name": "5. Get Current User - Me (GET /api/auth/me)",
 			"request": {
 				"auth": {
 					"type": "bearer",
@@ -245,12 +162,233 @@
 						"auth",
 						"me"
 					]
-				}
+				},
+				"description": "Returns the currently authenticated user profile using `Bearer {{accessToken}}`."
 			},
 			"response": []
 		},
 		{
-			"name": "8. Logout",
+			"name": "6. Refresh Token via HttpOnly Cookie (POST /api/auth/refresh)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"if (pm.response.code === 200) {",
+							"    var data = pm.response.json();",
+							"    pm.collectionVariables.set(\"accessToken\", data.accessToken);",
+							"    pm.environment.set(\"accessToken\", data.accessToken);",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/api/auth/refresh",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"auth",
+						"refresh"
+					]
+				},
+				"description": "No JSON body needed. Automatically sends the `refresh_token` HttpOnly cookie from Postman's Cookie Jar, rotates the cookie, and updates `{{accessToken}}`."
+			},
+			"response": []
+		},
+		{
+			"name": "7. Change Password (POST /api/auth/change-password)",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "{{accessToken}}",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"currentPassword\": \"Password@123456\",\n    \"newPassword\": \"NewPassword@123456\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/auth/change-password",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"auth",
+						"change-password"
+					]
+				},
+				"description": "Changes the current user's password, revokes all active sessions, and deletes the `refresh_token` cookie."
+			},
+			"response": []
+		},
+		{
+			"name": "8. Forgot Password (POST /api/auth/forgot-password)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"email\": \"user@example.com\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/auth/forgot-password",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"auth",
+						"forgot-password"
+					]
+				},
+				"description": "Sends a password reset email link."
+			},
+			"response": []
+		},
+		{
+			"name": "9. Reset Password (POST /api/auth/reset-password)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"email\": \"user@example.com\",\n    \"code\": \"PASTE_CODE_FROM_RESET_PASSWORD_LINK_HERE\",\n    \"newPassword\": \"ResetPassword@123456\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/auth/reset-password",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"auth",
+						"reset-password"
+					]
+				},
+				"description": "Resets the password using the `code` query parameter from the reset email link, revokes old sessions, and clears the `refresh_token` cookie."
+			},
+			"response": []
+		},
+		{
+			"name": "10. Login After Reset Password (POST /api/auth/login)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"if (pm.response.code === 200) {",
+							"    var data = pm.response.json();",
+							"    pm.collectionVariables.set(\"accessToken\", data.accessToken);",
+							"    pm.environment.set(\"accessToken\", data.accessToken);",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"email\": \"user@example.com\",\n    \"password\": \"ResetPassword@123456\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/auth/login",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"auth",
+						"login"
+					]
+				},
+				"description": "Signs in with the newly reset password (`ResetPassword@123456`) and updates `{{accessToken}}` + `refresh_token` cookie."
+			},
+			"response": []
+		},
+		{
+			"name": "11. Google Login (POST /api/auth/google)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"if (pm.response.code === 200) {",
+							"    var data = pm.response.json();",
+							"    pm.collectionVariables.set(\"accessToken\", data.accessToken);",
+							"    pm.environment.set(\"accessToken\", data.accessToken);",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"idToken\": \"PASTE_GOOGLE_ID_TOKEN_HERE\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/auth/google",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"auth",
+						"google"
+					]
+				},
+				"description": "Signs in with Google `idToken`, sets `refresh_token` HttpOnly cookie, and returns `accessToken` + `expiresIn`."
+			},
+			"response": []
+		},
+		{
+			"name": "12. Logout (POST /api/auth/logout)",
 			"request": {
 				"auth": {
 					"type": "bearer",
@@ -274,7 +412,47 @@
 						"auth",
 						"logout"
 					]
-				}
+				},
+				"description": "Revokes all active sessions of the user (works even if `accessToken` is expired) and deletes the `refresh_token` HttpOnly cookie."
+			},
+			"response": []
+		},
+		{
+			"name": "13. Delete Account (DELETE /api/auth/account)",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "{{accessToken}}",
+							"type": "string"
+						}
+					]
+				},
+				"method": "DELETE",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"password\": \"ResetPassword@123456\",\n    \"googleIdToken\": null\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/auth/account",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"auth",
+						"account"
+					]
+				},
+				"description": "Soft-deletes and anonymizes the account, revokes all sessions, and deletes the `refresh_token` HttpOnly cookie."
 			},
 			"response": []
 		}
@@ -282,14 +460,10 @@
 	"variable": [
 		{
 			"key": "baseUrl",
-			"value": "https://localhost:7082"
+			"value": "https://localhost:7043"
 		},
 		{
 			"key": "accessToken",
-			"value": ""
-		},
-		{
-			"key": "refreshToken",
 			"value": ""
 		}
 	]

@@ -235,6 +235,7 @@ public sealed class DeleteAccountApiTests
         var login = await client.PostAsJsonAsync("/api/auth/login", new LoginAccount(email, Password));
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         var tokens = (await login.Content.ReadFromJsonAsync<TokenDto>())!;
+        var refreshCookie = AuthRefreshApiTests.ExtractRefreshCookie(login);
 
         using var authed = CreateAuthorizedClient(client, tokens.AccessToken);
 
@@ -244,14 +245,19 @@ public sealed class DeleteAccountApiTests
             Content = JsonContent.Create(new DeleteAccount(Password: Password))
         });
         Assert.Equal(HttpStatusCode.NoContent, deleteRes.StatusCode);
+        AuthRefreshApiTests.AssertCookieDeleted(deleteRes);
 
-        // 1. Using the old access token for /api/auth/me returns 401
+        // 1. Using the old access token for /api/auth/me returns 401 SESSION_REVOKED
         var meRes = await authed.GetAsync("/api/auth/me");
         Assert.Equal(HttpStatusCode.Unauthorized, meRes.StatusCode);
+        var meProblem = await meRes.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("SESSION_REVOKED", meProblem.GetProperty("code").GetString());
 
-        // 2. Using the old refresh token returns 401
-        var refreshRes = await client.PostAsJsonAsync("/api/auth/refresh", new RefreshSession(tokens.RefreshToken));
+        // 2. Using the old refresh token cookie returns 401 INVALID_REFRESH_TOKEN
+        var refreshRes = await AuthRefreshApiTests.SendRefresh(client, refreshCookie);
         Assert.Equal(HttpStatusCode.Unauthorized, refreshRes.StatusCode);
+        var refreshProblem = await refreshRes.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("INVALID_REFRESH_TOKEN", refreshProblem.GetProperty("code").GetString());
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]

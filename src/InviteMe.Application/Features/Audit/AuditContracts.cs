@@ -51,7 +51,7 @@ public sealed class AuditHandler(
 {
     public async Task<PagedResult<AuditLogDto>> ListAsync(Guid weddingId, AuditLogQuery filter, PageRequest page, CancellationToken ct)
     {
-        var callerId = current.UserId ?? throw new ApplicationProblemException(ProblemKind.Unauthenticated, "SESSION_REQUIRED", "Sign in first.");
+        var callerId = current.UserId ?? throw new ApplicationProblemException(ProblemKind.Unauthenticated, "AUTHENTICATION_REQUIRED", "Sign in first.");
         var found = await access.FindAsync(weddingId, callerId, ct);
         if (found is null || found.OwnerId != callerId)
             throw new ApplicationProblemException(ProblemKind.Forbidden, "OWNER_ONLY", "Only the wedding owner can view the audit history.");

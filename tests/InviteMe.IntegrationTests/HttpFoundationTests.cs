@@ -71,20 +71,25 @@ public sealed class HttpFoundationTests(ApiFactory factory) : IClassFixture<ApiF
     }
 
     [Theory]
-    [InlineData("valid", HttpStatusCode.OK)]
-    [InlineData("expired", HttpStatusCode.Unauthorized)]
-    [InlineData("issuer", HttpStatusCode.Unauthorized)]
-    [InlineData("audience", HttpStatusCode.Unauthorized)]
-    [InlineData("signature", HttpStatusCode.Unauthorized)]
-    [InlineData("subject", HttpStatusCode.Unauthorized)]
-    [InlineData("missing_stamp", HttpStatusCode.Unauthorized)]
-    [InlineData("wrong_stamp", HttpStatusCode.Unauthorized)]
-    public async Task HubNegotiationValidatesJwt(string scenario, HttpStatusCode expected)
+    [InlineData("valid", HttpStatusCode.OK, null)]
+    [InlineData("expired", HttpStatusCode.Unauthorized, "ACCESS_TOKEN_EXPIRED")]
+    [InlineData("issuer", HttpStatusCode.Unauthorized, "INVALID_ACCESS_TOKEN")]
+    [InlineData("audience", HttpStatusCode.Unauthorized, "INVALID_ACCESS_TOKEN")]
+    [InlineData("signature", HttpStatusCode.Unauthorized, "INVALID_ACCESS_TOKEN")]
+    [InlineData("subject", HttpStatusCode.Unauthorized, "INVALID_ACCESS_TOKEN")]
+    [InlineData("missing_stamp", HttpStatusCode.Unauthorized, "INVALID_ACCESS_TOKEN")]
+    [InlineData("wrong_stamp", HttpStatusCode.Unauthorized, "SESSION_REVOKED")]
+    public async Task HubNegotiationValidatesJwt(string scenario, HttpStatusCode expected, string? expectedCode)
     {
         using var client = factory.CreateHttpsClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateToken(scenario));
         var response = await client.PostAsync("/hubs/weddings/negotiate?negotiateVersion=1", null);
         Assert.Equal(expected, response.StatusCode);
+        if (expectedCode is not null)
+        {
+            var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(expectedCode, problem.GetProperty("code").GetString());
+        }
     }
 
     [Fact]

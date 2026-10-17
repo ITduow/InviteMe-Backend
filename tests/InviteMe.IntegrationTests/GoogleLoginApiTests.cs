@@ -30,10 +30,13 @@ public sealed class GoogleLoginApiTests
         var response = await client.PostAsJsonAsync("/api/auth/google", new GoogleLogin("token-new-user"));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
+        var rawJson = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("refreshToken", rawJson, StringComparison.OrdinalIgnoreCase);
+
         var tokens = await response.Content.ReadFromJsonAsync<TokenDto>();
         Assert.NotNull(tokens);
         Assert.False(string.IsNullOrWhiteSpace(tokens.AccessToken));
-        Assert.False(string.IsNullOrWhiteSpace(tokens.RefreshToken));
+        Assert.False(string.IsNullOrWhiteSpace(AuthRefreshApiTests.ExtractRefreshCookie(response)));
 
         // Use the token to fetch /api/auth/me
         using var meRequest = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");

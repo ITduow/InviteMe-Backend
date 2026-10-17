@@ -81,6 +81,28 @@ public sealed class RefreshTokenStore(
         return new RefreshRotation(current.UserId, issued);
     }
 
+    public async Task<Guid?> FindUserIdByActiveTokenAsync(string refreshToken, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(refreshToken) || refreshToken.Length > 256)
+        {
+            return null;
+        }
+
+        var hash = InvitationToken.Hash(refreshToken);
+        var now = clock.GetUtcNow();
+
+        var token = await db.Set<RefreshToken>()
+            .AsNoTracking()
+            .SingleOrDefaultAsync(x => x.TokenHash == hash, ct);
+
+        if (token is null || token.ExpiresAt <= now || token.UsedAt is not null || token.RevokedAt is not null)
+        {
+            return null;
+        }
+
+        return token.UserId;
+    }
+
     public async Task RevokeAllAsync(Guid userId, CancellationToken ct)
     {
         var now = clock.GetUtcNow();
