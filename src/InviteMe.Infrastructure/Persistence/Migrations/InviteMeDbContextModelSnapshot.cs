@@ -1700,6 +1700,24 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Invitations.InvitationWordingSettings", b =>
+                {
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PresetsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
+                    b.HasKey("WeddingId");
+
+                    b.ToTable("invitation_wording_settings", "inviteme");
+                });
+
             modelBuilder.Entity("InviteMe.Domain.Invitations.TemplateSection", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3823,6 +3841,15 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_invitation_deliveries_invitation");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Invitations.InvitationWordingSettings", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Invitations.TemplateSection", b =>

@@ -59,6 +59,8 @@ public static class DependencyInjection
             client.MaxResponseContentBufferSize = 65536;
         }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddScoped<InviteMe.Application.Features.Guests.Planning.IGuestPlanningStore, GuestPlanningStore>();
+        services.AddScoped<InviteMe.Application.Features.Invitations.IInvitationWordingStore, InvitationWordingStore>();
+        services.AddScoped<InviteMe.Application.Features.Invitations.IInvitationDesignStore, InvitationDesignStore>();
         services.AddScoped<InviteMe.Application.Features.Seating.Planning.IPlanningSeatingStore, PlanningSeatingStore>();
         services.AddScoped<InviteMe.Application.Ports.Rsvps.IRsvpStore, InviteMe.Infrastructure.Persistence.Adapters.Rsvps.RsvpStore>();
         services.AddDataProtection().SetApplicationName("InviteMe")

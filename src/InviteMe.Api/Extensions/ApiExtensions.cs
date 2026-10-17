@@ -14,6 +14,9 @@ internal static class ApiExtensions
         services.AddRateLimiter(options =>
         {
             options.RejectionStatusCode = 429;
+            options.AddPolicy("guest-invitation", context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions { PermitLimit = 60, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
             options.AddPolicy("AiThankYouGeneration", context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
                 context.User.FindFirst("sub")?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
                 _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions

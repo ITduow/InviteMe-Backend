@@ -83,7 +83,8 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
         join grp in db.Set<PlanningGroup>() on g.GroupId equals (Guid?)grp.Id into names
         from grp in names.DefaultIfEmpty()
         select new PlanningGuestDto(g.Id, g.Version, g.RecipientName, g.Honorific, g.InvitationKind,
-            g.ExpectedPeople, g.Side, grp == null ? null : new PlanningGroupDto(grp.Id, grp.Name), g.Phone, g.Note, g.Email);
+            g.ExpectedPeople, g.Side, grp == null ? null : new PlanningGroupDto(grp.Id, grp.Name), g.Phone, g.Note, g.Email,
+            g.InvitationToken == null ? null : "/invite/" + g.InvitationToken);
 
     public async Task<PlanningGuestPage> ListAsync(Guid weddingId, int page, int pageSize, string? search, string? side, Guid? groupId, CancellationToken ct)
     {
