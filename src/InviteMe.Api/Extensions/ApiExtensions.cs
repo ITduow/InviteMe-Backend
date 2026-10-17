@@ -1,4 +1,6 @@
 using InviteMe.Api.Middleware;
+using InviteMe.Api.Hubs;
+using InviteMe.Application.Features.Guests.Planning;
 using Microsoft.OpenApi;
 
 namespace InviteMe.Api.Extensions;
@@ -27,6 +29,7 @@ internal static class ApiExtensions
         });
         services.AddExceptionHandler<ApiExceptionHandler>();
         services.AddSignalR(options => options.EnableDetailedErrors = false);
+        services.AddScoped<IPlanningChangePublisher, SignalRPlanningChangePublisher>();
         services.AddOpenApi(options =>
         {
             options.AddDocumentTransformer((document, _, _) =>

@@ -4,7 +4,7 @@ using System.Text.Json;
 using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Domain.Guests;
 using Microsoft.EntityFrameworkCore;
-using static InviteMe.Infrastructure.Persistence.Adapters.WorkflowPersistence;
+using static InviteMe.Infrastructure.Persistence.Adapters.PlanningPersistence;
 
 namespace InviteMe.Infrastructure.Persistence.Adapters;
 

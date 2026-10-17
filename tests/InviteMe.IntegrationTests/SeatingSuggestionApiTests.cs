@@ -3,7 +3,6 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Application.Features.Seating.Planning;
-using InviteMe.Application.Features.Weddings.Workspace;
 using InviteMe.Application.Features.Identity.Accounts;
 using InviteMe.Application.Ports.Authentication;
 using Microsoft.EntityFrameworkCore;
@@ -16,14 +15,13 @@ public sealed class SeatingSuggestionApiTests
     public Task BulkCreatePreviewApplyAndStaleImportsAreSafe() => SchemaV2MigrationTests.InDatabase(async db =>
     {
         await db.Database.MigrateAsync();
-        await using var factory = new WorkspaceApiFactory(db.Database.GetConnectionString()!);
+        await using var factory = new DatabaseApiFactory(db.Database.GetConnectionString()!);
         using var owner = factory.CreateHttpsClient();
         const string password = "Test-only-Pass123!";
         await owner.PostAsJsonAsync("/api/auth/register", new RegisterAccount("suggest@example.test", password, "Suggest"));
         var login = await owner.PostAsJsonAsync("/api/auth/login", new LoginAccount("suggest@example.test", password));
         owner.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", (await login.Content.ReadFromJsonAsync<TokenDto>())!.AccessToken);
-        var weddingResponse = await owner.PostAsJsonAsync("/api/weddings", new WorkspaceInput("Suggestions", "suggestions-test", 100, "Asia/Ho_Chi_Minh"));
-        var wedding = (await weddingResponse.Content.ReadFromJsonAsync<WorkspaceDto>())!;
+        var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "suggestions-test");
         var root = $"/api/weddings/{wedding.Id}/guest-planning"; var url = root + "/seating-plan";
         async Task Import(params PlanningRow[] rows)
         {

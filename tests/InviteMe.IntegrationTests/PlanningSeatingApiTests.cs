@@ -4,7 +4,6 @@ using System.Net.Http.Json;
 using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Application.Features.Seating.Planning;
 using InviteMe.Application.Features.Weddings.CoHosts;
-using InviteMe.Application.Features.Weddings.Workspace;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Application.Features.Identity.Accounts;
 using Microsoft.EntityFrameworkCore;
@@ -17,7 +16,7 @@ public sealed class PlanningSeatingApiTests
     public Task TwoHostsMoveGroupsAndPlacesAtomicallyWithVersionAndPermissionChecks() => SchemaV2MigrationTests.InDatabase(async db =>
     {
         await db.Database.MigrateAsync();
-        await using var factory = new WorkspaceApiFactory(db.Database.GetConnectionString()!);
+        await using var factory = new DatabaseApiFactory(db.Database.GetConnectionString()!);
         async Task<HttpClient> Account(string name)
         {
             var client = factory.CreateHttpsClient();
@@ -28,8 +27,7 @@ public sealed class PlanningSeatingApiTests
             return client;
         }
         using var a = await Account("seat-owner"); using var b = await Account("seat-editor"); using var viewer = await Account("seat-viewer");
-        var response = await a.PostAsJsonAsync("/api/weddings", new WorkspaceInput("Seating", "seating-test", 100, "Asia/Ho_Chi_Minh"));
-        var wedding = (await response.Content.ReadFromJsonAsync<WorkspaceDto>())!;
+        var wedding = await CoHostPermissionTests.CreateWedding(db, a, "seating-test");
         foreach (var name in new[] { "seat-editor", "seat-viewer" })
             Assert.Equal(HttpStatusCode.Created, (await a.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts", new AddCoHostInput(name + "@example.test",
                 name == "seat-editor" ? ["WEDDING_VIEW", "SEATING_VIEW", "SEATING_EDIT"] : ["WEDDING_VIEW", "SEATING_VIEW"]))).StatusCode);
@@ -65,8 +63,7 @@ public sealed class PlanningSeatingApiTests
             b.PatchAsJsonAsync(url, new ChangePlanningSeating(plan.Version, "MOVE_PLACES", PlaceIds: [group[1]])));
         Assert.Single(race, x => x.StatusCode == HttpStatusCode.OK); Assert.Single(race, x => x.StatusCode == HttpStatusCode.Conflict);
         plan = (await a.GetFromJsonAsync<PlanningSeatingDto>(url))!;
-        var otherResponse = await a.PostAsJsonAsync("/api/weddings", new WorkspaceInput("Other", "seating-other", 100, "Asia/Ho_Chi_Minh"));
-        var other = (await otherResponse.Content.ReadFromJsonAsync<WorkspaceDto>())!;
+        var other = await CoHostPermissionTests.CreateWedding(db, a, "seating-other");
         var otherUrl = $"/api/weddings/{other.Id}/guest-planning/seating-plan";
         Assert.Equal(HttpStatusCode.NotFound, (await a.PatchAsJsonAsync(otherUrl, new ChangePlanningSeating(0, "MOVE_PLACES", table1, PlaceIds: [group[0]]))).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await a.PatchAsJsonAsync(url, new ChangePlanningSeating(plan.Version, "MOVE_PLACES", table1, PlaceIds: [group[0], group[0]]))).StatusCode);

@@ -2,7 +2,6 @@ using FluentValidation;
 using InviteMe.Application.Common.Behaviors;
 using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Application.Ports.Authorization;
-using InviteMe.Application.Ports.Realtime;
 using InviteMe.Domain.Weddings;
 
 namespace InviteMe.Application.Features.Seating.Planning;
@@ -56,7 +55,7 @@ public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePla
     }
 }
 public sealed class PlanningSeatingHandler(IPlanningSeatingStore store, IWeddingPermissionService permissions,
-    RequestValidation<ChangePlanningSeating> validation, RequestValidation<SuggestPlanningSeating> suggestions, IWeddingChangePublisher changes)
+    RequestValidation<ChangePlanningSeating> validation, RequestValidation<SuggestPlanningSeating> suggestions, IPlanningChangePublisher changes)
 {
     public async Task<PlanningSeatingDto> GetAsync(Guid weddingId, CancellationToken ct)
     {

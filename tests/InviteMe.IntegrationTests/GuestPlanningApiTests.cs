@@ -4,7 +4,6 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Application.Features.Identity.Accounts;
-using InviteMe.Application.Features.Weddings.Workspace;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Domain.Guests;
 using Microsoft.EntityFrameworkCore;
@@ -17,14 +16,13 @@ public sealed class GuestPlanningApiTests
     public Task ImportIsAtomicIdempotentScopedAndCreatesReservedPlaces() => SchemaV2MigrationTests.InDatabase(async db =>
     {
         await db.Database.MigrateAsync();
-        await using var factory = new WorkspaceApiFactory(db.Database.GetConnectionString()!);
+        await using var factory = new DatabaseApiFactory(db.Database.GetConnectionString()!);
         using var owner = factory.CreateHttpsClient();
         const string password = "Test-only-Pass123!";
         await owner.PostAsJsonAsync("/api/auth/register", new RegisterAccount("planning@example.test", password, "Planning"));
         var login = await owner.PostAsJsonAsync("/api/auth/login", new LoginAccount("planning@example.test", password));
         owner.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", (await login.Content.ReadFromJsonAsync<TokenDto>())!.AccessToken);
-        var created = await owner.PostAsJsonAsync("/api/weddings", new WorkspaceInput("Planning", "planning-test", 100, "Asia/Ho_Chi_Minh"));
-        var wedding = (await created.Content.ReadFromJsonAsync<WorkspaceDto>())!;
+        var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "planning-test");
         var path = $"/api/weddings/{wedding.Id}/guest-planning";
         using var anonymous = factory.CreateHttpsClient();
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync(path + "/guests")).StatusCode);
@@ -71,8 +69,7 @@ public sealed class GuestPlanningApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, badGroup.StatusCode);
         Assert.Equal(2, await db.Set<PlanningGuest>().CountAsync());
         Assert.Equal(HttpStatusCode.NotFound, (await owner.GetAsync(path + "/guests/" + Guid.NewGuid())).StatusCode);
-        var other = await owner.PostAsJsonAsync("/api/weddings", new WorkspaceInput("Other", "planning-other", 100, "Asia/Ho_Chi_Minh"));
-        var otherId = (await other.Content.ReadFromJsonAsync<WorkspaceDto>())!.Id;
+        var otherId = (await CoHostPermissionTests.CreateWedding(db, owner, "planning-other")).Id;
         Assert.Equal(HttpStatusCode.NotFound, (await owner.GetAsync($"/api/weddings/{otherId}/guest-planning/guests/{result.Items[0].GuestId}")).StatusCode);
     });
 }

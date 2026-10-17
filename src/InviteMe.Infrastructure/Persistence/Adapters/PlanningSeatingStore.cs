@@ -4,7 +4,7 @@ using InviteMe.Application.Features.Seating.Planning;
 using InviteMe.Domain.Guests;
 using InviteMe.Domain.Seating;
 using Microsoft.EntityFrameworkCore;
-using static InviteMe.Infrastructure.Persistence.Adapters.WorkflowPersistence;
+using static InviteMe.Infrastructure.Persistence.Adapters.PlanningPersistence;
 
 namespace InviteMe.Infrastructure.Persistence.Adapters;
 
