@@ -109,6 +109,14 @@ public sealed class SchemaV2MigrationTests
             await ExecuteScript(db, "SeatingCheckInWorkflows.sql");
             await ExecuteScript(db, "RsvpImmutableHistory.sql");
             await ExecuteScript(db, "RsvpGuestNote.sql");
+            // The resource-based baseline ends at RSVP notes. Include the additive planning/template
+            // migrations rather than comparing a fresh database to an older, incomplete catalog.
+            await db.Database.ExecuteSqlRawAsync(db.GetService<IHistoryRepository>().GetCreateIfNotExistsScript());
+            await using var additions = db.Database.GetDbConnection().CreateCommand();
+            additions.CommandText = db.GetService<IMigrator>().GenerateScript(
+                "20261016134414_AddRsvpGuestNote", "20261017081804_AddThankYouTemplates");
+            // Generated SQL contains literal doubled braces; ExecuteSqlRaw treats these as format escapes.
+            await additions.ExecuteNonQueryAsync();
             await db.Database.ExecuteSqlRawAsync("SET search_path TO inviteme, pg_temp");
             expected = await Scalar<string>(db, SchemaSignature);
         });
