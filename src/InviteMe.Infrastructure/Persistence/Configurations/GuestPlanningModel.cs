@@ -34,6 +34,9 @@ public sealed class GuestPlanningModel :
         }); guests.HasKey(x => x.Id);
         guests.Property(x => x.RecipientName).HasMaxLength(150); guests.Property(x => x.Honorific).HasMaxLength(50);
         guests.Property(x => x.Phone).HasMaxLength(30); guests.Property(x => x.Note).HasMaxLength(2000);
+        guests.Property(x => x.Email).HasMaxLength(254);
+        guests.Property(x => x.InvitationToken).HasMaxLength(64);
+        guests.HasIndex(x => x.InvitationToken).IsUnique().HasFilter("\"InvitationToken\" IS NOT NULL");
         guests.Property(x => x.Version).IsConcurrencyToken();
         guests.HasIndex(x => new { x.WeddingId, x.RecipientName });
         guests.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade);

@@ -19,6 +19,7 @@ public sealed class WeddingSettings
     public DateTimeOffset UpdatedAt { get; private set; }
 
     public static WeddingSettings Create(Guid weddingId) => new() { WeddingId = weddingId };
+    public void SetSettingsJson(string json) => SettingsJson = json;
     public void Configure(string timezone, string visibility, DateTimeOffset? deadline, short reminderDays)
     {
         Timezone = timezone; Visibility = visibility; RsvpDeadline = deadline?.ToUniversalTime(); RsvpReminderDaysBefore = reminderDays;

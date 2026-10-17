@@ -14,7 +14,10 @@ public sealed class PlanningGuest
     public string Side { get; set; } = "UNSPECIFIED";
     public Guid? GroupId { get; set; }
     public string? Phone { get; set; }
+    public string? Email { get; set; }
     public string? Note { get; set; }
+    // Null for guests imported before token generation was introduced.
+    public string? InvitationToken { get; set; }
     public int Version { get; set; } = 1;
 }
 public sealed class PlanningGroup

@@ -8,7 +8,7 @@ namespace InviteMe.Application.Features.Guests.Planning;
 public sealed record PlanningGroupInput(Guid? ExistingId = null, string? NewName = null, bool Confirmed = false);
 public sealed record PlanningRow(int RowNumber, string? RecipientName, string? Honorific = null,
     string? InvitationKind = null, int? ExpectedPeople = null, string? Side = null,
-    PlanningGroupInput? Group = null, string? Phone = null, string? Note = null);
+    PlanningGroupInput? Group = null, string? Phone = null, string? Note = null, string? Email = null);
 public sealed record PlanningImport(IReadOnlyList<PlanningRow?>? Rows);
 public sealed record ImportIssue(int RowNumber, string Field, string Code, string Message);
 public sealed record PlanningGroupDto(Guid Id, string Name);
@@ -19,7 +19,8 @@ public sealed record PlanningImportOutcome(PlanningImportResult? Result, IReadOn
 public sealed record PlanningPersonDto(Guid Id, string FullName, string Role, string AttendanceStatus);
 public sealed record PlanningPlaceDto(Guid Id, PlanningPersonDto? Person);
 public sealed record PlanningGuestDto(Guid Id, int Version, string RecipientName, string? Honorific,
-    string InvitationKind, int ExpectedPeople, string Side, PlanningGroupDto? Group, string? Phone, string? Note);
+    string InvitationKind, int ExpectedPeople, string Side, PlanningGroupDto? Group, string? Phone, string? Note, string? Email = null,
+    string? InvitationPath = null);
 public sealed record PlanningGuestDetail(PlanningGuestDto Guest, IReadOnlyList<PlanningPlaceDto> Places);
 public sealed record PlanningGuestPage(IReadOnlyList<PlanningGuestDto> Items, int Page, int PageSize, int TotalItems);
 public interface IGuestPlanningStore
@@ -52,12 +53,18 @@ public sealed class GuestPlanningHandler(IGuestPlanningStore store, IWeddingPerm
     {
         await permissions.RequireAsync(weddingId, WeddingPermission.GUEST_VIEW, ct);
         await queries.ValidateAsync(query, ct);
-        return await store.ListAsync(weddingId, query.Page, query.PageSize, query.Search, query.Side, query.GroupId, ct);
+        var page = await store.ListAsync(weddingId, query.Page, query.PageSize, query.Search, query.Side, query.GroupId, ct);
+        if (!await permissions.HasPermissionAsync(weddingId, WeddingPermission.INVITATION_SEND, ct))
+            return page with { Items = page.Items.Select(x => x with { InvitationPath = null }).ToArray() };
+        return page;
     }
 
     public async Task<PlanningGuestDetail> DetailAsync(Guid weddingId, Guid guestId, CancellationToken ct)
     {
         await permissions.RequireAsync(weddingId, WeddingPermission.GUEST_VIEW, ct);
-        return await store.DetailAsync(weddingId, guestId, ct);
+        var detail = await store.DetailAsync(weddingId, guestId, ct);
+        if (!await permissions.HasPermissionAsync(weddingId, WeddingPermission.INVITATION_SEND, ct))
+            return detail with { Guest = detail.Guest with { InvitationPath = null } };
+        return detail;
     }
 }

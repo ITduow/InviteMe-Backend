@@ -995,6 +995,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("Email")
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)");
+
                     b.Property<int>("ExpectedPeople")
                         .HasColumnType("integer");
 
@@ -1011,6 +1015,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<string>("InvitationKind")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<string>("InvitationToken")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<string>("Note")
                         .HasMaxLength(2000)
@@ -1040,6 +1048,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("InvitationToken")
+                        .IsUnique()
+                        .HasFilter("\"InvitationToken\" IS NOT NULL");
 
                     b.HasIndex("WeddingId", "RecipientName");
 
@@ -1686,6 +1698,24 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("ck_templates_status", "status IN ('ACTIVE', 'INACTIVE', 'DRAFT')");
                         });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Invitations.InvitationWordingSettings", b =>
+                {
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PresetsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
+                    b.HasKey("WeddingId");
+
+                    b.ToTable("invitation_wording_settings", "inviteme");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Invitations.TemplateSection", b =>
@@ -3811,6 +3841,15 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_invitation_deliveries_invitation");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Invitations.InvitationWordingSettings", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Invitations.TemplateSection", b =>
