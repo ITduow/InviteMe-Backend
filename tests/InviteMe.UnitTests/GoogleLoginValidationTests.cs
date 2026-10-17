@@ -164,6 +164,7 @@ public sealed class GoogleLoginValidationTests
         public Task<IssuedRefreshToken> IssueAsync(Guid userId, TimeSpan lifetime, CancellationToken ct)
             => Task.FromResult(new IssuedRefreshToken("issued-refresh-token", (int)lifetime.TotalSeconds));
         public Task<RefreshRotation?> RotateAsync(string refreshToken, TimeSpan lifetime, CancellationToken ct) => throw new NotImplementedException();
+        public Task<Guid?> FindUserIdByActiveTokenAsync(string refreshToken, CancellationToken ct) => Task.FromResult<Guid?>(null);
         public Task RevokeAllAsync(Guid userId, CancellationToken ct) => Task.CompletedTask;
     }
 
@@ -171,6 +172,7 @@ public sealed class GoogleLoginValidationTests
     {
         public TimeSpan RefreshLifetime => TimeSpan.FromDays(7);
         public AccessToken Issue(AccountIdentity account) => new("issued-access-token", 900);
+        public AccessTokenPrincipal? ValidateIgnoringLifetime(string token) => null;
     }
 
     private sealed class FakeCurrentUser : ICurrentUser

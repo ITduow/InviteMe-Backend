@@ -24,7 +24,7 @@ internal sealed class DatabaseApiFactory(string connection) : WebApplicationFact
             services.AddScoped<IAccountEmailSender, AutoConfirmTestEmailSender>();
         });
     }
-    public HttpClient CreateHttpsClient() => CreateClient(new() { BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false });
+    public HttpClient CreateHttpsClient() => CreateClient(new() { BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false, HandleCookies = false });
 
     private sealed class AutoConfirmTestEmailSender(IAccountStore store) : IAccountEmailSender
     {

@@ -43,4 +43,51 @@ internal sealed class AccessTokenIssuer(
 
         return new AccessToken(serializedToken, expiresInSeconds);
     }
+
+    public AccessTokenPrincipal? ValidateIgnoringLifetime(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return null;
+        }
+
+        var jwt = options.Value;
+        var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
+        var parameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = jwt.Issuer,
+            ValidateAudience = true,
+            ValidAudience = jwt.Audience,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Convert.FromBase64String(jwt.SigningKey)),
+            ValidateLifetime = false,
+            RequireExpirationTime = true,
+            RequireSignedTokens = true,
+            ValidAlgorithms = [SecurityAlgorithms.HmacSha256],
+            NameClaimType = "sub",
+            RoleClaimType = "role"
+        };
+
+        try
+        {
+            var principal = handler.ValidateToken(token, parameters, out _);
+            if (!Guid.TryParse(principal.FindFirst("sub")?.Value, out var userId) || userId == Guid.Empty)
+            {
+                return null;
+            }
+
+            var stamp = principal.FindFirst("session_stamp")?.Value;
+            if (string.IsNullOrWhiteSpace(stamp))
+            {
+                return null;
+            }
+
+            return new AccessTokenPrincipal(userId, stamp);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }

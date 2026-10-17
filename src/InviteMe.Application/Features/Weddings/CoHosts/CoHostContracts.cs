@@ -114,7 +114,7 @@ public sealed class CoHostHandler(
     }
 
     private Guid RequireCallerId() =>
-        current.UserId ?? throw new ApplicationProblemException(ProblemKind.Unauthenticated, "SESSION_REQUIRED", "Sign in first.");
+        current.UserId ?? throw new ApplicationProblemException(ProblemKind.Unauthenticated, "AUTHENTICATION_REQUIRED", "Sign in first.");
 
     private async Task<Guid> EnsureOwnerAsync(Guid weddingId, Guid callerId, CancellationToken ct)
     {

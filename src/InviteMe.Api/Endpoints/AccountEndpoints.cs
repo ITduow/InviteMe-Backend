@@ -1,3 +1,5 @@
+using InviteMe.Api.Authentication;
+using InviteMe.Application.Common.Errors;
 using InviteMe.Application.Features.Identity.Accounts;
 using InviteMe.Application.Ports.Authentication;
 
@@ -18,22 +20,34 @@ internal static class AccountEndpoints
         group.MapPost("/login", async (LoginAccount input, AccountHandler handler, HttpContext context, CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
-            var token = await handler.LoginAsync(input, ct);
-            return Results.Ok(token);
+            var session = await handler.LoginAsync(input, ct);
+            RefreshTokenCookie.Append(context.Response, session.IssuedRefresh);
+            return Results.Ok(session.Token);
         }).AllowAnonymous().RequireRateLimiting("auth");
 
         group.MapPost("/google", async (GoogleLogin input, AccountHandler handler, HttpContext context, CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
-            var token = await handler.LoginWithGoogleAsync(input, ct);
-            return Results.Ok(token);
+            var session = await handler.LoginWithGoogleAsync(input, ct);
+            RefreshTokenCookie.Append(context.Response, session.IssuedRefresh);
+            return Results.Ok(session.Token);
         }).AllowAnonymous().RequireRateLimiting("auth");
 
-        group.MapPost("/refresh", async (RefreshSession input, AccountHandler handler, HttpContext context, CancellationToken ct) =>
+        group.MapPost("/refresh", async (AccountHandler handler, HttpContext context, CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
-            var token = await handler.RefreshAsync(input, ct);
-            return Results.Ok(token);
+            var refreshToken = RefreshTokenCookie.Read(context.Request);
+            try
+            {
+                var session = await handler.RefreshAsync(new RefreshSession(refreshToken ?? string.Empty), ct);
+                RefreshTokenCookie.Append(context.Response, session.IssuedRefresh);
+                return Results.Ok(session.Token);
+            }
+            catch (ApplicationProblemException ex) when (ex.Code == "INVALID_REFRESH_TOKEN")
+            {
+                RefreshTokenCookie.Delete(context.Response);
+                throw;
+            }
         }).AllowAnonymous().RequireRateLimiting("auth");
 
         group.MapPost("/forgot-password", async (ForgotPassword input, AccountHandler handler, CancellationToken ct) =>
@@ -46,6 +60,7 @@ internal static class AccountEndpoints
         {
             context.Response.Headers.CacheControl = "no-store";
             await handler.ResetPasswordAsync(input, ct);
+            RefreshTokenCookie.Delete(context.Response);
             return Results.NoContent();
         }).AllowAnonymous().RequireRateLimiting("auth");
 
@@ -66,6 +81,7 @@ internal static class AccountEndpoints
         {
             context.Response.Headers.CacheControl = "no-store";
             await handler.ChangePasswordAsync(input, ct);
+            RefreshTokenCookie.Delete(context.Response);
             return Results.NoContent();
         }).RequireAuthorization().RequireRateLimiting("auth");
 
@@ -75,19 +91,48 @@ internal static class AccountEndpoints
             return Results.Ok(account);
         }).RequireAuthorization();
 
-        group.MapPost("/logout", async (AccountHandler handler, CancellationToken ct) =>
+        group.MapPost("/logout", async (AccountHandler handler, HttpContext context, CancellationToken ct) =>
         {
-            await handler.LogoutAsync(ct);
-            return Results.NoContent();
-        }).RequireAuthorization();
+            var bearerToken = ExtractBearerToken(context.Request);
+            var refreshToken = RefreshTokenCookie.Read(context.Request);
+            try
+            {
+                await handler.LogoutAsync(bearerToken, refreshToken, ct);
+                RefreshTokenCookie.Delete(context.Response);
+                return Results.NoContent();
+            }
+            catch (ApplicationProblemException)
+            {
+                RefreshTokenCookie.Delete(context.Response);
+                throw;
+            }
+        }).AllowAnonymous();
 
         group.MapDelete("/account", async ([Microsoft.AspNetCore.Mvc.FromBody] DeleteAccount? input, AccountHandler handler, HttpContext context, CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             await handler.DeleteAccountAsync(input ?? new DeleteAccount(), ct);
+            RefreshTokenCookie.Delete(context.Response);
             return Results.NoContent();
         }).RequireAuthorization().RequireRateLimiting("auth");
 
         return endpoints;
+    }
+
+    private static string? ExtractBearerToken(HttpRequest request)
+    {
+        var auth = request.Headers.Authorization.ToString();
+        if (string.IsNullOrWhiteSpace(auth))
+        {
+            return null;
+        }
+
+        if (!auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        {
+            return "\0invalid";
+        }
+
+        var token = auth["Bearer ".Length..].Trim();
+        return string.IsNullOrEmpty(token) ? "\0invalid" : token;
     }
 }

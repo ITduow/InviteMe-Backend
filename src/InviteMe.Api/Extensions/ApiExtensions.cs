@@ -20,6 +20,13 @@ internal static class ApiExtensions
         });
         services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
         {
+            if (context.ProblemDetails.Status == 401 &&
+                context.HttpContext.Items.TryGetValue(AuthenticationExtensions.AuthErrorItemKey, out var authError) &&
+                authError is ValueTuple<string, string> tuple)
+            {
+                context.ProblemDetails.Extensions["code"] = tuple.Item1;
+                context.ProblemDetails.Detail = tuple.Item2;
+            }
             context.ProblemDetails.Extensions.TryAdd("code", context.ProblemDetails.Status switch
             {
                 400 => "INVALID_REQUEST", 401 => "AUTHENTICATION_REQUIRED",
@@ -47,8 +54,9 @@ internal static class ApiExtensions
             options.AddOperationTransformer((operation, context, _) =>
             {
                 var metadata = context.Description.ActionDescriptor.EndpointMetadata;
-                if (metadata.OfType<Microsoft.AspNetCore.Authorization.IAuthorizeData>().Any() &&
-                    !metadata.OfType<Microsoft.AspNetCore.Authorization.IAllowAnonymous>().Any())
+                if ((metadata.OfType<Microsoft.AspNetCore.Authorization.IAuthorizeData>().Any() &&
+                     !metadata.OfType<Microsoft.AspNetCore.Authorization.IAllowAnonymous>().Any()) ||
+                    string.Equals(context.Description.RelativePath, "api/auth/logout", StringComparison.OrdinalIgnoreCase))
                     operation.Security = [new OpenApiSecurityRequirement { [new OpenApiSecuritySchemeReference("Bearer", context.Document)] = [] }];
                 return Task.CompletedTask;
             });

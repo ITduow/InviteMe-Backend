@@ -11,6 +11,8 @@ namespace InviteMe.Api.Extensions;
 
 internal static class AuthenticationExtensions
 {
+    internal const string AuthErrorItemKey = "InviteMe.AuthError";
+
     public static IServiceCollection AddApiAuthentication(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddOptions<JwtOptions>().BindConfiguration(JwtOptions.SectionName)
@@ -56,6 +58,7 @@ internal static class AuthenticationExtensions
                 {
                     if (!Guid.TryParse(context.Principal?.FindFirst("sub")?.Value, out var id) || id == Guid.Empty)
                     {
+                        context.HttpContext.Items[AuthErrorItemKey] = ("INVALID_ACCESS_TOKEN", "Access token is invalid.");
                         context.Fail("Invalid subject.");
                         return;
                     }
@@ -63,6 +66,7 @@ internal static class AuthenticationExtensions
                     var stamp = context.Principal?.FindFirst("session_stamp")?.Value;
                     if (string.IsNullOrWhiteSpace(stamp))
                     {
+                        context.HttpContext.Items[AuthErrorItemKey] = ("INVALID_ACCESS_TOKEN", "Access token is invalid.");
                         context.Fail("Missing session stamp.");
                         return;
                     }
@@ -70,8 +74,40 @@ internal static class AuthenticationExtensions
                     var account = await context.HttpContext.RequestServices.GetRequiredService<IAccountStore>().GetAsync(id, context.HttpContext.RequestAborted);
                     if (account is null || !string.Equals(account.SessionStamp, stamp, StringComparison.Ordinal))
                     {
+                        context.HttpContext.Items[AuthErrorItemKey] = ("SESSION_REVOKED", "Session has been revoked or is no longer valid.");
                         context.Fail("Session revoked.");
                     }
+                },
+                OnAuthenticationFailed = context =>
+                {
+                    if (!context.HttpContext.Items.ContainsKey(AuthErrorItemKey))
+                    {
+                        context.HttpContext.Items[AuthErrorItemKey] = IsExpiredFailure(context.Exception)
+                            ? ("ACCESS_TOKEN_EXPIRED", "Access token has expired.")
+                            : ("INVALID_ACCESS_TOKEN", "Access token is invalid.");
+                    }
+                    return Task.CompletedTask;
+                },
+                OnChallenge = context =>
+                {
+                    if (!context.HttpContext.Items.ContainsKey(AuthErrorItemKey))
+                    {
+                        if (context.AuthenticateFailure is not null)
+                        {
+                            context.HttpContext.Items[AuthErrorItemKey] = IsExpiredFailure(context.AuthenticateFailure)
+                                ? ("ACCESS_TOKEN_EXPIRED", "Access token has expired.")
+                                : ("INVALID_ACCESS_TOKEN", "Access token is invalid.");
+                        }
+                        else if (!string.IsNullOrWhiteSpace(context.Request.Headers.Authorization))
+                        {
+                            context.HttpContext.Items[AuthErrorItemKey] = ("INVALID_ACCESS_TOKEN", "Access token is invalid.");
+                        }
+                        else
+                        {
+                            context.HttpContext.Items[AuthErrorItemKey] = ("AUTHENTICATION_REQUIRED", "Authentication is required.");
+                        }
+                    }
+                    return Task.CompletedTask;
                 }
             };
         });
@@ -82,4 +118,7 @@ internal static class AuthenticationExtensions
         });
         return services;
     }
+
+    private static bool IsExpiredFailure(Exception? exception) =>
+        exception is SecurityTokenExpiredException || exception?.InnerException is SecurityTokenExpiredException;
 }

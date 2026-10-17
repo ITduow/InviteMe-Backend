@@ -1,4 +1,5 @@
 using FluentValidation;
+using InviteMe.Api.Authentication;
 using InviteMe.Application.Common.Errors;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
@@ -39,6 +40,12 @@ internal sealed class ApiExceptionHandler(IProblemDetailsService problems, ILogg
                 .ToDictionary(x => x.Key, x => x.Select(f => f.ErrorMessage).Distinct().ToArray());
 
         context.Response.StatusCode = status;
+        if (context.Request.Path.StartsWithSegments("/api/auth", StringComparison.OrdinalIgnoreCase))
+            context.Response.Headers.CacheControl = "no-store";
+        if (code == "INVALID_REFRESH_TOKEN" ||
+            (exception is ApplicationProblemException &&
+             context.Request.Path.Equals("/api/auth/logout", StringComparison.OrdinalIgnoreCase)))
+            RefreshTokenCookie.Delete(context.Response);
         await problems.WriteAsync(new ProblemDetailsContext { HttpContext = context, ProblemDetails = problemDetails });
         return true;
     }
