@@ -1016,6 +1016,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("InvitationToken")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<string>("Note")
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
@@ -1044,6 +1048,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("InvitationToken")
+                        .IsUnique()
+                        .HasFilter("\"InvitationToken\" IS NOT NULL");
 
                     b.HasIndex("WeddingId", "RecipientName");
 

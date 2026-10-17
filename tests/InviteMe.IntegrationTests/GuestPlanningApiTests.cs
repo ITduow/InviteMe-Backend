@@ -57,9 +57,16 @@ public sealed class GuestPlanningApiTests
         var result = (await response.Content.ReadFromJsonAsync<PlanningImportResult>())!;
         Assert.Equal(2, result.CreatedGuestCount); Assert.Equal(6, result.CreatedPlaceCount);
         Assert.Single(result.CreatedGroups);
+        var tokens = await db.Set<PlanningGuest>().AsNoTracking()
+            .OrderBy(x => x.Id).Select(x => x.InvitationToken).ToArrayAsync();
+        Assert.Equal(2, tokens.Length);
+        Assert.All(tokens, token => Assert.Matches("^[0-9a-f]{64}$", token!));
+        Assert.Equal(tokens.Length, tokens.Distinct().Count());
         var replay = await Import(body, key);
         Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
         Assert.Equal(result.ImportId, (await replay.Content.ReadFromJsonAsync<PlanningImportResult>())!.ImportId);
+        Assert.Equal(tokens, await db.Set<PlanningGuest>().AsNoTracking()
+            .OrderBy(x => x.Id).Select(x => x.InvitationToken).ToArrayAsync());
         Assert.Equal(2, await db.Set<PlanningGuest>().CountAsync());
         Assert.Equal(2, await db.Set<PlanningParticipant>().CountAsync());
         Assert.Equal(6, await db.Set<PlanningPlace>().CountAsync());
@@ -68,6 +75,7 @@ public sealed class GuestPlanningApiTests
         var places = detail.GetProperty("places").EnumerateArray().ToArray();
         Assert.Equal("0900123456", detail.GetProperty("phone").GetString());
         Assert.Equal("an@example.com", detail.GetProperty("email").GetString());
+        Assert.False(detail.TryGetProperty("invitationToken", out _));
         Assert.Equal(4, places.Length);
         Assert.Equal("PENDING", places[0].GetProperty("person").GetProperty("attendanceStatus").GetString());
         Assert.All(places.Skip(1), p => Assert.Equal(JsonValueKind.Null, p.GetProperty("person").ValueKind));
