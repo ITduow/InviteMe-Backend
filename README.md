@@ -1,5 +1,7 @@
 # InviteMe backend
 
+AI Thank You Templates (Couple09) adds seven independent owner-only operations for generating, reading, editing, approving, previewing and deleting reusable drafts. Healthy generation calls OpenAI Responses once; guest rendering uses C# with zero AI calls. Configuration, migration, endpoint contracts and test evidence: [AI Thank You Templates](docs/ai-thank-you-templates.md). Delivery and removed workflow APIs are not included.
+
 InviteMe is a .NET 10 modular monolith with vertical slices, PostgreSQL/EF Core, ASP.NET Core Identity, JWT and SignalR.
 
 **Current API scope (2026-10-16):** Accounts, Co-Hosts, Audit and System. The `Invitations`, `Wedding Workflow`, `Wedding Guests`, `Public Invitations` and `Wedding Workspace` API groups have been removed, together with their application handlers/DTOs/ports, persistence adapters, invitation delivery worker, QR renderer and workflow realtime publisher. There are no HTTP APIs for creating weddings, importing guests, invitations/QR/RSVP/waitlist, seating/check-in, gifts, dashboard/export or summary reports.

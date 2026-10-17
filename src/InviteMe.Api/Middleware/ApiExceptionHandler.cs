@@ -57,6 +57,9 @@ internal sealed class ApiExceptionHandler(IProblemDetailsService problems, ILogg
         ProblemKind.NotFound => 404,
         ProblemKind.Conflict => 409,
         ProblemKind.BusinessRule => 422,
+        ProblemKind.BadGateway => 502,
+        ProblemKind.Unavailable => 503,
+        ProblemKind.Timeout => 504,
         _ => 500
     };
 }

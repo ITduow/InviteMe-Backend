@@ -14,6 +14,10 @@ internal static class ApiExtensions
         services.AddRateLimiter(options =>
         {
             options.RejectionStatusCode = 429;
+            options.AddPolicy("AiThankYouGeneration", context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+                context.User.FindFirst("sub")?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+                _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+                { PermitLimit = 3, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
             options.AddPolicy("auth", context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
                 context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
                 _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
@@ -42,7 +46,7 @@ internal static class ApiExtensions
             options.AddDocumentTransformer((document, _, _) =>
             {
                 document.Info.Title = "InviteMe API";
-                document.Info.Description = "InviteMe Accounts, Co-Hosts, Audit and System API.";
+                document.Info.Description = "InviteMe Accounts, Co-Hosts, Audit, Guest Planning, RSVP, System and AI Thank You Templates API.";
                 document.Components ??= new OpenApiComponents();
                 document.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
                 document.Components.SecuritySchemes["Bearer"] = new OpenApiSecurityScheme
