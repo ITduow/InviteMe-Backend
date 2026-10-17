@@ -54,6 +54,7 @@ app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => fa
 app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") }).AllowAnonymous();
 app.MapApplicationHealth();
 app.MapAccounts();
+app.MapWeddingAccess();
 app.MapCoHosts();
 app.MapAuditLogs();
 app.MapRsvp();
