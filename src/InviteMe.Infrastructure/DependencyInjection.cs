@@ -46,6 +46,18 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Ports.Authentication.IRefreshTokenStore, InviteMe.Infrastructure.Authentication.RefreshTokenStore>();
         services.AddScoped<InviteMe.Application.Ports.Weddings.ICoHostStore, CoHostStore>();
         services.AddScoped<InviteMe.Application.Ports.Audit.IAuditReader, AuditReader>();
+        services.AddScoped<InviteMe.Application.Ports.AI.IThankYouTemplateStore, ThankYouTemplateStore>();
+        services.AddScoped<InviteMe.Application.Ports.AI.IThankYouGuestReader, ThankYouGuestReader>();
+        services.AddOptions<InviteMe.Infrastructure.AI.OpenAiOptions>().Configure(options =>
+        {
+            options.ApiKey = configuration["OPENAI_API_KEY"] ?? "";
+            options.Model = configuration["OPENAI_MODEL"] ?? "gpt-5-nano";
+        });
+        services.AddHttpClient<InviteMe.Application.Ports.AI.IAiTextGenerator, InviteMe.Infrastructure.AI.OpenAiTextGenerator>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.MaxResponseContentBufferSize = 65536;
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddScoped<InviteMe.Application.Features.Guests.Planning.IGuestPlanningStore, GuestPlanningStore>();
         services.AddScoped<InviteMe.Application.Features.Seating.Planning.IPlanningSeatingStore, PlanningSeatingStore>();
         services.AddScoped<InviteMe.Application.Ports.Rsvps.IRsvpStore, InviteMe.Infrastructure.Persistence.Adapters.Rsvps.RsvpStore>();

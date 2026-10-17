@@ -58,6 +58,7 @@ app.MapCoHosts();
 app.MapAuditLogs();
 app.MapRsvp();
 app.MapGuestPlanning();
+app.MapThankYouTemplates();
 app.MapHub<WeddingHub>("/hubs/weddings", options => options.CloseOnAuthenticationExpiration = true)
     .RequireAuthorization();
 app.Run();
