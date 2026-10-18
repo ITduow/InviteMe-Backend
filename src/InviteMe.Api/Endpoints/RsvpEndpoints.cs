@@ -6,8 +6,9 @@ using Microsoft.AspNetCore.RateLimiting;
 namespace InviteMe.Api.Endpoints;
 
 /// <summary>
-/// RSVP module (Guest03 RSVP + Guest04 capacity/waitlist). Self-contained: its own routes, Swagger tags and rate-limit policy.
-/// Guest routes use the 64-hex invitation token as the credential; host routes need a JWT and a wedding permission.
+/// RSVP module (Guest03 RSVP + Guest04 capacity/waitlist) on Guest Planning v2 parties. Self-contained: its own routes,
+/// Swagger tags and rate-limit policy. Guest routes use the planning guest's invitation token (the same token as
+/// /invite/{token} and GET /api/guest-invitations/{token}); host routes need a JWT and a wedding permission.
 /// </summary>
 internal static class RsvpEndpoints
 {
@@ -28,7 +29,7 @@ internal static class RsvpEndpoints
         var guest = endpoints.MapGroup("/api/rsvp/{token}").AllowAnonymous().RequireRateLimiting(GuestRateLimitPolicy).WithTags("RSVP (Guest)");
         guest.MapGet("", (string token, RsvpHandler h, CancellationToken ct) => h.PublicGetAsync(token, ct))
             .WithName("GetMyRsvp")
-            .WithSummary("Current RSVP for this invitation token (status PENDING and rsvpId null before the first answer).")
+            .WithSummary("Current RSVP for this invitation token (status PENDING, rsvpId null and version 0 before the first answer).")
             .Produces<RsvpDto>().ProducesProblem(StatusCodes.Status404NotFound);
         guest.MapPost("", async (string token, SubmitRsvp input, RsvpHandler h, CancellationToken ct) =>
                 Results.Created((string?)null, await h.PublicCreateAsync(token, input, ct)))
@@ -44,10 +45,10 @@ internal static class RsvpEndpoints
 
         // Host / Co-host management.
         var host = endpoints.MapGroup("/api/weddings/{weddingId:guid}").RequireAuthorization().WithTags("RSVP (Host)");
-        host.MapGet("/rsvps/{invitationId:guid}", (Guid weddingId, Guid invitationId, RsvpHandler h, CancellationToken ct) => h.GetAsync(weddingId, invitationId, ct))
-            .WithName("GetGuestRsvp").WithSummary("RSVP of one invitation (RSVP_VIEW).")
+        host.MapGet("/rsvps/{guestId:guid}", (Guid weddingId, Guid guestId, RsvpHandler h, CancellationToken ct) => h.GetAsync(weddingId, guestId, ct))
+            .WithName("GetGuestRsvp").WithSummary("RSVP of one Guest Planning v2 guest (RSVP_VIEW). guestId = id from /guest-planning/guests.")
             .Produces<RsvpDto>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound);
-        host.MapPut("/rsvps/{invitationId:guid}", (Guid weddingId, Guid invitationId, SubmitRsvp input, RsvpHandler h, CancellationToken ct) => h.SubmitAsync(weddingId, invitationId, input, ct))
+        host.MapPut("/rsvps/{guestId:guid}", (Guid weddingId, Guid guestId, SubmitRsvp input, RsvpHandler h, CancellationToken ct) => h.SubmitAsync(weddingId, guestId, input, ct))
             .WithName("SubmitGuestRsvp").WithSummary("Create or replace a guest's RSVP on their behalf (GUEST_EDIT), under the same capacity gate. Optional source: PHONE, CHAT, IN_PERSON or OTHER (kept in the audit log).")
             .Produces<RsvpDto>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status422UnprocessableEntity);

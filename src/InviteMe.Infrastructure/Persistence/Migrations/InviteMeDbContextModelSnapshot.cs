@@ -1878,6 +1878,210 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningDietaryNote", b =>
+                {
+                    b.Property<Guid>("ParticipantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("participant_id");
+
+                    b.Property<string>("Note")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("note");
+
+                    b.HasKey("ParticipantId");
+
+                    b.ToTable("planning_dietary_notes", "inviteme");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningRsvp", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("ConfirmedPartySize")
+                        .HasColumnType("integer")
+                        .HasColumnName("confirmed_party_size");
+
+                    b.Property<Guid>("GuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("guest_id");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("note");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("SubmittedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("submitted_at");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GuestId")
+                        .IsUnique()
+                        .HasDatabaseName("uq_planning_rsvps_guest");
+
+                    b.HasIndex("WeddingId")
+                        .HasDatabaseName("ix_planning_rsvps_wedding");
+
+                    b.ToTable("planning_rsvps", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_planning_rsvps_party_size", "(status IN ('PENDING','DECLINED') AND confirmed_party_size = 0) OR (status = 'ATTENDING' AND confirmed_party_size >= 1)");
+
+                            t.HasCheckConstraint("ck_planning_rsvps_status", "status IN ('PENDING','ATTENDING','DECLINED')");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningRsvpHistory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("ActorGuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("actor_guest_id");
+
+                    b.Property<string>("ActorType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("actor_type");
+
+                    b.Property<DateTimeOffset>("ChangedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("changed_at");
+
+                    b.Property<Guid?>("ChangedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("changed_by");
+
+                    b.Property<int>("NewConfirmedPartySize")
+                        .HasColumnType("integer")
+                        .HasColumnName("new_confirmed_party_size");
+
+                    b.Property<string>("NewSnapshot")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("new_snapshot");
+
+                    b.Property<string>("NewStatus")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("new_status");
+
+                    b.Property<int?>("OldConfirmedPartySize")
+                        .HasColumnType("integer")
+                        .HasColumnName("old_confirmed_party_size");
+
+                    b.Property<string>("OldSnapshot")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("old_snapshot");
+
+                    b.Property<string>("OldStatus")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("old_status");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("reason");
+
+                    b.Property<Guid>("RsvpId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("rsvp_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RsvpId", "ChangedAt")
+                        .HasDatabaseName("ix_planning_rsvp_history_rsvp");
+
+                    b.ToTable("planning_rsvp_history", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_planning_rsvp_history_actor", "(actor_type = 'USER' AND changed_by IS NOT NULL AND actor_guest_id IS NULL) OR (actor_type = 'WEDDING_GUEST' AND actor_guest_id IS NOT NULL AND changed_by IS NULL)");
+
+                            t.HasCheckConstraint("ck_planning_rsvp_history_status", "new_status IN ('PENDING','ATTENDING','DECLINED') AND (old_status IS NULL OR old_status IN ('PENDING','ATTENDING','DECLINED'))");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningWaitlistEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("GuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("guest_id");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("requested_at");
+
+                    b.Property<int>("RequestedSlots")
+                        .HasColumnType("integer")
+                        .HasColumnName("requested_slots");
+
+                    b.Property<DateTimeOffset?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("resolved_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GuestId")
+                        .IsUnique()
+                        .HasDatabaseName("uq_planning_rsvp_waitlist_active_guest")
+                        .HasFilter("status = 'WAITING'");
+
+                    b.HasIndex("WeddingId", "Status", "RequestedAt")
+                        .HasDatabaseName("ix_planning_rsvp_waitlist_queue");
+
+                    b.ToTable("planning_rsvp_waitlist", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_planning_rsvp_waitlist_slots", "requested_slots > 0");
+
+                            t.HasCheckConstraint("ck_planning_rsvp_waitlist_status", "status IN ('WAITING','PROMOTED','CANCELLED')");
+                        });
+                });
+
             modelBuilder.Entity("InviteMe.Domain.Rsvps.Rsvp", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3898,6 +4102,72 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_notifications_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningDietaryNote", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Guests.PlanningParticipant", null)
+                        .WithMany()
+                        .HasForeignKey("ParticipantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_dietary_notes_participant");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningRsvp", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Guests.PlanningGuest", null)
+                        .WithMany()
+                        .HasForeignKey("GuestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_rsvps_guest");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_rsvps_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningRsvpHistory", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Guests.PlanningGuest", null)
+                        .WithMany()
+                        .HasForeignKey("ActorGuestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_planning_rsvp_history_guest");
+
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ChangedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_planning_rsvp_history_user");
+
+                    b.HasOne("InviteMe.Domain.Rsvps.PlanningRsvp", null)
+                        .WithMany()
+                        .HasForeignKey("RsvpId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_rsvp_history_rsvp");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningWaitlistEntry", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Guests.PlanningGuest", null)
+                        .WithMany()
+                        .HasForeignKey("GuestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_rsvp_waitlist_guest");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_rsvp_waitlist_wedding");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Rsvps.Rsvp", b =>

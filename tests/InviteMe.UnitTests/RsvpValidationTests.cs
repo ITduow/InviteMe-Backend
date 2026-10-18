@@ -14,13 +14,14 @@ public sealed class RsvpValidationTests
         Assert.True(Valid(new SubmitRsvp(1, "ATTENDING", [A, B])));
         Assert.True(Valid(new SubmitRsvp(1, "ATTENDING", [], ["Friend"])));
         Assert.True(Valid(new SubmitRsvp(1, "DECLINED", [])));
+        Assert.True(Valid(new SubmitRsvp(0, "ATTENDING", [A]))); // 0 = first answer (no RSVP yet)
         Assert.True(Valid(new SubmitRsvp(1, "ATTENDING", [A], Note: new string('x', 500), DietaryNotes: [new(A, new string('y', 200)), new(B, null)])));
     }
 
     [Fact]
     public void RejectsInconsistentOrOversizedInput()
     {
-        Assert.False(Valid(new SubmitRsvp(0, "ATTENDING", [A])));
+        Assert.False(Valid(new SubmitRsvp(-1, "ATTENDING", [A])));
         Assert.False(Valid(new SubmitRsvp(1, "MAYBE", [A])));
         Assert.False(Valid(new SubmitRsvp(1, "ATTENDING", [])));
         Assert.False(Valid(new SubmitRsvp(1, "DECLINED", [A])));
@@ -55,5 +56,18 @@ public sealed class RsvpValidationTests
         var p = GuestParticipant.Create(Guid.NewGuid(), "P", "PRIMARY");
         p.SetDietaryNote("  Vegan "); Assert.Equal("Vegan", p.DietaryNote);
         p.SetDietaryNote("   "); Assert.Null(p.DietaryNote);
+    }
+
+    [Fact]
+    public void PlanningRsvpKeepsStatusAndHeadcountConsistentAndAdvancesVersion()
+    {
+        var rsvp = InviteMe.Domain.Rsvps.PlanningRsvp.Create(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.UtcNow);
+        Assert.Equal((0, "PENDING"), (rsvp.Version, rsvp.Status));
+        rsvp.Submit("ATTENDING", 2, DateTimeOffset.UtcNow); rsvp.SetNote("  hi  ", DateTimeOffset.UtcNow); rsvp.Advance();
+        Assert.Equal((1, "ATTENDING", 2, "hi"), (rsvp.Version, rsvp.Status, rsvp.ConfirmedPartySize, rsvp.Note));
+        rsvp.SetNote(" ", DateTimeOffset.UtcNow); Assert.Null(rsvp.Note);
+        Assert.Throws<ArgumentException>(() => rsvp.Submit("ATTENDING", 0, DateTimeOffset.UtcNow));
+        Assert.Throws<ArgumentException>(() => rsvp.Submit("DECLINED", 1, DateTimeOffset.UtcNow));
+        Assert.Throws<ArgumentOutOfRangeException>(() => InviteMe.Domain.Rsvps.PlanningWaitlistEntry.Create(Guid.NewGuid(), Guid.NewGuid(), 0, DateTimeOffset.UtcNow));
     }
 }

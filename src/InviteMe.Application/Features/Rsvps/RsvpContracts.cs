@@ -4,7 +4,9 @@ using FluentValidation;
 namespace InviteMe.Application.Features.Rsvps;
 
 /// <summary>
-/// RSVP form body. <c>expectedVersion</c> is the invitation version last read by the client (optimistic concurrency).
+/// RSVP form body. <c>expectedVersion</c> is the RSVP version last read by the client (0 before the first answer).
+/// <c>participantIds</c> are people of the party who attend; <c>plusOnes</c> name extra companions that fill the party's
+/// still-unnamed reserved places (planning_places), never more than the places the hosts reserved.
 /// <c>note</c> and <c>dietaryNotes</c> are optional: omitted = unchanged, empty string / null note = cleared.
 /// </summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -25,12 +27,18 @@ public static class RsvpSource
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record DietaryNoteInput(Guid ParticipantId, string? Note);
 
-public sealed record RsvpParticipantDto(Guid Id, string FullName, string ParticipantType, string AttendanceStatus, string? DietaryNote);
+public sealed record RsvpParticipantDto(Guid Id, string FullName, string Role, string AttendanceStatus, string? DietaryNote);
 
-/// <summary>Current RSVP of one invitation. Status is PENDING with RsvpId null until the first answer.</summary>
-public sealed record RsvpDto(Guid InvitationId, Guid GuestId, int Version, Guid? RsvpId, string Status,
+/// <summary>
+/// Current RSVP of one Guest Planning v2 party (planning guest). Status is PENDING with RsvpId null and Version 0 until the
+/// first answer. InvitedPlaces = places the hosts reserved; OpenPlaces = reserved places nobody is named for yet.
+/// </summary>
+public sealed record RsvpDto(Guid GuestId, string RecipientName, int Version, Guid? RsvpId, string Status,
     int ConfirmedPartySize, int WaitlistedPartySize, string CapacityOutcome, string? Message, string? Note,
-    IReadOnlyList<RsvpParticipantDto> Participants, DateTimeOffset? SubmittedAt, DateTimeOffset? UpdatedAt);
+    int InvitedPlaces, int OpenPlaces, IReadOnlyList<RsvpParticipantDto> Participants, DateTimeOffset? SubmittedAt, DateTimeOffset? UpdatedAt);
+
+/// <summary>Store result: the wedding is needed for the realtime notification but never shown to the guest.</summary>
+public sealed record RsvpWriteResult(Guid WeddingId, RsvpDto Rsvp, bool SeatsNeedAttention = false);
 
 /// <summary>
 /// CONFIRMED: everyone attending holds a place. PARTIALLY_WAITLISTED: the confirmed party keeps its places and only the
@@ -66,7 +74,7 @@ public sealed class SubmitRsvpValidator : AbstractValidator<SubmitRsvp>
 
     public SubmitRsvpValidator()
     {
-        RuleFor(x => x.ExpectedVersion).GreaterThan(0);
+        RuleFor(x => x.ExpectedVersion).GreaterThanOrEqualTo(0);
         RuleFor(x => x.Decision).Must(x => x is "ATTENDING" or "DECLINED");
         RuleFor(x => x.ParticipantIds).NotNull().Must(x => x is { Count: <= 41 } && x.All(id => id != Guid.Empty) && x.Distinct().Count() == x.Count);
         RuleFor(x => x.PlusOnes).Must(x => x is null || x.Count <= 20);
