@@ -71,6 +71,8 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Features.Invitations.IInvitationWordingStore, InvitationWordingStore>();
         services.AddScoped<InviteMe.Application.Features.Invitations.IInvitationDesignStore, InvitationDesignStore>();
         services.AddScoped<InviteMe.Application.Features.Seating.Planning.IPlanningSeatingStore, PlanningSeatingStore>();
+        services.AddScoped<InviteMe.Application.Features.Guests.Access.IGuestAccessStore, GuestAccessStore>();
+        services.AddSingleton<InviteMe.Application.Ports.Invitations.IQrCodeRenderer, InviteMe.Infrastructure.Invitations.QrCodeRenderer>();
         services.AddScoped<InviteMe.Application.Ports.Rsvps.IRsvpStore, InviteMe.Infrastructure.Persistence.Adapters.Rsvps.RsvpStore>();
         services.AddDataProtection().SetApplicationName("InviteMe")
             .PersistKeysToFileSystem(new DirectoryInfo(configuration["Invitations:KeyDirectory"] ??
