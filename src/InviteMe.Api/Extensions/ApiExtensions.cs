@@ -17,6 +17,12 @@ internal static class ApiExtensions
             options.AddPolicy("guest-invitation", context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
                 context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
                 _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions { PermitLimit = 60, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+            options.AddPolicy("wedding-slug-check", context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+                context.User.FindFirst("sub")?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+                _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+            options.AddPolicy("wedding-cover-upload", context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+                context.User.FindFirst("sub")?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+                _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
             options.AddPolicy("AiThankYouGeneration", context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
                 context.User.FindFirst("sub")?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
                 _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
@@ -49,7 +55,7 @@ internal static class ApiExtensions
             options.AddDocumentTransformer((document, _, _) =>
             {
                 document.Info.Title = "InviteMe API";
-                document.Info.Description = "InviteMe Accounts, Co-Hosts, Audit, Guest Planning, RSVP, System and AI Thank You Templates API.";
+                document.Info.Description = "InviteMe Accounts, Wedding Setup, Co-Hosts, Audit, Guest Planning, RSVP, Invitation Wording and Design, System and AI Thank You Templates API.";
                 document.Components ??= new OpenApiComponents();
                 document.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
                 document.Components.SecuritySchemes["Bearer"] = new OpenApiSecurityScheme

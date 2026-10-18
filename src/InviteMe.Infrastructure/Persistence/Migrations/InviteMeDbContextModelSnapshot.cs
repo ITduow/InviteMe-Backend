@@ -2637,6 +2637,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnName("id")
                         .HasDefaultValueSql("gen_random_uuid()");
 
+                    b.Property<string>("CoverImageUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("cover_image_url");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
@@ -2692,6 +2697,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("OwnerUserId")
                         .HasDatabaseName("ix_weddings_owner_user_id");
+
+                    b.HasIndex("Slug")
+                        .IsUnique()
+                        .HasDatabaseName("uq_weddings_slug_lower")
+                        .HasAnnotation("Npgsql:IndexExpression", "lower(slug)");
 
                     b.ToTable("weddings", "inviteme", t =>
                         {

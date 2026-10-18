@@ -20,11 +20,13 @@ public sealed class HttpFoundationTests(ApiFactory factory) : IClassFixture<ApiF
         Assert.Contains(paths, path => path.Name == "/api/auth/login");
         Assert.Contains(paths, path => path.Name.EndsWith("/co-hosts", StringComparison.Ordinal));
         Assert.Contains(paths, path => path.Name.EndsWith("/audit-logs", StringComparison.Ordinal));
+        Assert.Contains(paths, path => path.Name == "/api/weddings");
+        Assert.Contains(paths, path => path.Name == "/api/weddings/{weddingId}");
+        Assert.Contains(paths, path => path.Name == "/api/weddings/check-slug");
         string[] removedTags = ["Invitations", "Wedding Workflow", "Wedding Guests", "Public Invitations", "Wedding Workspace"];
         foreach (var path in paths)
         {
             Assert.False(path.Name.StartsWith("/api/public/", StringComparison.Ordinal));
-            Assert.NotEqual("/api/weddings", path.Name);
             foreach (var operation in path.Value.EnumerateObject())
             {
                 if (!operation.Value.TryGetProperty("tags", out var tags)) continue;

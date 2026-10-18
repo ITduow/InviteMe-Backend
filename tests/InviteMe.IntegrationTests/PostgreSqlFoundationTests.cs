@@ -3,8 +3,6 @@ using InviteMe.Infrastructure.Persistence.Adapters;
 using InviteMe.Infrastructure.Identity;
 using InviteMe.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
-using Testcontainers.PostgreSql;
 
 namespace InviteMe.IntegrationTests;
 
@@ -22,25 +20,8 @@ public sealed class PostgreSqlFoundationTests
 {
     [PostgreSqlFact]
     [Trait("Category", "PostgreSQL")]
-    public async Task MigrationsMatchBaselineAndWeddingAuthorizationRules()
-    {
-        PostgreSqlContainer? postgres = null;
-        var connectionString = Environment.GetEnvironmentVariable("INVITEME_TEST_CONNECTION_STRING");
-        if (string.IsNullOrWhiteSpace(connectionString))
+    public Task MigrationsMatchBaselineAndWeddingAuthorizationRules() => SchemaV2MigrationTests.InDatabase(async db =>
         {
-            postgres = new PostgreSqlBuilder("postgres:17").Build();
-            await postgres.StartAsync();
-            connectionString = postgres.GetConnectionString();
-        }
-
-        try
-        {
-            var services = new ServiceCollection()
-                .AddDbContext<InviteMeDbContext>(options => options.UseNpgsql(connectionString,
-                    o => o.MigrationsHistoryTable("__EFMigrationsHistory", "inviteme")))
-                .BuildServiceProvider();
-            await using var scope = services.CreateAsyncScope();
-            var db = scope.ServiceProvider.GetRequiredService<InviteMeDbContext>();
             await db.Database.MigrateAsync();
 
             var ownerId = Guid.NewGuid();
@@ -88,11 +69,5 @@ public sealed class PostgreSqlFoundationTests
 
             Assert.Empty(await db.Database.GetPendingMigrationsAsync());
             Assert.Equal("inviteme", db.Model.FindEntityType(typeof(ApplicationUser))!.GetSchema());
-        }
-        finally
-        {
-            if (postgres is not null)
-                await postgres.DisposeAsync();
-        }
-    }
+        });
 }

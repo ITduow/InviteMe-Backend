@@ -4,11 +4,11 @@ AI Thank You Templates (Couple09) adds seven independent owner-only operations f
 
 InviteMe is a .NET 10 modular monolith with vertical slices, PostgreSQL/EF Core, ASP.NET Core Identity, JWT and SignalR.
 
-**Current API scope (2026-10-16):** Accounts, Co-Hosts, Audit and System. The `Invitations`, `Wedding Workflow`, `Wedding Guests`, `Public Invitations` and `Wedding Workspace` API groups have been removed, together with their application handlers/DTOs/ports, persistence adapters, invitation delivery worker, QR renderer and workflow realtime publisher. There are no HTTP APIs for creating weddings, importing guests, invitations/QR/RSVP/waitlist, seating/check-in, gifts, dashboard/export or summary reports.
+**Current API scope (2026-10-18):** Accounts, Wedding Setup/Access, Co-Hosts, Audit, Guest Planning v2, RSVP, Invitation Wording/Design, AI Thank You Templates and System. The former full `Wedding Workflow`, legacy `Wedding Guests`, old `Public Invitations` and old `Wedding Workspace` API groups remain removed. Independent Wedding Setup now creates/reads/updates the wedding record; separate Planning v2, RSVP, wording and design slices remain registered. The public design read route is `/api/guest-invitations/{token}`; it does not restore the removed publish/send lifecycle. Check-in, gifts, dashboards, exports and summary reports have no HTTP API in the current scope.
 
-Authentication (including Google, email confirmation, password reset/change, refresh/logout and account deactivation), wedding-scoped co-host administration, owner-only audit reads and the authorized wedding SignalR hub remain. Co-Hosts/Audit operate on existing wedding records; a new wedding cannot be created through this API. The hub supports joining/leaving groups but has no workflow event producer.
+Authentication (including Google, email confirmation, password reset/change, refresh/logout and account deactivation), owner-only wedding setup, permission-checked wedding reads, wedding-scoped co-host administration, owner-only audit reads and the authorized wedding SignalR hub remain. Guest Planning changes publish scoped invalidation events through the hub.
 
-Database migrations, historical SQL resources, EF mappings and domain persistence entities are retained. Removing a workflow does not drop its tables or delete data. The shared random-token/hash helper remains because authentication refresh tokens use it. Data Protection remains for Identity token providers. Historical documentation below describes earlier foundations/target rules; use this scope and [verification](docs/verification.md) for the current removal status.
+Database migrations, historical SQL resources, EF mappings and domain persistence entities are retained. Removing a workflow does not drop its tables or delete data. See [Wedding Setup](docs/wedding-setup.md) for the current setup API, slug rules and additive migrations. The shared random-token/hash helper remains because authentication refresh tokens use it. Data Protection remains for Identity token providers. Historical documentation below describes earlier foundations/target rules; use this scope and [verification](docs/verification.md) for current implementation evidence.
 
 Development startup applies migrations by default. HTTP-only test hosts set `Database:ApplyMigrationsOnStartup=false`; production migrations remain a separate deployment step. Dedicated workflow tests were removed, while authentication, co-host, audit, authorization and schema/mapping tests remain. Co-host/audit test fixtures now seed weddings directly rather than calling a removed workspace API.
 
@@ -115,11 +115,11 @@ Optional local containers: `docker compose --profile app up --build -d` serves H
 
 ## Authentication and authorization
 
-Identity registers UUID users and roles with its password hasher, a 12-character minimum, and a five-attempt lockout policy. Future login must use Identity's lockout-aware flow; registering these options alone does not implement login.
+Accounts use ASP.NET Core Identity with UUID users/roles, Identity password hashing, a 12-character minimum password and a five-attempt lockout policy. Registration and login are implemented in the Accounts API.
 
 JWT validation requires HS256, a valid signature, issuer, audience, expiry, and a non-empty UUID `sub`. Role claims use `role`; platform roles are only `ADMIN` and `USER`. The `PlatformAdmin` policy is registered. All endpoints require authentication by default unless explicitly anonymous.
 
-Milestone 2 will implement register/login/current-user using Identity, rate limiting, and JWT issuance. `ExpirationMinutes` is reserved for issuance; it does not shorten externally issued tokens. Proposed logout: discard short-lived access tokens locally. Access tokens remain valid until expiry; Identity security-stamp changes do not automatically revoke bearer JWTs. Decide whether persistent rotating, hashed refresh tokens and immediate revocation are needed before adding their schema.
+Access tokens use the configured `ExpirationMinutes`; refresh tokens are rotated, stored as SHA-256 hashes and revoked on logout or reuse. Auth endpoints use rate limits, origin checks where cookies are involved, and `Cache-Control: no-store` for sensitive responses.
 
 Wedding authorization uses `IWeddingPermissionService.RequireAsync(weddingId, permission, cancellationToken)`. It obtains the actor from the authenticated context and `WeddingAccessReader` performs a read-only query scoped by wedding and user. An `ACTIVE` user is allowed as owner or as an `ACTIVE` co-host with an explicit wedding-scoped permission. ADMIN is not an implicit wedding-data bypass. Missing weddings and denied access both produce 403 to avoid revealing existence.
 
@@ -139,8 +139,8 @@ JSON console logs include a server-generated correlation scope and response head
 
 ## Database migrations
 
-See [database.md](docs/database.md) before running these commands. Four migrations are checked in: the frozen v1 `ExistingSchemaBaseline`, additive `AddIdentitySupport`, `AlignBusinessSchemaV2`, and the metadata-only `AdoptV2EntityMappings`. The last migration records existing tables/views in the EF snapshot without creating them again. A fresh database finishes on schema v2 plus Identity and legacy gift provenance. The authoritative v2 source is `Persistence/Schema/BaselineV2.sql`; historical migrations remain unchanged.
-See [database.md](docs/database.md) before running these commands. Four migrations are checked in: the frozen v1 `ExistingSchemaBaseline`, additive `AddIdentitySupport`, `AlignBusinessSchemaV2`, and the metadata-only `AdoptV2EntityMappings`. The last migration records existing tables/views in the EF snapshot without creating them again. A fresh database finishes on schema v2 plus Identity and legacy gift provenance. The authoritative v2 source is `Persistence/Schema/BaselineV2.sql`; historical migrations remain unchanged.
+See [database.md](docs/database.md) before running these commands. The checked-in EF migration chain starts from the frozen v1/v2 baselines and applies additive Identity, planning, RSVP, invitation configuration, AI template and Wedding Setup changes. The current idempotent chain is generated in `artifacts/migrations.sql`; never edit an already-applied historical migration. Review [database.md](docs/database.md) for baseline adoption and deployment procedure.
+See [database.md](docs/database.md) before running these commands. The checked-in EF migration chain starts from the frozen v1/v2 baselines and applies additive Identity, planning, RSVP, invitation configuration, AI template and Wedding Setup changes. The current idempotent chain is generated in `artifacts/migrations.sql`; never edit an already-applied historical migration. Review [database.md](docs/database.md) for baseline adoption and deployment procedure.
 
 After reconciliation and review:
 
@@ -192,6 +192,6 @@ Identity/EF dependencies bring EF Core transitively. SignalR, health checks and 
 
 Use feature folders, PascalCase types/methods/properties, camelCase locals, nullable reference types, Async suffixes, and propagated cancellation tokens. Use UTC and TIMESTAMPTZ; store wedding timezone separately. Prefer TimeProvider for time-sensitive tests. Reads use AsNoTracking and DTO projections. Preserve history/audits; archive entities where business rules require it. Make schema enums/column names explicit rather than relying on CLR names.
 
-**Next: Milestone 2 — Identity + Wedding.** Review and apply the additive Identity migration in an isolated database, then implement registration/login/current-user and minimal wedding ownership/membership endpoints.
+**Current backend:** Identity, Wedding Setup, Wedding Access, co-host permissions, audit, Guest Planning, RSVP, invitation wording/design and AI thank-you drafts are implemented. See [verification evidence](docs/verification.md) and the feature documentation for current scope. Remaining product slices include check-in, gifts, reporting, and invitation delivery/lifecycle.
 
 Open decisions: whether legacy `password_hash` values were produced by ASP.NET Core Identity, registration/email-verification policy, refresh/revocation requirements, admin wedding-data access policy, deployment origin/proxy configuration, and reliable delivery requirements. Roles and wedding permissions are seeded by the supplied baseline.

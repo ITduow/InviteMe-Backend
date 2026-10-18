@@ -16,8 +16,8 @@ public sealed class WeddingEvent
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
 
-    public static WeddingEvent CreateMain(Guid weddingId, DateTimeOffset start) => new()
-    { Id = Guid.NewGuid(), WeddingId = weddingId, Name = "Main wedding reception", StartAt = start.ToUniversalTime(), IsMain = true };
+    public static WeddingEvent CreateMain(Guid weddingId, DateTimeOffset start, Guid? venueId = null) => new()
+    { Id = Guid.NewGuid(), WeddingId = weddingId, Name = "Main wedding reception", StartAt = start.ToUniversalTime(), VenueId = venueId, IsMain = true };
     public void Configure(DateTimeOffset start, DateTimeOffset? end, Guid? venueId)
     { StartAt = start.ToUniversalTime(); EndAt = end?.ToUniversalTime(); VenueId = venueId; }
 }
