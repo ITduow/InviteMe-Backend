@@ -4,6 +4,9 @@ public sealed class PlanningSeatingPlan
 {
     public Guid WeddingId { get; set; }
     public int Version { get; set; }
+    // Guest07: when set, guests can see their table on the invitation page. Publishing never freezes the plan.
+    public DateTimeOffset? PublishedAt { get; set; }
+    public Guid? PublishedBy { get; set; }
 }
 public sealed class PlanningTable
 {

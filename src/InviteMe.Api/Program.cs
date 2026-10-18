@@ -19,7 +19,7 @@ DotNetEnv.Env.NoClobber().TraversePath().Load();
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
-builder.Services.AddApplication().AddInfrastructure(builder.Configuration).AddApi(builder.Configuration).AddRsvpApi();
+builder.Services.AddApplication().AddInfrastructure(builder.Configuration).AddApi(builder.Configuration).AddRsvpApi().AddGuestAccessApi(builder.Configuration);
 
 var app = builder.Build();
 
@@ -75,6 +75,7 @@ app.MapRsvp();
 app.MapGuestPlanning();
 app.MapInvitationWording();
 app.MapInvitationDesign();
+app.MapGuestAccess();
 app.MapThankYouTemplates();
 app.MapHub<WeddingHub>("/hubs/weddings", options => options.CloseOnAuthenticationExpiration = true)
     .RequireAuthorization();

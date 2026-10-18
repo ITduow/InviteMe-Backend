@@ -2139,6 +2139,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("WeddingId")
                         .HasColumnType("uuid");
 
+                    b.Property<DateTimeOffset?>("PublishedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("PublishedBy")
+                        .HasColumnType("uuid");
+
                     b.Property<int>("Version")
                         .IsConcurrencyToken()
                         .HasColumnType("integer");
