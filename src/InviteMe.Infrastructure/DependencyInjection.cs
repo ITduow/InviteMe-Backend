@@ -48,6 +48,7 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Ports.Authentication.IRefreshTokenStore, InviteMe.Infrastructure.Authentication.RefreshTokenStore>();
         services.AddScoped<InviteMe.Application.Ports.Weddings.ICoHostStore, CoHostStore>();
         services.AddScoped<InviteMe.Application.Features.Weddings.Setup.IWeddingSetupStore, WeddingSetupStore>();
+        services.AddScoped<InviteMe.Application.Features.Weddings.Setup.IWeddingListReader, WeddingListReader>();
         services.AddOptions<WeddingMediaOptions>().BindConfiguration(WeddingMediaOptions.SectionName)
             .Validate(x => x.MaximumFileSizeBytes is > 0 and <= 5 * 1024 * 1024, "WeddingMedia:MaximumFileSizeBytes must be between 1 byte and 5 MB.")
             .Validate(x => x.AllowedFormats.All(f => new[] { "jpeg", "jpg", "png", "webp" }.Contains(f, StringComparer.OrdinalIgnoreCase)), "WeddingMedia:AllowedFormats may include only JPEG, PNG and WebP.")

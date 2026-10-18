@@ -1,5 +1,6 @@
 using InviteMe.Application.Features.Weddings.Setup;
 using InviteMe.Application.Common.Errors;
+using InviteMe.Application.Common.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Options;
@@ -23,6 +24,10 @@ internal static class WeddingSetupEndpoints
             return Results.Created($"/api/weddings/{wedding.Id}", wedding);
         }).WithName("CreateWedding").Produces<WeddingSetupDto>(201).ProducesValidationProblem()
             .ProducesProblem(401).ProducesProblem(409);
+        group.MapGet("", async (WeddingListHandler handler, CancellationToken ct, int page = 1, int pageSize = 20,
+            string? search = null, string sort = "weddingDate") =>
+                Results.Ok(await handler.ListAsync(new WeddingListQuery(page, pageSize, search, sort), ct)))
+            .WithName("GetWeddings").Produces<PagedResult<WeddingSummaryDto>>().ProducesValidationProblem().ProducesProblem(401);
         group.MapGet("/{weddingId:guid}", async (Guid weddingId, WeddingSetupHandler handler, CancellationToken ct) =>
             Results.Ok(await handler.GetAsync(weddingId, ct)))
             .WithName("GetWeddingById").Produces<WeddingSetupDto>().ProducesProblem(401).ProducesProblem(403).ProducesProblem(404);
