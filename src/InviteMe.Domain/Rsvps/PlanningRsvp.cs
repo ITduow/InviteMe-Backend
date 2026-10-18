@@ -85,3 +85,64 @@ public sealed class PlanningDietaryNote
     public static PlanningDietaryNote Create(Guid participantId, string note) => new() { ParticipantId = participantId, Note = note };
     public void Rewrite(string note) => Note = note;
 }
+
+/// <summary>
+/// A guest's RSVP change received while the RSVP is locked (deadline passed or the hosts locked the guest/group).
+/// It does not change any number until a host approves it (committee Q4, Couple06 lock rule).
+/// </summary>
+public sealed class PlanningRsvpRequest
+{
+    public const string Pending = "PENDING", Approved = "APPROVED", Rejected = "REJECTED", Superseded = "SUPERSEDED";
+    public const string LateReason = "DEADLINE_PASSED", LockedReason = "LOCKED";
+
+    public Guid Id { get; private set; }
+    public Guid WeddingId { get; private set; }
+    public Guid GuestId { get; private set; }
+    public string Payload { get; private set; } = "";
+    public string Reason { get; private set; } = "";
+    public string Status { get; private set; } = Pending;
+    public DateTimeOffset RequestedAt { get; private set; }
+    public DateTimeOffset? ResolvedAt { get; private set; }
+    public Guid? ResolvedBy { get; private set; }
+
+    public static PlanningRsvpRequest Create(Guid weddingId, Guid guestId, string payload, string reason, DateTimeOffset now) => new()
+    { Id = Guid.NewGuid(), WeddingId = weddingId, GuestId = guestId, Payload = payload, Reason = reason, RequestedAt = now };
+
+    public void Resolve(string status, Guid? actor, DateTimeOffset now)
+    {
+        if (Status != Pending) throw new InvalidOperationException("Request already resolved.");
+        Status = status is Approved or Rejected or Superseded ? status : throw new ArgumentOutOfRangeException(nameof(status));
+        ResolvedAt = now; ResolvedBy = actor;
+    }
+}
+
+/// <summary>Hosts lock one guest (or every guest of a group): afterwards the guest can only send a change request.</summary>
+public sealed class PlanningRsvpLock
+{
+    public Guid GuestId { get; private set; }
+    public Guid WeddingId { get; private set; }
+    public Guid LockedBy { get; private set; }
+    public DateTimeOffset LockedAt { get; private set; }
+    public static PlanningRsvpLock Create(Guid weddingId, Guid guestId, Guid actor, DateTimeOffset now) => new()
+    { WeddingId = weddingId, GuestId = guestId, LockedBy = actor, LockedAt = now };
+}
+
+/// <summary>
+/// Wedding-wide RSVP rule set at wedding setup. PlusOneLimit = companions every invitation may bring
+/// (1 = two people in total including the recipient). An invitation imported with more people (e.g. a family of 4) overrides it.
+/// </summary>
+public sealed class PlanningRsvpSettings
+{
+    public const int MaxPlusOneLimit = 20;
+    public Guid WeddingId { get; private set; }
+    public int PlusOneLimit { get; private set; }
+    public int Version { get; private set; }
+    public static PlanningRsvpSettings Create(Guid weddingId) => new() { WeddingId = weddingId };
+    public void Update(int plusOneLimit)
+    {
+        if (plusOneLimit is < 0 or > MaxPlusOneLimit) throw new ArgumentOutOfRangeException(nameof(plusOneLimit));
+        PlusOneLimit = plusOneLimit; Version++;
+    }
+    /// <summary>People one invitation may confirm directly: its reserved places, or 1 + the wedding plus-one limit if larger.</summary>
+    public static int AllowedPeople(int reservedPlaces, int plusOneLimit) => Math.Max(reservedPlaces, 1 + plusOneLimit);
+}

@@ -2031,6 +2031,117 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningRsvpLock", b =>
+                {
+                    b.Property<Guid>("GuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("guest_id");
+
+                    b.Property<DateTimeOffset>("LockedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("locked_at");
+
+                    b.Property<Guid>("LockedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("locked_by");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("GuestId");
+
+                    b.HasIndex("WeddingId")
+                        .HasDatabaseName("ix_planning_rsvp_locks_wedding");
+
+                    b.ToTable("planning_rsvp_locks", "inviteme");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningRsvpRequest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("GuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("guest_id");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("payload");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("reason");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("requested_at");
+
+                    b.Property<DateTimeOffset?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("resolved_at");
+
+                    b.Property<Guid?>("ResolvedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resolved_by");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GuestId")
+                        .IsUnique()
+                        .HasDatabaseName("uq_planning_rsvp_requests_pending_guest")
+                        .HasFilter("status = 'PENDING'");
+
+                    b.HasIndex("WeddingId", "Status", "RequestedAt")
+                        .HasDatabaseName("ix_planning_rsvp_requests_queue");
+
+                    b.ToTable("planning_rsvp_requests", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_planning_rsvp_requests_reason", "reason IN ('DEADLINE_PASSED','LOCKED')");
+
+                            t.HasCheckConstraint("ck_planning_rsvp_requests_status", "status IN ('PENDING','APPROVED','REJECTED','SUPERSEDED')");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningRsvpSettings", b =>
+                {
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.Property<int>("PlusOneLimit")
+                        .HasColumnType("integer")
+                        .HasColumnName("plus_one_limit");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.HasKey("WeddingId");
+
+                    b.ToTable("planning_rsvp_settings", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_planning_rsvp_settings_plus_one", "plus_one_limit BETWEEN 0 AND 20");
+                        });
+                });
+
             modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningWaitlistEntry", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4151,6 +4262,63 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_planning_rsvp_history_rsvp");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningRsvpLock", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Guests.PlanningGuest", null)
+                        .WithMany()
+                        .HasForeignKey("GuestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_rsvp_locks_guest");
+
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("LockedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_rsvp_locks_user");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_rsvp_locks_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningRsvpRequest", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Guests.PlanningGuest", null)
+                        .WithMany()
+                        .HasForeignKey("GuestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_rsvp_requests_guest");
+
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ResolvedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_planning_rsvp_requests_user");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_rsvp_requests_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningRsvpSettings", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_rsvp_settings_wedding");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningWaitlistEntry", b =>

@@ -5,8 +5,9 @@ namespace InviteMe.Application.Features.Rsvps;
 
 /// <summary>
 /// RSVP form body. <c>expectedVersion</c> is the RSVP version last read by the client (0 before the first answer).
-/// <c>participantIds</c> are people of the party who attend; <c>plusOnes</c> name extra companions that fill the party's
-/// still-unnamed reserved places (planning_places), never more than the places the hosts reserved.
+/// <c>participantIds</c> are people of the party who attend; <c>plusOnes</c> name new companions. New companions first fill
+/// the invitation's empty reserved places, then new places up to <c>allowedPeople</c>; anyone beyond that waits for the
+/// hosts (waitlist) even if the wedding still has room (Couple06).
 /// <c>note</c> and <c>dietaryNotes</c> are optional: omitted = unchanged, empty string / null note = cleared.
 /// </summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -29,35 +30,59 @@ public sealed record DietaryNoteInput(Guid ParticipantId, string? Note);
 
 public sealed record RsvpParticipantDto(Guid Id, string FullName, string Role, string AttendanceStatus, string? DietaryNote);
 
+/// <summary>One reserved place of the invitation. Status: PENDING (no answer), USED, UNUSED (answered, left empty or declined).</summary>
+public sealed record RsvpPlaceDto(Guid Id, int Position, string Status, Guid? ParticipantId);
+
+/// <summary>
+/// Usage of a reserved place, derived from RSVP data only (nothing is stored on planning_places):
+/// no answer yet → PENDING; someone attends on it → USED; answered and left empty or its person does not attend → UNUSED.
+/// </summary>
+public static class RsvpPlaceStatus
+{
+    public const string Pending = "PENDING", Used = "USED", Unused = "UNUSED";
+    public static string Of(bool answered, bool personAttends) => !answered ? Pending : personAttends ? Used : Unused;
+}
+
+/// <summary>A change the guest sent while the RSVP was locked; it waits for the hosts.</summary>
+public sealed record RsvpRequestDto(Guid Id, Guid GuestId, string RecipientName, string Reason, string Status, SubmitRsvp Change,
+    DateTimeOffset RequestedAt, DateTimeOffset? ResolvedAt);
+
 /// <summary>
 /// Current RSVP of one Guest Planning v2 party (planning guest). Status is PENDING with RsvpId null and Version 0 until the
-/// first answer. InvitedPlaces = places the hosts reserved; OpenPlaces = reserved places nobody is named for yet.
+/// first answer. Places = reserved places with their usage; AllowedPeople = people the invitation may confirm directly
+/// (reserved places or 1 + wedding plus-one limit). Locked = changes now go to the hosts as a request (PendingRequest).
 /// </summary>
 public sealed record RsvpDto(Guid GuestId, string RecipientName, int Version, Guid? RsvpId, string Status,
     int ConfirmedPartySize, int WaitlistedPartySize, string CapacityOutcome, string? Message, string? Note,
-    int InvitedPlaces, int OpenPlaces, IReadOnlyList<RsvpParticipantDto> Participants, DateTimeOffset? SubmittedAt, DateTimeOffset? UpdatedAt);
+    int AllowedPeople, IReadOnlyList<RsvpPlaceDto> Places, IReadOnlyList<RsvpParticipantDto> Participants,
+    bool Locked, DateTimeOffset? RsvpDeadline, RsvpRequestDto? PendingRequest, DateTimeOffset? SubmittedAt, DateTimeOffset? UpdatedAt);
 
-/// <summary>Store result: the wedding is needed for the realtime notification but never shown to the guest.</summary>
-public sealed record RsvpWriteResult(Guid WeddingId, RsvpDto Rsvp, bool SeatsNeedAttention = false);
+/// <summary>
+/// Store result: the wedding is needed for the realtime notification but never shown to the guest.
+/// Queued = the change was stored as a request for the hosts (HTTP 202), not applied.
+/// </summary>
+public sealed record RsvpWriteResult(Guid WeddingId, RsvpDto Rsvp, bool SeatsNeedAttention = false, bool Queued = false);
 
 /// <summary>
 /// CONFIRMED: everyone attending holds a place. PARTIALLY_WAITLISTED: the confirmed party keeps its places and only the
-/// extra people wait. WAITLISTED: nobody is confirmed yet and the whole party waits. NONE: not attending / not answered.
+/// extra people beyond the invitation wait for the hosts. WAITLISTED: nobody is confirmed and everyone waits. NONE: not attending / not answered.
 /// </summary>
 public static class RsvpCapacityOutcome
 {
     public const string None = "NONE", Confirmed = "CONFIRMED", PartiallyWaitlisted = "PARTIALLY_WAITLISTED", Waitlisted = "WAITLISTED";
 
-    /// <summary>User-facing text shown by the RSVP form (Guest04: "Hết chỗ").</summary>
+    /// <summary>User-facing text shown by the RSVP form.</summary>
     public static string? Message(string outcome) => outcome switch
     {
-        Waitlisted => "Hết chỗ. Bạn đã được đưa vào danh sách chờ.",
-        PartiallyWaitlisted => "Hết chỗ cho người đi thêm. Những người đã xác nhận vẫn giữ chỗ.",
+        Waitlisted => "Số người vượt quá lời mời đang chờ cô dâu chú rể sắp xếp chỗ.",
+        PartiallyWaitlisted => "Người đi thêm ngoài số chỗ được mời đang chờ cô dâu chú rể sắp xếp. Những người đã xác nhận vẫn giữ chỗ.",
         _ => null
     };
+
+    public const string LockedMessage = "RSVP đã khóa. Yêu cầu thay đổi của bạn đã được gửi tới cô dâu chú rể.";
 }
 
-/// <summary>FULL_PARTY: no member is confirmed yet. ADDITIONAL_MEMBER: extra places for an already confirmed party.</summary>
+/// <summary>FULL_PARTY: no member is confirmed yet. ADDITIONAL_MEMBER: extra people for an already confirmed party.</summary>
 public static class WaitlistKind
 {
     public const string FullParty = "FULL_PARTY", AdditionalMember = "ADDITIONAL_MEMBER";
@@ -67,6 +92,18 @@ public sealed record WaitlistDto(Guid Id, Guid GuestId, int RequestedSlots, stri
 
 /// <summary>Create = first answer only; Replace = change an existing answer; Upsert = Host/Co-host route.</summary>
 public enum RsvpWriteMode { Create, Replace, Upsert }
+
+/// <summary>Wedding RSVP rules. RsvpDeadline is set by wedding setup and shown read-only here.</summary>
+public sealed record RsvpSettingsDto(Guid WeddingId, int PlusOneLimit, int Version, DateTimeOffset? RsvpDeadline);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record SaveRsvpSettings(int ExpectedVersion, int PlusOneLimit);
+
+/// <summary>Lock or unlock RSVP changes for some guests and/or every guest of a planning group.</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record LockRsvps(bool Locked, IReadOnlyList<Guid>? GuestIds = null, Guid? GroupId = null);
+
+public sealed record LockRsvpsResult(int Affected, bool Locked);
 
 public sealed class SubmitRsvpValidator : AbstractValidator<SubmitRsvp>
 {
@@ -89,5 +126,24 @@ public sealed class SubmitRsvpValidator : AbstractValidator<SubmitRsvp>
         RuleFor(x => x.DietaryNotes).Must(x => x is null || (x.Count <= 41 && x.All(n => n is not null && n.ParticipantId != Guid.Empty)
             && x.Select(n => n.ParticipantId).Distinct().Count() == x.Count)).WithMessage("Dietary notes need distinct participant ids.");
         RuleForEach(x => x.DietaryNotes).ChildRules(n => n.RuleFor(x => x.Note).MaximumLength(DietaryNoteMaxLength)).When(x => x.DietaryNotes is not null);
+    }
+}
+
+public sealed class SaveRsvpSettingsValidator : AbstractValidator<SaveRsvpSettings>
+{
+    public SaveRsvpSettingsValidator()
+    {
+        RuleFor(x => x.ExpectedVersion).GreaterThanOrEqualTo(0);
+        RuleFor(x => x.PlusOneLimit).InclusiveBetween(0, 20);
+    }
+}
+
+public sealed class LockRsvpsValidator : AbstractValidator<LockRsvps>
+{
+    public LockRsvpsValidator()
+    {
+        RuleFor(x => x).Must(x => (x.GuestIds?.Count ?? 0) > 0 || x.GroupId is not null).WithMessage("Choose guests or a group.");
+        RuleFor(x => x.GuestIds).Must(x => x is null || (x.Count <= 500 && x.All(id => id != Guid.Empty) && x.Distinct().Count() == x.Count));
+        RuleFor(x => x.GroupId).Must(x => x is null || x != Guid.Empty);
     }
 }

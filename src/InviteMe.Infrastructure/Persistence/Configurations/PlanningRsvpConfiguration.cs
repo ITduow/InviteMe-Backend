@@ -95,3 +95,55 @@ public sealed class PlanningRsvpConfiguration : IEntityTypeConfiguration<Plannin
         b.HasOne<PlanningParticipant>().WithMany().HasForeignKey(x => x.ParticipantId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_planning_dietary_notes_participant");
     }
 }
+
+public sealed class PlanningRsvpRuleConfiguration : IEntityTypeConfiguration<PlanningRsvpRequest>, IEntityTypeConfiguration<PlanningRsvpLock>,
+    IEntityTypeConfiguration<PlanningRsvpSettings>
+{
+    public void Configure(EntityTypeBuilder<PlanningRsvpRequest> b)
+    {
+        b.ToTable("planning_rsvp_requests", t =>
+        {
+            t.HasCheckConstraint("ck_planning_rsvp_requests_status", "status IN ('PENDING','APPROVED','REJECTED','SUPERSEDED')");
+            t.HasCheckConstraint("ck_planning_rsvp_requests_reason", "reason IN ('DEADLINE_PASSED','LOCKED')");
+        });
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Id).HasColumnName("id");
+        b.Property(x => x.WeddingId).HasColumnName("wedding_id");
+        b.Property(x => x.GuestId).HasColumnName("guest_id");
+        b.Property(x => x.Payload).HasColumnName("payload").HasColumnType("jsonb");
+        b.Property(x => x.Reason).HasColumnName("reason").HasMaxLength(20);
+        b.Property(x => x.Status).HasColumnName("status").HasMaxLength(20);
+        b.Property(x => x.RequestedAt).HasColumnName("requested_at");
+        b.Property(x => x.ResolvedAt).HasColumnName("resolved_at");
+        b.Property(x => x.ResolvedBy).HasColumnName("resolved_by");
+        b.HasIndex(x => x.GuestId).IsUnique().HasFilter("status = 'PENDING'").HasDatabaseName("uq_planning_rsvp_requests_pending_guest");
+        b.HasIndex(x => new { x.WeddingId, x.Status, x.RequestedAt }).HasDatabaseName("ix_planning_rsvp_requests_queue");
+        b.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_planning_rsvp_requests_wedding");
+        b.HasOne<PlanningGuest>().WithMany().HasForeignKey(x => x.GuestId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_planning_rsvp_requests_guest");
+        b.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ResolvedBy).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_planning_rsvp_requests_user");
+    }
+
+    public void Configure(EntityTypeBuilder<PlanningRsvpLock> b)
+    {
+        b.ToTable("planning_rsvp_locks");
+        b.HasKey(x => x.GuestId);
+        b.Property(x => x.GuestId).HasColumnName("guest_id");
+        b.Property(x => x.WeddingId).HasColumnName("wedding_id");
+        b.Property(x => x.LockedBy).HasColumnName("locked_by");
+        b.Property(x => x.LockedAt).HasColumnName("locked_at");
+        b.HasIndex(x => x.WeddingId).HasDatabaseName("ix_planning_rsvp_locks_wedding");
+        b.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_planning_rsvp_locks_wedding");
+        b.HasOne<PlanningGuest>().WithMany().HasForeignKey(x => x.GuestId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_planning_rsvp_locks_guest");
+        b.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.LockedBy).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_planning_rsvp_locks_user");
+    }
+
+    public void Configure(EntityTypeBuilder<PlanningRsvpSettings> b)
+    {
+        b.ToTable("planning_rsvp_settings", t => t.HasCheckConstraint("ck_planning_rsvp_settings_plus_one", "plus_one_limit BETWEEN 0 AND 20"));
+        b.HasKey(x => x.WeddingId);
+        b.Property(x => x.WeddingId).HasColumnName("wedding_id");
+        b.Property(x => x.PlusOneLimit).HasColumnName("plus_one_limit");
+        b.Property(x => x.Version).HasColumnName("version").IsConcurrencyToken();
+        b.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_planning_rsvp_settings_wedding");
+    }
+}
