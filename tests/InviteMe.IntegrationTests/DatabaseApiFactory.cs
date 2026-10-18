@@ -8,7 +8,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace InviteMe.IntegrationTests;
 
-internal sealed class DatabaseApiFactory(string connection) : WebApplicationFactory<Program>
+internal sealed class DatabaseApiFactory(string connection, string? mediaDirectory = null) : WebApplicationFactory<Program>
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -16,7 +16,8 @@ internal sealed class DatabaseApiFactory(string connection) : WebApplicationFact
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ConnectionStrings:PostgreSQL"] = connection, ["Jwt:Issuer"] = "InviteMe.Tests", ["Jwt:Audience"] = "InviteMe.Tests.Web",
-            ["Jwt:SigningKey"] = Convert.ToBase64String(ApiFactory.SigningKey), ["Frontend:Url"] = "http://localhost:3000"
+            ["Jwt:SigningKey"] = Convert.ToBase64String(ApiFactory.SigningKey), ["Frontend:Url"] = "http://localhost:3000",
+            ["WeddingMedia:LocalDirectory"] = mediaDirectory ?? Path.Combine(Path.GetTempPath(), "InviteMe-Test-Media", Guid.NewGuid().ToString("N"))
         }));
         builder.ConfigureServices(services =>
         {

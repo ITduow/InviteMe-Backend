@@ -52,6 +52,8 @@ internal sealed class ApiExceptionHandler(IProblemDetailsService problems, ILogg
 
     private static int StatusFor(ProblemKind kind) => kind switch
     {
+        ProblemKind.BadRequest => 400,
+        ProblemKind.PayloadTooLarge => 413,
         ProblemKind.Unauthenticated => 401,
         ProblemKind.Forbidden => 403,
         ProblemKind.NotFound => 404,

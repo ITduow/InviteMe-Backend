@@ -1,5 +1,7 @@
 # Database baseline and migration strategy
 
+The v1/v2 SQL resources below are historical foundation schemas, not the complete current application schema. Later migrations extend them; the latest EF snapshot and `artifacts/migrations.sql` represent the current model. Wedding Setup adds `cover_image_url` and a case-insensitive unique slug index. That index migration refuses legacy case-fold collisions instead of rewriting slugs.
+
 ## Inspection result
 
 The authoritative PostgreSQL 15+ business DDL is schema v2, checked in byte-for-byte as `Persistence/Schema/BaselineV2.sql` (SHA-256 `B974815FF2C3DDB5B25997E9FF8CF56516602A500B7A7D80D5324B53AA4FCBD4`). It defines 37 business tables plus views, constraints, triggers and role/permission seed data in schema `inviteme`.
@@ -51,13 +53,13 @@ $env:INVITEME_TEST_CONNECTION_STRING = 'Host=localhost;Database=postgres;Usernam
 dotnet test tests/InviteMe.IntegrationTests --filter FullyQualifiedName~SchemaV2MigrationTests
 ```
 
-Use a disposable PostgreSQL instance for all PostgreSQL tests: the older foundation test inserts fixtures into the configured database. Alternatively set `INVITEME_TEST_POSTGRES=1` with Docker running. The SQL artifact `artifacts/migrations.sql` is regenerated for all four migrations; applying it twice must keep the same schema/history.
+PostgreSQL integration fixtures create and drop uniquely named disposable databases using the configured connection's CREATE/DROP DATABASE rights. They do not use the application database name in that connection string. Alternatively set `INVITEME_TEST_POSTGRES=1` with Docker running. The idempotent `artifacts/migrations.sql` contains the current full migration chain; applying it twice must preserve the same schema and migration history.
 
 ### EF business mapping
 
-All 37 business tables and four Identity support tables are mapped. `WeddingGuest` maps to `guests`; participant records remain separate. Three keyless read models map the headcount, table occupancy and guest RSVP summary views. JSONB is mapped as nullable JSON strings, monetary values as decimal, counts as integer/long and TIMESTAMPTZ as DateTimeOffset. Database triggers supply updated timestamps and first table activation; EF reads generated values rather than overwriting them.
+The current EF model maps 53 tables and three keyless read models. `WeddingGuest` maps to `guests`; planning-v2 guests and participant records remain separate models. JSONB is mapped as nullable JSON strings, monetary values as decimal, counts as integer/long and TIMESTAMPTZ as DateTimeOffset. Database triggers supply updated timestamps and first table activation; EF reads generated values rather than overwriting them.
 
-The model explicitly maps foreign keys, delete rules, composite/alternate keys, check constraints and ordinary/partial indexes. Expression indexes (email lowercase) and trigger/function/view SQL remain owned by the SQL migrations. FK index conventions are disabled to avoid inventing indexes absent from the supplied schema. The upgrade-only `gift_participant_legacy` provenance table is intentionally not a mutable business entity.
+The model explicitly maps foreign keys, delete rules, composite/alternate keys, check constraints and ordinary/partial indexes. Expression indexes (lowercase email and wedding slug) and trigger/function/view SQL remain owned by migrations. FK index conventions are disabled to avoid inventing indexes absent from the supplied schema. The upgrade-only `gift_participant_legacy` provenance table is intentionally not a mutable business entity.
 
 `ReceptionTable.Version` and `SeatingAssignment.Version` are concurrency tokens. Tracked SaveChanges increments their original version and uses it in the UPDATE predicate; stale updates raise DbUpdateConcurrencyException. This does not replace the capacity/row-lock protocol: future endpoints must enforce wedding scope, permissions, capacity, transaction boundaries and translate conflicts to HTTP 409. Raw SQL writers must compare and advance version explicitly.
 
@@ -86,13 +88,13 @@ $env:INVITEME_TEST_CONNECTION_STRING = 'Host=localhost;Database=postgres;Usernam
 dotnet test tests/InviteMe.IntegrationTests --filter FullyQualifiedName~SchemaV2MigrationTests
 ```
 
-Use a disposable PostgreSQL instance for all PostgreSQL tests: the older foundation test inserts fixtures into the configured database. Alternatively set `INVITEME_TEST_POSTGRES=1` with Docker running. The SQL artifact `artifacts/migrations.sql` is regenerated for all four migrations; applying it twice must keep the same schema/history.
+PostgreSQL integration fixtures create and drop uniquely named disposable databases using the configured connection's CREATE/DROP DATABASE rights. They do not use the application database name in that connection string. Alternatively set `INVITEME_TEST_POSTGRES=1` with Docker running. The idempotent `artifacts/migrations.sql` contains the current full migration chain; applying it twice must preserve the same schema and migration history.
 
 ### EF business mapping
 
-All 37 business tables and four Identity support tables are mapped. `WeddingGuest` maps to `guests`; participant records remain separate. Three keyless read models map the headcount, table occupancy and guest RSVP summary views. JSONB is mapped as nullable JSON strings, monetary values as decimal, counts as integer/long and TIMESTAMPTZ as DateTimeOffset. Database triggers supply updated timestamps and first table activation; EF reads generated values rather than overwriting them.
+The current EF model maps 53 tables and three keyless read models. `WeddingGuest` maps to `guests`; planning-v2 guests and participant records remain separate models. JSONB is mapped as nullable JSON strings, monetary values as decimal, counts as integer/long and TIMESTAMPTZ as DateTimeOffset. Database triggers supply updated timestamps and first table activation; EF reads generated values rather than overwriting them.
 
-The model explicitly maps foreign keys, delete rules, composite/alternate keys, check constraints and ordinary/partial indexes. Expression indexes (email lowercase) and trigger/function/view SQL remain owned by the SQL migrations. FK index conventions are disabled to avoid inventing indexes absent from the supplied schema. The upgrade-only `gift_participant_legacy` provenance table is intentionally not a mutable business entity.
+The model explicitly maps foreign keys, delete rules, composite/alternate keys, check constraints and ordinary/partial indexes. Expression indexes (lowercase email and wedding slug) and trigger/function/view SQL remain owned by migrations. FK index conventions are disabled to avoid inventing indexes absent from the supplied schema. The upgrade-only `gift_participant_legacy` provenance table is intentionally not a mutable business entity.
 
 `ReceptionTable.Version` and `SeatingAssignment.Version` are concurrency tokens. Tracked SaveChanges increments their original version and uses it in the UPDATE predicate; stale updates raise DbUpdateConcurrencyException. This does not replace the capacity/row-lock protocol: future endpoints must enforce wedding scope, permissions, capacity, transaction boundaries and translate conflicts to HTTP 409. Raw SQL writers must compare and advance version explicitly.
 

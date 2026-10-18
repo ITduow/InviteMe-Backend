@@ -21,8 +21,11 @@ public sealed class WeddingConfiguration : IEntityTypeConfiguration<Wedding>
         builder.Property(x => x.Title).HasColumnName("title").HasMaxLength(200).IsRequired();
         builder.Property(x => x.Slug).HasColumnName("slug").HasMaxLength(180).IsRequired();
         builder.HasAlternateKey(x => x.Slug).HasName("weddings_slug_key");
+        builder.HasIndex(x => x.Slug).IsUnique().HasDatabaseName("uq_weddings_slug_lower")
+            .HasAnnotation("Npgsql:IndexExpression", "lower(slug)");
         builder.Property(x => x.Status).HasColumnName("status").HasMaxLength(20).HasDefaultValue("DRAFT").IsRequired();
         builder.Property(x => x.MaxCapacity).HasColumnName("max_capacity");
+        builder.Property(x => x.CoverImageUrl).HasColumnName("cover_image_url").HasMaxLength(2048);
         builder.Property(x => x.Version).HasColumnName("version").HasDefaultValue(1).IsConcurrencyToken();
         builder.Ignore(x => x.CanEdit);
         builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("NOW()");

@@ -18,6 +18,7 @@ public static class DependencyInjection
         services.AddScoped<GetApplicationHealthHandler>();
         services.AddScoped<InviteMe.Application.Features.Identity.Accounts.AccountHandler>();
         services.AddScoped<InviteMe.Application.Features.Weddings.CoHosts.CoHostHandler>();
+        services.AddScoped<InviteMe.Application.Features.Weddings.Setup.WeddingSetupHandler>();
         services.AddScoped<InviteMe.Application.Features.Audit.AuditHandler>();
         services.AddScoped<InviteMe.Application.Features.Guests.Planning.GuestPlanningHandler>();
         services.AddScoped<InviteMe.Application.Features.Invitations.InvitationWordingHandler>();

@@ -2538,3 +2538,533 @@ BEGIN
 END $EF$;
 COMMIT;
 
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261011104500_AddRsvpImmutableHistory') THEN
+    -- RSVP-02: RSVP submit/update with an append-only rsvp_history.
+    -- Applied by EF migration AddRsvpImmutableHistory inside its transaction.
+    -- Additive and data-preserving: existing history rows are backfilled, never rewritten afterwards.
+    SET LOCAL search_path TO inviteme, pg_temp;
+
+    -- ============================================================
+    -- 1. Actor identity: a Wedding-Guest answers through an invitation token and has no users row,
+    --    so changed_by (users.id) alone loses who changed the RSVP. Mirror audit_logs' actor shape.
+    -- ============================================================
+
+    ALTER TABLE inviteme.rsvp_history
+        ADD COLUMN actor_type     VARCHAR(20) NULL,
+        ADD COLUMN actor_guest_id UUID        NULL;
+
+    -- Backfill. Every application path that wrote history with changed_by = NULL was the public
+    -- invitation-token submission, whose actor is the invitation's own Wedding-Guest.
+    UPDATE inviteme.rsvp_history h
+       SET actor_type = 'USER'
+     WHERE h.changed_by IS NOT NULL;
+
+    UPDATE inviteme.rsvp_history h
+       SET actor_type = 'WEDDING_GUEST',
+           actor_guest_id = i.guest_id
+      FROM inviteme.rsvps r
+      JOIN inviteme.invitations i ON i.id = r.invitation_id
+     WHERE h.rsvp_id = r.id
+       AND h.changed_by IS NULL;
+
+    ALTER TABLE inviteme.rsvp_history
+        ALTER COLUMN actor_type SET NOT NULL,
+        ADD CONSTRAINT ck_rsvp_history_actor_type
+            CHECK (actor_type IN ('USER', 'WEDDING_GUEST', 'SYSTEM')),
+        ADD CONSTRAINT ck_rsvp_history_actor_shape
+            CHECK (
+                (actor_type = 'USER' AND changed_by IS NOT NULL AND actor_guest_id IS NULL)
+                OR (actor_type = 'WEDDING_GUEST' AND actor_guest_id IS NOT NULL AND changed_by IS NULL)
+                OR (actor_type = 'SYSTEM' AND changed_by IS NULL AND actor_guest_id IS NULL)
+            ),
+        ADD CONSTRAINT fk_rsvp_history_actor_guest
+            FOREIGN KEY (actor_guest_id) REFERENCES inviteme.guests(id) ON DELETE RESTRICT;
+
+    -- ============================================================
+    -- 2. History rows must never be rewritten or removed by referential actions.
+    --    SET NULL on changed_by would UPDATE history and break the actor shape; CASCADE from rsvps
+    --    would silently delete evidence. Both become RESTRICT (same retention policy as audit_logs).
+    -- ============================================================
+
+    ALTER TABLE inviteme.rsvp_history
+        DROP CONSTRAINT fk_rsvp_history_changed_by,
+        ADD CONSTRAINT fk_rsvp_history_changed_by
+            FOREIGN KEY (changed_by) REFERENCES inviteme.users(id) ON DELETE RESTRICT,
+        DROP CONSTRAINT fk_rsvp_history_rsvp,
+        ADD CONSTRAINT fk_rsvp_history_rsvp
+            FOREIGN KEY (rsvp_id) REFERENCES inviteme.rsvps(id) ON DELETE RESTRICT;
+
+    -- ============================================================
+    -- 3. Append-only guard: INSERT only. UPDATE, DELETE and TRUNCATE raise a clear error.
+    -- ============================================================
+
+    CREATE FUNCTION inviteme.rsvp_history_append_only()
+    RETURNS TRIGGER
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+        RAISE EXCEPTION 'rsvp_history is append-only: % is not allowed', TG_OP
+            USING ERRCODE = 'restrict_violation',
+                  HINT = 'Record a new RSVP change instead of editing history.';
+    END;
+    $$;
+
+    CREATE TRIGGER trg_rsvp_history_append_only
+        BEFORE UPDATE OR DELETE ON inviteme.rsvp_history
+        FOR EACH ROW EXECUTE FUNCTION inviteme.rsvp_history_append_only();
+
+    CREATE TRIGGER trg_rsvp_history_no_truncate
+        BEFORE TRUNCATE ON inviteme.rsvp_history
+        FOR EACH STATEMENT EXECUTE FUNCTION inviteme.rsvp_history_append_only();
+
+    -- ============================================================
+    -- 4. Ordered per-RSVP history reads. The composite index supersedes the single-column one.
+    -- ============================================================
+
+    DROP INDEX inviteme.ix_rsvp_history_rsvp_id;
+    CREATE INDEX ix_rsvp_history_rsvp_changed_at ON inviteme.rsvp_history(rsvp_id, changed_at);
+
+    COMMENT ON TABLE inviteme.rsvp_history IS
+    'Append-only RSVP change log (RSVP-02). One row per real change, written in the same transaction as the rsvps update.';
+
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261011104500_AddRsvpImmutableHistory') THEN
+    INSERT INTO inviteme."__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+    VALUES ('20261011104500_AddRsvpImmutableHistory', '10.0.12');
+    END IF;
+END $EF$;
+COMMIT;
+
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261011114707_AddRefreshTokens') THEN
+    CREATE TABLE inviteme.refresh_tokens (
+        id uuid NOT NULL DEFAULT gen_random_uuid(),
+        user_id uuid NOT NULL,
+        token_hash char(64) NOT NULL,
+        family_id uuid NOT NULL,
+        created_at timestamp with time zone NOT NULL DEFAULT NOW(),
+        expires_at timestamp with time zone NOT NULL,
+        used_at timestamp with time zone,
+        revoked_at timestamp with time zone,
+        replaced_by_id uuid,
+        CONSTRAINT refresh_tokens_pkey PRIMARY KEY (id),
+        CONSTRAINT fk_refresh_tokens_user FOREIGN KEY (user_id) REFERENCES inviteme.users(id) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX uq_refresh_tokens_token_hash ON inviteme.refresh_tokens(token_hash);
+    CREATE INDEX ix_refresh_tokens_user_id ON inviteme.refresh_tokens(user_id);
+    CREATE INDEX ix_refresh_tokens_family_id ON inviteme.refresh_tokens(family_id);
+
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261011114707_AddRefreshTokens') THEN
+    INSERT INTO inviteme."__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+    VALUES ('20261011114707_AddRefreshTokens', '10.0.12');
+    END IF;
+END $EF$;
+COMMIT;
+
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016134414_AddRsvpGuestNote') THEN
+    -- RSVP-03 (Guest03): the RSVP form keeps one free-text note per guest in guest_notes (note_type = 'RSVP').
+    -- Applied by EF migration AddRsvpGuestNote. Additive only: no existing row uses note_type 'RSVP'.
+    SET LOCAL search_path TO inviteme, pg_temp;
+
+    CREATE UNIQUE INDEX uq_guest_notes_rsvp_note
+        ON inviteme.guest_notes(guest_id)
+        WHERE note_type = 'RSVP' AND participant_id IS NULL;
+
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016134414_AddRsvpGuestNote') THEN
+    INSERT INTO inviteme."__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+    VALUES ('20261016134414_AddRsvpGuestNote', '10.0.12');
+    END IF;
+END $EF$;
+COMMIT;
+
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016143455_AddGuestPlanningImportV2') THEN
+    CREATE TABLE inviteme.planning_groups (
+        "Id" uuid NOT NULL,
+        "WeddingId" uuid NOT NULL,
+        "Name" character varying(100) NOT NULL,
+        "NormalizedName" character varying(200) NOT NULL,
+        CONSTRAINT "PK_planning_groups" PRIMARY KEY ("Id"),
+        CONSTRAINT "FK_planning_groups_weddings_WeddingId" FOREIGN KEY ("WeddingId") REFERENCES inviteme.weddings (id) ON DELETE CASCADE
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016143455_AddGuestPlanningImportV2') THEN
+    CREATE TABLE inviteme.planning_imports (
+        "Id" uuid NOT NULL,
+        "WeddingId" uuid NOT NULL,
+        "Key" uuid NOT NULL,
+        "RequestHash" character varying(64) NOT NULL,
+        "ResultJson" text NOT NULL,
+        "CreatedAt" timestamp with time zone NOT NULL,
+        CONSTRAINT "PK_planning_imports" PRIMARY KEY ("Id"),
+        CONSTRAINT "FK_planning_imports_weddings_WeddingId" FOREIGN KEY ("WeddingId") REFERENCES inviteme.weddings (id) ON DELETE CASCADE
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016143455_AddGuestPlanningImportV2') THEN
+    CREATE TABLE inviteme.planning_guests (
+        "Id" uuid NOT NULL,
+        "WeddingId" uuid NOT NULL,
+        "ImportId" uuid NOT NULL,
+        "RowNumber" integer NOT NULL,
+        "RecipientName" character varying(150) NOT NULL,
+        "Honorific" character varying(50),
+        "InvitationKind" text NOT NULL,
+        "ExpectedPeople" integer NOT NULL,
+        "Side" text NOT NULL,
+        "GroupId" uuid,
+        "Phone" character varying(30),
+        "Note" character varying(2000),
+        "Version" integer NOT NULL,
+        CONSTRAINT "PK_planning_guests" PRIMARY KEY ("Id"),
+        CONSTRAINT ck_planning_expected CHECK ("ExpectedPeople" BETWEEN 1 AND 500),
+        CONSTRAINT ck_planning_kind CHECK ("InvitationKind" IN ('INDIVIDUAL','FAMILY','GROUP')),
+        CONSTRAINT ck_planning_side CHECK ("Side" IN ('BRIDE','GROOM','MUTUAL','UNSPECIFIED')),
+        CONSTRAINT "FK_planning_guests_planning_groups_GroupId" FOREIGN KEY ("GroupId") REFERENCES inviteme.planning_groups ("Id") ON DELETE RESTRICT,
+        CONSTRAINT "FK_planning_guests_planning_imports_ImportId" FOREIGN KEY ("ImportId") REFERENCES inviteme.planning_imports ("Id") ON DELETE CASCADE,
+        CONSTRAINT "FK_planning_guests_weddings_WeddingId" FOREIGN KEY ("WeddingId") REFERENCES inviteme.weddings (id) ON DELETE CASCADE
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016143455_AddGuestPlanningImportV2') THEN
+    CREATE TABLE inviteme.planning_participants (
+        "Id" uuid NOT NULL,
+        "GuestId" uuid NOT NULL,
+        "FullName" character varying(150) NOT NULL,
+        "Role" text NOT NULL,
+        "AttendanceStatus" text NOT NULL,
+        CONSTRAINT "PK_planning_participants" PRIMARY KEY ("Id"),
+        CONSTRAINT "FK_planning_participants_planning_guests_GuestId" FOREIGN KEY ("GuestId") REFERENCES inviteme.planning_guests ("Id") ON DELETE CASCADE
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016143455_AddGuestPlanningImportV2') THEN
+    CREATE TABLE inviteme.planning_places (
+        "Id" uuid NOT NULL,
+        "GuestId" uuid NOT NULL,
+        "Position" integer NOT NULL,
+        "ParticipantId" uuid,
+        CONSTRAINT "PK_planning_places" PRIMARY KEY ("Id"),
+        CONSTRAINT "FK_planning_places_planning_guests_GuestId" FOREIGN KEY ("GuestId") REFERENCES inviteme.planning_guests ("Id") ON DELETE CASCADE,
+        CONSTRAINT "FK_planning_places_planning_participants_ParticipantId" FOREIGN KEY ("ParticipantId") REFERENCES inviteme.planning_participants ("Id") ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016143455_AddGuestPlanningImportV2') THEN
+    CREATE UNIQUE INDEX "IX_planning_groups_WeddingId_NormalizedName" ON inviteme.planning_groups ("WeddingId", "NormalizedName");
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016143455_AddGuestPlanningImportV2') THEN
+    CREATE INDEX "IX_planning_guests_WeddingId_RecipientName" ON inviteme.planning_guests ("WeddingId", "RecipientName");
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016143455_AddGuestPlanningImportV2') THEN
+    CREATE UNIQUE INDEX "IX_planning_imports_WeddingId_Key" ON inviteme.planning_imports ("WeddingId", "Key");
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016143455_AddGuestPlanningImportV2') THEN
+    CREATE UNIQUE INDEX "IX_planning_places_GuestId_Position" ON inviteme.planning_places ("GuestId", "Position");
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016143455_AddGuestPlanningImportV2') THEN
+    CREATE UNIQUE INDEX "IX_planning_places_ParticipantId" ON inviteme.planning_places ("ParticipantId");
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016143455_AddGuestPlanningImportV2') THEN
+    INSERT INTO inviteme."__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+    VALUES ('20261016143455_AddGuestPlanningImportV2', '10.0.12');
+    END IF;
+END $EF$;
+COMMIT;
+
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016153147_AddPlanningSeating') THEN
+    CREATE TABLE inviteme.planning_seating_plans (
+        "WeddingId" uuid NOT NULL,
+        "Version" integer NOT NULL,
+        CONSTRAINT "PK_planning_seating_plans" PRIMARY KEY ("WeddingId"),
+        CONSTRAINT "FK_planning_seating_plans_weddings_WeddingId" FOREIGN KEY ("WeddingId") REFERENCES inviteme.weddings (id) ON DELETE CASCADE
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016153147_AddPlanningSeating') THEN
+    CREATE TABLE inviteme.planning_tables (
+        "Id" uuid NOT NULL,
+        "WeddingId" uuid NOT NULL,
+        "Name" character varying(100) NOT NULL,
+        "Capacity" integer NOT NULL,
+        CONSTRAINT "PK_planning_tables" PRIMARY KEY ("Id"),
+        CONSTRAINT ck_planning_table_capacity CHECK ("Capacity" BETWEEN 1 AND 20),
+        CONSTRAINT "FK_planning_tables_weddings_WeddingId" FOREIGN KEY ("WeddingId") REFERENCES inviteme.weddings (id) ON DELETE CASCADE
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016153147_AddPlanningSeating') THEN
+    CREATE TABLE inviteme.planning_seat_assignments (
+        "PlaceId" uuid NOT NULL,
+        "TableId" uuid NOT NULL,
+        "SeatNumber" integer NOT NULL,
+        CONSTRAINT "PK_planning_seat_assignments" PRIMARY KEY ("PlaceId"),
+        CONSTRAINT ck_planning_seat_number CHECK ("SeatNumber" BETWEEN 1 AND 20),
+        CONSTRAINT "FK_planning_seat_assignments_planning_places_PlaceId" FOREIGN KEY ("PlaceId") REFERENCES inviteme.planning_places ("Id") ON DELETE CASCADE,
+        CONSTRAINT "FK_planning_seat_assignments_planning_tables_TableId" FOREIGN KEY ("TableId") REFERENCES inviteme.planning_tables ("Id") ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016153147_AddPlanningSeating') THEN
+    CREATE UNIQUE INDEX "IX_planning_seat_assignments_TableId_SeatNumber" ON inviteme.planning_seat_assignments ("TableId", "SeatNumber");
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016153147_AddPlanningSeating') THEN
+    CREATE INDEX "IX_planning_tables_WeddingId" ON inviteme.planning_tables ("WeddingId");
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261016153147_AddPlanningSeating') THEN
+    INSERT INTO inviteme."__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+    VALUES ('20261016153147_AddPlanningSeating', '10.0.12');
+    END IF;
+END $EF$;
+COMMIT;
+
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261017081804_AddThankYouTemplates') THEN
+    CREATE TABLE inviteme.thank_you_templates (
+        id uuid NOT NULL,
+        wedding_id uuid NOT NULL,
+        content character varying(3000) NOT NULL,
+        tone character varying(20) NOT NULL,
+        language character varying(10) NOT NULL,
+        status character varying(20) NOT NULL,
+        model character varying(100) NOT NULL,
+        input_tokens bigint,
+        output_tokens bigint,
+        used_fallback boolean NOT NULL,
+        created_by uuid NOT NULL,
+        approved_by uuid,
+        approved_at timestamp with time zone,
+        created_at timestamp with time zone NOT NULL,
+        updated_at timestamp with time zone NOT NULL,
+        version integer NOT NULL,
+        CONSTRAINT thank_you_templates_pkey PRIMARY KEY (id),
+        CONSTRAINT ck_thank_you_approval CHECK ((status = 'DRAFT' AND approved_by IS NULL AND approved_at IS NULL) OR (status = 'APPROVED' AND approved_by IS NOT NULL AND approved_at IS NOT NULL)),
+        CONSTRAINT ck_thank_you_content CHECK (length(btrim(content)) > 0 AND length(content) <= 3000 AND strpos(content, '{{GuestName}}') > 0),
+        CONSTRAINT ck_thank_you_language CHECK (language = 'vi'),
+        CONSTRAINT ck_thank_you_status CHECK (status IN ('DRAFT','APPROVED')),
+        CONSTRAINT ck_thank_you_tone CHECK (tone IN ('FORMAL','WARM','FRIENDLY')),
+        CONSTRAINT ck_thank_you_usage CHECK ((input_tokens IS NULL OR input_tokens >= 0) AND (output_tokens IS NULL OR output_tokens >= 0)),
+        CONSTRAINT ck_thank_you_version CHECK (version > 0),
+        CONSTRAINT fk_thank_you_approved_by FOREIGN KEY (approved_by) REFERENCES inviteme.users (id) ON DELETE RESTRICT,
+        CONSTRAINT fk_thank_you_created_by FOREIGN KEY (created_by) REFERENCES inviteme.users (id) ON DELETE RESTRICT,
+        CONSTRAINT fk_thank_you_wedding FOREIGN KEY (wedding_id) REFERENCES inviteme.weddings (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261017081804_AddThankYouTemplates') THEN
+    CREATE INDEX ix_thank_you_wedding_created ON inviteme.thank_you_templates (wedding_id, created_at);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261017081804_AddThankYouTemplates') THEN
+    INSERT INTO inviteme."__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+    VALUES ('20261017081804_AddThankYouTemplates', '10.0.12');
+    END IF;
+END $EF$;
+COMMIT;
+
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261017180235_AddPlanningGuestEmail') THEN
+    ALTER TABLE inviteme.planning_guests ADD "Email" character varying(254);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261017180235_AddPlanningGuestEmail') THEN
+    INSERT INTO inviteme."__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+    VALUES ('20261017180235_AddPlanningGuestEmail', '10.0.12');
+    END IF;
+END $EF$;
+COMMIT;
+
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261017183021_AddPlanningGuestInvitationToken') THEN
+    ALTER TABLE inviteme.planning_guests ADD "InvitationToken" character varying(64);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261017183021_AddPlanningGuestInvitationToken') THEN
+    CREATE UNIQUE INDEX "IX_planning_guests_InvitationToken" ON inviteme.planning_guests ("InvitationToken") WHERE "InvitationToken" IS NOT NULL;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261017183021_AddPlanningGuestInvitationToken') THEN
+    INSERT INTO inviteme."__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+    VALUES ('20261017183021_AddPlanningGuestInvitationToken', '10.0.12');
+    END IF;
+END $EF$;
+COMMIT;
+
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261017184405_AddInvitationWordingSettings') THEN
+    CREATE TABLE inviteme.invitation_wording_settings (
+        "WeddingId" uuid NOT NULL,
+        "PresetsJson" jsonb NOT NULL,
+        "Version" integer NOT NULL,
+        CONSTRAINT "PK_invitation_wording_settings" PRIMARY KEY ("WeddingId"),
+        CONSTRAINT "FK_invitation_wording_settings_weddings_WeddingId" FOREIGN KEY ("WeddingId") REFERENCES inviteme.weddings (id) ON DELETE CASCADE
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261017184405_AddInvitationWordingSettings') THEN
+    INSERT INTO inviteme."__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+    VALUES ('20261017184405_AddInvitationWordingSettings', '10.0.12');
+    END IF;
+END $EF$;
+COMMIT;
+
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261018033142_AddWeddingSetupCoverImage') THEN
+    ALTER TABLE inviteme.weddings ADD cover_image_url character varying(2048);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261018033142_AddWeddingSetupCoverImage') THEN
+    INSERT INTO inviteme."__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+    VALUES ('20261018033142_AddWeddingSetupCoverImage', '10.0.12');
+    END IF;
+END $EF$;
+COMMIT;
+
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261018033324_AddCaseInsensitiveWeddingSlugIndex') THEN
+    DO $$ BEGIN
+        IF EXISTS (
+            SELECT 1 FROM inviteme.weddings
+            GROUP BY lower(slug)
+            HAVING count(*) > 1
+        ) THEN
+            RAISE EXCEPTION 'Duplicate case-insensitive wedding slugs must be reconciled before Wedding Setup migration';
+        END IF;
+    END $$;
+    CREATE UNIQUE INDEX uq_weddings_slug_lower ON inviteme.weddings (lower(slug));
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM inviteme."__EFMigrationsHistory" WHERE "MigrationId" = '20261018033324_AddCaseInsensitiveWeddingSlugIndex') THEN
+    INSERT INTO inviteme."__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+    VALUES ('20261018033324_AddCaseInsensitiveWeddingSlugIndex', '10.0.12');
+    END IF;
+END $EF$;
+COMMIT;
+

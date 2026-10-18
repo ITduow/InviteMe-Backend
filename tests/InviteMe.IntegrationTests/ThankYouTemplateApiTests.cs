@@ -28,13 +28,16 @@ public sealed class ThankYouTemplateApiTests
     public Task AdditiveMigrationPreservesExistingWeddingAndHasNoPendingModelChanges() => SchemaV2MigrationTests.InDatabase(async db =>
     {
         await db.GetService<IMigrator>().MigrateAsync("20261016153147_AddPlanningSeating");
-        var user = new InviteMe.Infrastructure.Identity.ApplicationUser
-        { Id = Guid.NewGuid(), Email = "upgrade@example.test", UserName = "upgrade@example.test", FullName = "Existing owner" };
-        db.Users.Add(user); await db.SaveChangesAsync();
-        var wedding = InviteMe.Domain.Weddings.Wedding.Create(user.Id, "Existing wedding", "existing-thank-you", 100);
-        db.Weddings.Add(wedding); await db.SaveChangesAsync();
+        var userId = Guid.NewGuid();
+        var weddingId = Guid.NewGuid();
+        await db.Database.ExecuteSqlInterpolatedAsync($$"""
+            INSERT INTO inviteme.users (id,email,full_name)
+            VALUES ({{userId}}, 'upgrade@example.test', 'Existing owner');
+            INSERT INTO inviteme.weddings (id,owner_user_id,title,slug)
+            VALUES ({{weddingId}}, {{userId}}, 'Existing wedding', 'existing-thank-you');
+            """);
         await db.Database.MigrateAsync();
-        Assert.Equal("Existing wedding", (await db.Weddings.AsNoTracking().SingleAsync()).Title);
+        Assert.Equal("Existing wedding", (await db.Weddings.AsNoTracking().SingleAsync(x => x.Id == weddingId)).Title);
         Assert.Empty(await db.Set<ThankYouTemplate>().ToListAsync());
         Assert.False(db.Database.HasPendingModelChanges());
     });

@@ -8,6 +8,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.DataProtection;
 using InviteMe.Infrastructure.Notifications;
+using InviteMe.Infrastructure.Media;
+using InviteMe.Application.Features.Weddings.Setup;
 
 namespace InviteMe.Infrastructure;
 
@@ -45,6 +47,12 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Ports.Authentication.IAccountStore, InviteMe.Infrastructure.Authentication.AccountStore>();
         services.AddScoped<InviteMe.Application.Ports.Authentication.IRefreshTokenStore, InviteMe.Infrastructure.Authentication.RefreshTokenStore>();
         services.AddScoped<InviteMe.Application.Ports.Weddings.ICoHostStore, CoHostStore>();
+        services.AddScoped<InviteMe.Application.Features.Weddings.Setup.IWeddingSetupStore, WeddingSetupStore>();
+        services.AddOptions<WeddingMediaOptions>().BindConfiguration(WeddingMediaOptions.SectionName)
+            .Validate(x => x.MaximumFileSizeBytes is > 0 and <= 5 * 1024 * 1024, "WeddingMedia:MaximumFileSizeBytes must be between 1 byte and 5 MB.")
+            .Validate(x => x.AllowedFormats.All(f => new[] { "jpeg", "jpg", "png", "webp" }.Contains(f, StringComparer.OrdinalIgnoreCase)), "WeddingMedia:AllowedFormats may include only JPEG, PNG and WebP.")
+            .ValidateOnStart();
+        services.AddSingleton<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage, LocalWeddingMediaStorage>();
         services.AddScoped<InviteMe.Application.Ports.Audit.IAuditReader, AuditReader>();
         services.AddScoped<InviteMe.Application.Ports.AI.IThankYouTemplateStore, ThankYouTemplateStore>();
         services.AddScoped<InviteMe.Application.Ports.AI.IThankYouGuestReader, ThankYouGuestReader>();

@@ -1,5 +1,14 @@
 # Foundation verification
 
+## Wedding Setup & Unique Slug — 2026-10-18
+
+- Added authenticated create/get/update and slug availability endpoints; request ownership is derived from the authenticated account. Reads allow owner or `WEDDING_VIEW`; updates require ownership and an expected version.
+- Create persists the wedding, venue, main event, RSVP settings and `WEDDING_CREATED` audit in one PostgreSQL transaction. Updates lock the wedding row and write audit records with the setup update.
+- Slugs are trimmed/lowercased, validated against the reserved-name/ASCII/hyphen rules, prechecked for UX, and protected by an additive PostgreSQL unique expression index on `lower(slug)`. Only the two wedding slug constraints map to `409 WEDDING_SLUG_ALREADY_EXISTS`. Migration stops with a clear error if historical slugs collide case-insensitively; it does not rewrite them.
+- Reused existing wedding, venue, main-event, settings, access and audit structures. Added nullable `weddings.cover_image_url` through `20261018033142_AddWeddingSetupCoverImage`; added the preflight and functional unique index through `20261018033324_AddCaseInsensitiveWeddingSlugIndex`.
+- Release build succeeded with **0 warnings and 0 errors**. EF reports **no pending model changes**. Full suite against isolated PostgreSQL databases: **182 unit + 130 integration = 312 passed, zero failed/skipped**. Feature integration coverage includes owner/co-host read/update permissions, creation compatibility with Co-Hosts/Audit, persistence, duplicate create/update, same-slug update, slug availability, concurrent duplicate creates, migration compatibility and OpenAPI.
+- PostgreSQL tests used random temporary database names and removed them after each test. No migration was applied to the application's `InviteMe` database. OpenAI is not involved.
+
 ## AI Thank You Templates (Couple09) — 2026-10-17
 
 - Implemented seven independent, bearer-authenticated owner-only endpoints under /api/weddings/{weddingId}/ai/thank-you-templates: generate, list, detail, edit draft, approve, preview and delete draft. No send/orchestration endpoint or removed workflow was restored. Contracts, architecture decisions, file inventory and local setup: [AI Thank You Templates](ai-thank-you-templates.md).
