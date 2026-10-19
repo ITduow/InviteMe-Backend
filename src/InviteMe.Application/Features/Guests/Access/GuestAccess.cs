@@ -4,6 +4,7 @@ using FluentValidation;
 using InviteMe.Application.Common.Behaviors;
 using InviteMe.Application.Common.Errors;
 using InviteMe.Application.Features.Guests.Planning;
+using InviteMe.Application.Features.Rsvps;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Application.Ports.Authorization;
 using InviteMe.Application.Ports.Invitations;
@@ -17,7 +18,8 @@ public sealed record PersonalQrQuery(string Format = "svg", bool Download = fals
 public sealed record PersonalQrImage(byte[] Content, string ContentType, string? DownloadName);
 public sealed record GuestAccessTarget(Guid GuestId, Guid WeddingId, string RecipientName, string? Honorific);
 // One reserved place of the invitation; Table is null until the couple seats it.
-public sealed record GuestSeatDto(int Position, string? PersonName, string? Table, int? SeatNumber);
+// Status is the RSVP place status (PENDING, USED, UNUSED), the same value the RSVP API shows for the place.
+public sealed record GuestSeatDto(int Position, string? PersonName, string Status, string? Table, int? SeatNumber);
 public sealed record GuestSeatsDto(string RecipientName, string? Honorific, bool Published, IReadOnlyList<GuestSeatDto> Seats);
 public sealed record SeatLookupDto(Guid GuestId, string RecipientName, string? Honorific, bool Published, IReadOnlyList<GuestSeatDto> Seats);
 public sealed record SeatingPublicationDto(bool Published, DateTimeOffset? PublishedAt, Guid? PublishedBy);
@@ -62,14 +64,19 @@ public sealed partial class GuestAccessHandler(IGuestAccessStore store, IQrCodeR
     }
 
     // Guest07: the guest sees table numbers only after the couple publishes the seating plan.
+    // RSVP keeps the seat of a place that is no longer used (the hosts clear it), so the guest page hides its table.
     public async Task<GuestSeatsDto> PublicSeatsAsync(string token, CancellationToken ct)
     {
         var guest = await Find(token, null, ct);
         var published = (await store.PublicationAsync(guest.WeddingId, ct)).Published;
-        return new(guest.RecipientName, guest.Honorific, published, published ? await store.SeatsAsync(guest.GuestId, ct) : []);
+        if (!published) return new(guest.RecipientName, guest.Honorific, false, []);
+        var seats = await store.SeatsAsync(guest.GuestId, ct);
+        return new(guest.RecipientName, guest.Honorific, true,
+            seats.Select(x => x.Status == RsvpPlaceStatus.Unused ? x with { Table = null, SeatNumber = null } : x).ToList());
     }
 
-    // Reception counter (Cohost05): staff see the table right after scanning, published or not.
+    // Reception counter (Cohost05): staff see the table right after scanning, published or not, also for an
+    // UNUSED place, so a guest who declined but still comes can take the seat that is kept for them.
     public async Task<SeatLookupDto> LookupAsync(Guid weddingId, SeatLookupQuery query, CancellationToken ct)
     {
         await permissions.RequireAsync(weddingId, WeddingPermission.CHECKIN_MANAGE, ct);
