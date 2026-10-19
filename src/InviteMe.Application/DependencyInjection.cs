@@ -27,6 +27,7 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Features.Seating.Planning.PlanningSeatingHandler>();
         services.AddScoped<InviteMe.Application.Features.Guests.Access.GuestAccessHandler>();
         services.AddScoped<InviteMe.Application.Features.Rsvps.RsvpHandler>();
+        services.AddScoped<InviteMe.Application.Features.Rsvps.RsvpDashboardHandler>();
         services.AddScoped<IWeddingPermissionService, WeddingPermissionService>();
         services.AddScoped<InviteMe.Application.Features.AI.ThankYouTemplates.ThankYouTemplateHandler>();
         services.AddSingleton<InviteMe.Application.Ports.AI.IThankYouTemplateRenderer,
