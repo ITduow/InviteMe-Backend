@@ -26,7 +26,7 @@ Request body (unchanged `SubmitRsvp` contract, camelCase, unknown members reject
 | Status | Code | When |
 | --- | --- | --- |
 | 400 | `VALIDATION_FAILED` / `INVALID_REQUEST` | Decision is not `ATTENDING`/`DECLINED`, DECLINED with attendees, ATTENDING with nobody, duplicate or empty ids, unknown JSON members |
-| 404 | `INVITATION_NOT_FOUND`, `PARTICIPANT_NOT_FOUND`, `RSVP_NOT_FOUND` | Token invalid/revoked/expired/closed wedding (same response, so nothing leaks); participant not on this invitation; PUT before POST |
+| 404 | `INVITATION_UNAVAILABLE`, `PARTICIPANT_NOT_FOUND`, `RSVP_NOT_FOUND` | Token invalid/revoked/expired/closed wedding (same response, so nothing leaks); participant not on this invitation; PUT before POST |
 | 409 | `RSVP_ALREADY_EXISTS`, `CONCURRENCY_CONFLICT` | Duplicate first submission; stale `expectedVersion` |
 | 422 | `PLUS_ONE_LIMIT`, `RSVP_DEADLINE_PASSED`, `RSVP_NOT_CONFIGURED`, `ATTENDANCE_LOCKED` | Business rules. The repository maps every business-rule failure to 422 consistently, so RSVP-02 follows that instead of using 409 for deadline cases. |
 
