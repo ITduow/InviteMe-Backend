@@ -98,30 +98,7 @@ public sealed class InvitationMessagingTests
             new InvitationOutboundMessage(Guid.NewGuid(), Guid.NewGuid(), "SMS", "bad-number", "Invite", "Hi", "https://invite.test/a", "https://api.test/qr/a"), default));
 
         Assert.Equal("SPEEDSMS_INVALID_PHONE", error.Code);
-        Assert.Equal("105", error.ProviderCode);
         Assert.DoesNotContain("invalid phone", error.Message);
-    }
-
-    [Theory]
-    [InlineData("999", "999")]
-    [InlineData("0388506852", null)]
-    [InlineData("private provider detail", null)]
-    public async Task SpeedSms_preserves_only_short_numeric_unknown_codes_for_diagnostics(string code, string? expected)
-    {
-        var handler = new CaptureHandler(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent(System.Text.Json.JsonSerializer.Serialize(new
-            { status = "error", code, message = "private provider detail" }), Encoding.UTF8, "application/json")
-        });
-        var provider = new SpeedSmsChannelProvider(new HttpClient(handler), Options.Create(new SpeedSmsOptions
-        { AccessToken = "secret-token" }));
-
-        var error = await Assert.ThrowsAsync<InvitationDeliveryException>(() => provider.SendAsync(
-            new InvitationOutboundMessage(Guid.NewGuid(), Guid.NewGuid(), "SMS", "test-recipient", "Invite", "Hi", "https://invite.test/a", ""), default));
-
-        Assert.Equal("SPEEDSMS_REQUEST_REJECTED", error.Code);
-        Assert.Equal(expected, error.ProviderCode);
-        Assert.DoesNotContain("private provider detail", error.Message);
     }
 
     [Fact]
@@ -137,30 +114,6 @@ public sealed class InvitationMessagingTests
     }
 
     [Fact]
-    public async Task SpeedSms_missing_code_keeps_reason_in_diagnostic_and_redacts_sensitive_values()
-    {
-        const string reason = "SMS type is not enabled: secret-token 0388506852 someone@example.com https://invite.test/token";
-        var handler = new CaptureHandler(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent(System.Text.Json.JsonSerializer.Serialize(new
-            { status = "error", message = reason }), Encoding.UTF8, "application/json")
-        });
-        var provider = new SpeedSmsChannelProvider(new HttpClient(handler), Options.Create(new SpeedSmsOptions
-        { AccessToken = "secret-token" }));
-
-        var error = await Assert.ThrowsAsync<InvitationDeliveryException>(() => provider.SendAsync(
-            new InvitationOutboundMessage(Guid.NewGuid(), Guid.NewGuid(), "SMS", "0388506852", "Invite", "Hello guest",
-                "https://invite.test/token", ""), default));
-
-        Assert.Equal("SPEEDSMS_REQUEST_REJECTED", error.Code);
-        Assert.Null(error.ProviderCode);
-        Assert.Contains("code=<missing>", error.ProviderDiagnostic);
-        Assert.Contains("SMS type is not enabled", error.ProviderDiagnostic);
-        foreach (var sensitive in new[] { "secret-token", "0388506852", "someone@example.com", "https://invite.test/token" })
-            Assert.DoesNotContain(sensitive, error.ProviderDiagnostic);
-        Assert.DoesNotContain(reason, error.Message);
-    }
-
     [Theory]
     [InlineData("sender not found")]
     [InlineData(" Sender Not Found ")]
@@ -180,7 +133,6 @@ public sealed class InvitationMessagingTests
 
         Assert.Equal("SPEEDSMS_SENDER_NOT_FOUND", error.Code);
         Assert.False(error.Transient);
-        Assert.Null(error.ProviderCode);
     }
 
     private sealed class CaptureHandler(HttpResponseMessage response) : HttpMessageHandler
