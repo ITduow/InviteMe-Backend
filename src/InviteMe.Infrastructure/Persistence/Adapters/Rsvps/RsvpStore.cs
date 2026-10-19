@@ -233,8 +233,11 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
             && (waitSlots == 0 ? waiting.Count == 0 : keepEntry);
         if (attendanceUnchanged && !notesChanged)
         {
-            approved?.Resolve(PlanningRsvpRequest.Approved, actor, now);
-            if (approved is not null) { db.AuditLogs.Add(Audit(wedding.Id, rsvp!.Id, "RSVP_CHANGE_APPROVED", actor, guest.Id, input, approved)); await db.SaveChangesAsync(ct); }
+            if (await Settle(guest.Id, approved, actor, now, ct))
+            {
+                if (approved is not null) db.AuditLogs.Add(Audit(wedding.Id, rsvp!.Id, "RSVP_CHANGE_APPROVED", actor, guest.Id, input, approved));
+                await db.SaveChangesAsync(ct);
+            }
             return new(wedding.Id, await State(guest, ct)); // no-op: no write, no version bump
         }
 
@@ -248,7 +251,7 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
         if (attendanceUnchanged)
         {
             rsvp!.SetNote(wantedNote, now); rsvp.Advance();
-            approved?.Resolve(PlanningRsvpRequest.Approved, actor, now);
+            await Settle(guest.Id, approved, actor, now, ct);
             db.AuditLogs.Add(Audit(wedding.Id, rsvp.Id, approved is null ? "RSVP_NOTE_UPDATED" : "RSVP_CHANGE_APPROVED", actor, guest.Id, input, approved));
             await db.SaveChangesAsync(ct); return new(wedding.Id, await State(guest, ct));
         }
@@ -307,10 +310,21 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
             db.Add(PlanningRsvpHistory.Record(rsvp.Id, oldStatus, oldSize, rsvp.Status, rsvp.ConfirmedPartySize,
                 oldSnapshot, Snapshot(rsvp.Status, rsvp.ConfirmedPartySize, participants), actor, guest.Id, historyReason, now));
         rsvp.Advance();
-        approved?.Resolve(PlanningRsvpRequest.Approved, actor, now);
+        await Settle(guest.Id, approved, actor, now, ct);
         db.AuditLogs.Add(Audit(wedding.Id, rsvp.Id, confirmedChanged ? historyReason : "RSVP_WAITLIST_UPDATED", actor, guest.Id, input, approved));
         await db.SaveChangesAsync(ct);
         return new(wedding.Id, await State(guest, ct), seats.Count > 0 || grew);
+    }
+
+    // Closes the guest's change request once a host has decided: an approved request is marked APPROVED; a host entering
+    // the answer directly (phone, chat...) supersedes a still-pending request so it no longer waits on the dashboard.
+    private async Task<bool> Settle(Guid guestId, PlanningRsvpRequest? approved, Guid? actor, DateTimeOffset now, CancellationToken ct)
+    {
+        if (approved is not null) { approved.Resolve(PlanningRsvpRequest.Approved, actor, now); return true; }
+        if (actor is null) return false;
+        var pending = await db.Set<PlanningRsvpRequest>().Where(x => x.GuestId == guestId && x.Status == PlanningRsvpRequest.Pending).ToListAsync(ct);
+        foreach (var request in pending) request.Resolve(PlanningRsvpRequest.Superseded, actor, now);
+        return pending.Count > 0;
     }
 
     // The latest change wins: an older pending request of the same guest is superseded.

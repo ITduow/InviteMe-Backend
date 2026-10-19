@@ -137,4 +137,20 @@ public sealed class RsvpValidationTests
         Assert.Single(RsvpDashboardMath.Filter(data, new RsvpDashboardFilter(Status: RsvpGuestStatus.NotResponded)));
         Assert.Single(RsvpDashboardMath.Filter(data, new RsvpDashboardFilter(Status: RsvpGuestStatus.Waiting)));
     }
+
+    [Fact]
+    public void WaitingFilterAlsoListsConfirmedPartiesWithExtraPeopleWaiting()
+    {
+        RsvpDashboardGuest G(string name, string? status, params string[] attendance) =>
+            new(Guid.NewGuid(), name, 2, "GROOM", null, null, null, null, status, attendance.Count(a => a == "ATTENDING"), null, null, null, false, false,
+                attendance.Select(a => a == "ATTENDING" ? "USED" : "UNUSED").ToList(),
+                attendance.Select(a => new RsvpDashboardPerson(Guid.NewGuid(), "P", "PRIMARY", a, null, 1)).ToList());
+        var data = new RsvpDashboardData(Guid.NewGuid(), 10, 3, null, [
+            G("Khoa", "ATTENDING", "ATTENDING", "ATTENDING", "WAITLISTED"),
+            G("Lan", "PENDING", "WAITLISTED"),
+            G("Bao", "ATTENDING", "ATTENDING")]);
+        Assert.Equal(["Khoa", "Lan"], RsvpDashboardMath.Filter(data, new RsvpDashboardFilter(Status: RsvpGuestStatus.Waiting)).Select(g => g.RecipientName));
+        Assert.Equal(["Bao", "Khoa"], RsvpDashboardMath.Filter(data, new RsvpDashboardFilter(Status: RsvpGuestStatus.Attending)).Select(g => g.RecipientName));
+        Assert.Equal(1, RsvpDashboardMath.Summarize(data, new RsvpDashboardFilter(), DateTimeOffset.UtcNow).Invitations.Waiting);
+    }
 }

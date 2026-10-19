@@ -54,6 +54,17 @@ public static class RsvpGuestStatus
     {
         null => NotResponded, "ATTENDING" => Attending, "DECLINED" => Declined, _ => Waiting
     };
+
+    /// <summary>
+    /// List filter. WAITING lists every invitation with someone on the waitlist, also a confirmed party whose extra
+    /// people wait (it then shows under ATTENDING too); PENDING_REQUEST lists invitations with a change waiting for the hosts.
+    /// </summary>
+    public static bool Matches(RsvpDashboardGuest g, string status) => status switch
+    {
+        PendingRequest => g.PendingRequest,
+        Waiting => Of(g) == Waiting || g.People.Any(p => p.AttendanceStatus == "WAITLISTED"),
+        _ => Of(g) == status
+    };
 }
 
 public sealed class RsvpDashboardFilterValidator : AbstractValidator<RsvpDashboardFilter>
@@ -108,7 +119,7 @@ public static class RsvpDashboardMath
             .Where(g => filter.GroupId is null || g.GroupId == filter.GroupId)
             .Where(g => string.IsNullOrEmpty(search) || g.RecipientName.Contains(search, StringComparison.OrdinalIgnoreCase)
                         || g.People.Any(p => p.FullName.Contains(search, StringComparison.OrdinalIgnoreCase)))
-            .Where(g => filter.Status is null || (filter.Status == RsvpGuestStatus.PendingRequest ? g.PendingRequest : RsvpGuestStatus.Of(g) == filter.Status))
+            .Where(g => filter.Status is null || RsvpGuestStatus.Matches(g, filter.Status))
             .OrderBy(g => g.RecipientName, StringComparer.CurrentCultureIgnoreCase).ThenBy(g => g.RowNumber).ThenBy(g => g.Id)
             .ToList();
     }

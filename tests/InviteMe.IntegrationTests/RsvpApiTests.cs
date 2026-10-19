@@ -223,7 +223,12 @@ public sealed class RsvpApiTests
         var g1 = await Seed(db, imported.Items[0].GuestId);
         Assert.Equal(HttpStatusCode.Accepted, (await c.PostAsJsonAsync(g1.Url, new SubmitRsvp(0, "ATTENDING", [g1.Main]))).StatusCode);
         Assert.True((await c.GetFromJsonAsync<RsvpDto>(g1.Url))!.Locked);
-        await Read<RsvpDto>(await owner.PutAsJsonAsync($"/api/weddings/{open}/rsvps/{g1.GuestId}", new SubmitRsvp(0, "ATTENDING", [g1.Main], Source: RsvpSource.Phone)));
+        // A host entering the answer directly closes the guest's waiting request: it no longer counts as pending.
+        var direct = await Read<RsvpDto>(await owner.PutAsJsonAsync($"/api/weddings/{open}/rsvps/{g1.GuestId}", new SubmitRsvp(0, "ATTENDING", [g1.Main], Source: RsvpSource.Phone)));
+        Assert.Null(direct.PendingRequest);
+        Assert.Empty((await owner.GetFromJsonAsync<PagedResult<RsvpRequestDto>>($"/api/weddings/{open}/rsvps/requests"))!.Items);
+        var closed = Assert.Single((await owner.GetFromJsonAsync<PagedResult<RsvpRequestDto>>($"/api/weddings/{open}/rsvps/requests?status=SUPERSEDED"))!.Items);
+        Assert.Equal(g1.GuestId, closed.GuestId);
         Assert.Equal(2, (await Read<LockRsvpsResult>(await owner.PutAsJsonAsync($"/api/weddings/{open}/rsvps/locks", new LockRsvps(false, GroupId: groupId)))).Affected);
         var g2 = await Seed(db, imported.Items[1].GuestId);
         Assert.Equal(HttpStatusCode.Created, (await c.PostAsJsonAsync(g2.Url, new SubmitRsvp(0, "ATTENDING", [g2.Main]))).StatusCode);
