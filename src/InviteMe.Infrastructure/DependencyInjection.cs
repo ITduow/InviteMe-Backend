@@ -40,6 +40,17 @@ public static class DependencyInjection
             options.TokenLifespan = TimeSpan.FromMinutes(15));
         services.AddOptions<SmtpOptions>().BindConfiguration("Smtp");
         services.AddScoped<InviteMe.Application.Ports.Authentication.IAccountEmailSender, SmtpAccountEmailSender>();
+        services.AddScoped<InviteMe.Infrastructure.Notifications.IInvitationChannelProvider, InviteMe.Infrastructure.Notifications.SmtpInvitationChannelProvider>();
+        services.AddOptions<InviteMe.Infrastructure.Notifications.SpeedSmsOptions>()
+            .BindConfiguration(InviteMe.Infrastructure.Notifications.SpeedSmsOptions.SectionName);
+        services.AddHttpClient<InviteMe.Infrastructure.Notifications.SpeedSmsChannelProvider>()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+        services.AddScoped<InviteMe.Infrastructure.Notifications.IInvitationChannelProvider>(sp =>
+            sp.GetRequiredService<InviteMe.Infrastructure.Notifications.SpeedSmsChannelProvider>());
+        services.AddScoped<InviteMe.Application.Features.Invitations.Messaging.IInvitationChannelSender,
+            InviteMe.Infrastructure.Notifications.InvitationChannelSender>();
+        if (configuration.GetValue("InvitationMessaging:WorkerEnabled", true))
+            services.AddHostedService<InviteMe.Infrastructure.Notifications.InvitationDeliveryWorker>();
         services.AddOptions<InviteMe.Infrastructure.Authentication.GoogleAuthOptions>().BindConfiguration("Authentication:Google");
         services.AddScoped<InviteMe.Application.Ports.Authentication.IGoogleTokenValidator, InviteMe.Infrastructure.Authentication.GoogleTokenValidator>();
 
@@ -69,6 +80,11 @@ public static class DependencyInjection
         }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddScoped<InviteMe.Application.Features.Guests.Planning.IGuestPlanningStore, GuestPlanningStore>();
         services.AddScoped<InviteMe.Application.Features.Invitations.IInvitationWordingStore, InvitationWordingStore>();
+        services.AddScoped<InviteMe.Application.Features.Invitations.Messaging.IInvitationMessagingStore,
+            InviteMe.Infrastructure.Persistence.Adapters.InvitationMessagingStore>();
+        services.AddSingleton(new InviteMe.Application.Features.Invitations.Messaging.InvitationMessagingLinks(
+            configuration["Frontend:Url"] ?? "http://localhost:3000",
+            configuration["InvitationMessaging:PublicApiUrl"] ?? "http://localhost:5000"));
         services.AddScoped<InviteMe.Application.Features.Invitations.IInvitationDesignStore, InvitationDesignStore>();
         services.AddScoped<InviteMe.Application.Features.Seating.Planning.IPlanningSeatingStore, PlanningSeatingStore>();
         services.AddScoped<InviteMe.Application.Features.Guests.Access.IGuestAccessStore, GuestAccessStore>();

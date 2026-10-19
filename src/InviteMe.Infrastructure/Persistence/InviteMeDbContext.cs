@@ -45,6 +45,9 @@ public sealed class InviteMeDbContext(DbContextOptions<InviteMeDbContext> option
     public DbSet<GuestNote> GuestNotes => Set<GuestNote>();
     public DbSet<Invitation> Invitations => Set<Invitation>();
     public DbSet<InvitationDelivery> InvitationDeliveries => Set<InvitationDelivery>();
+    public DbSet<InvitationDraft> InvitationDrafts => Set<InvitationDraft>();
+    public DbSet<InvitationSendBatch> InvitationSendBatches => Set<InvitationSendBatch>();
+    public DbSet<InvitationSendJob> InvitationSendJobs => Set<InvitationSendJob>();
     public DbSet<Rsvp> Rsvps => Set<Rsvp>();
     public DbSet<RsvpHistory> RsvpHistory => Set<RsvpHistory>();
     public DbSet<WaitlistEntry> WaitlistEntries => Set<WaitlistEntry>();
