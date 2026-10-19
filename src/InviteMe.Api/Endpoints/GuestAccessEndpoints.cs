@@ -36,7 +36,7 @@ internal static class GuestAccessEndpoints
                 return await h.PublicSeatsAsync(token, ct);
             })
             .WithName("GetGuestInvitationSeats")
-            .WithSummary("Tables of this invitation's places. published=false and no seats until the couple publishes the seating plan.")
+            .WithSummary("Tables of this invitation's places with their RSVP status (PENDING, USED, UNUSED). published=false and no seats until the couple publishes the seating plan; an UNUSED place shows no table.")
             .Produces<GuestSeatsDto>().ProducesProblem(StatusCodes.Status404NotFound);
 
         var host = endpoints.MapGroup("/api/weddings/{weddingId:guid}/guest-planning").RequireAuthorization().WithTags("Guest Planning v2");
@@ -53,7 +53,7 @@ internal static class GuestAccessEndpoints
         host.MapGet("/seat-lookup", (Guid weddingId, string code, GuestAccessHandler h, CancellationToken ct) =>
                 h.LookupAsync(weddingId, new SeatLookupQuery(code), ct))
             .WithName("LookupGuestSeats")
-            .WithSummary("Reception counter (CHECKIN_MANAGE): scanned QR link or token -> recipient and tables, published or not.")
+            .WithSummary("Reception counter (CHECKIN_MANAGE): scanned QR link or token -> recipient, tables and place status, published or not; an UNUSED place keeps its table.")
             .Produces<SeatLookupDto>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound);
         return endpoints;
     }

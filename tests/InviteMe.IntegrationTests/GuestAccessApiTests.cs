@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using InviteMe.Application.Features.Guests.Access;
 using InviteMe.Application.Features.Guests.Planning;
+using InviteMe.Application.Features.Rsvps;
 using InviteMe.Application.Features.Seating.Planning;
 using InviteMe.Domain.Guests;
 using Microsoft.EntityFrameworkCore;
@@ -59,6 +60,17 @@ public sealed class GuestAccessApiTests
         Assert.Equal(("Nguyễn Văn An", "Bàn 1"), (seats.Seats[0].PersonName, seats.Seats[0].Table));
         Assert.Equal(((string?)null, "Bàn 1"), (seats.Seats[1].PersonName, seats.Seats[1].Table));
         Assert.All(seats.Seats.Skip(2), x => Assert.Null(x.Table));
+        Assert.All(seats.Seats, x => Assert.Equal(RsvpPlaceStatus.Pending, x.Status));
+
+        // The party answers for the representative only: places 2-4 become UNUSED. RSVP keeps the seat of place 2 for
+        // the hosts to clear, but the guest page no longer shows its table.
+        var main = await db.Set<PlanningParticipant>().AsNoTracking().SingleAsync(x => x.GuestId == guest.Id);
+        Assert.Equal(HttpStatusCode.Created,
+            (await anonymous.PostAsJsonAsync($"/api/rsvp/{token}", new SubmitRsvp(0, "ATTENDING", [main.Id]))).StatusCode);
+        var answered = (await anonymous.GetFromJsonAsync<GuestSeatsDto>($"/api/guest-invitations/{token}/seats"))!;
+        Assert.Equal(new[] { RsvpPlaceStatus.Used, RsvpPlaceStatus.Unused, RsvpPlaceStatus.Unused, RsvpPlaceStatus.Unused },
+            answered.Seats.Select(x => x.Status));
+        Assert.Equal(("Bàn 1", (string?)null), (answered.Seats[0].Table, answered.Seats[1].Table));
 
         // Unpublish hides tables from guests; the reception counter still sees them from the scanned link.
         Assert.False((await Read<SeatingPublicationDto>(await owner.DeleteAsync(path + "/seating-plan/publish"))).Published);
@@ -66,6 +78,7 @@ public sealed class GuestAccessApiTests
         var link = Uri.EscapeDataString($"http://localhost:3000/invite/{token}");
         var lookup = await Read<SeatLookupDto>(await owner.GetAsync(path + $"/seat-lookup?code={link}"));
         Assert.Equal((guest.Id, false, "Bàn 1"), (lookup.GuestId, lookup.Published, lookup.Seats[0].Table));
+        Assert.Equal((RsvpPlaceStatus.Unused, "Bàn 1"), (lookup.Seats[1].Status, lookup.Seats[1].Table)); // kept for a late arrival
         await Problem(HttpStatusCode.BadRequest, "VALIDATION_FAILED", await owner.GetAsync(path + "/seat-lookup?code=hello"));
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync(path + $"/seat-lookup?code={token}")).StatusCode);
         using var outsider = await CoHostPermissionTests.SignIn(factory, "guest-access-outsider");
