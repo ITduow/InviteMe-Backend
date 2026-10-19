@@ -575,20 +575,24 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
     // Same validity rule as GET /api/guest-invitations/{token} (InvitationDesignStore.FindPublicAsync).
     private async Task<(Wedding Wedding, PlanningGuest Guest)> LockToken(string token, CancellationToken ct)
     {
-        if (token.Length != 64 || token.Any(c => !char.IsAsciiHexDigit(c))) throw Missing("INVITATION_NOT_FOUND");
+        if (token.Length != 64 || token.Any(c => !char.IsAsciiHexDigit(c))) throw InvitationUnavailable();
         var candidate = await db.Set<PlanningGuest>().AsNoTracking().Where(x => x.InvitationToken == token)
-            .Select(x => new { x.Id, x.WeddingId }).SingleOrDefaultAsync(ct) ?? throw Missing("INVITATION_NOT_FOUND");
+            .Select(x => new { x.Id, x.WeddingId }).SingleOrDefaultAsync(ct) ?? throw InvitationUnavailable();
         var wedding = await db.Weddings.FromSqlInterpolated($"SELECT * FROM inviteme.weddings WHERE id={candidate.WeddingId} FOR UPDATE").SingleOrDefaultAsync(ct);
         if (wedding is null || !wedding.CanEdit || !await db.Users.AnyAsync(u => u.Id == wedding.OwnerUserId && u.Status == "ACTIVE", ct))
-            throw Missing("INVITATION_NOT_FOUND");
+            throw InvitationUnavailable();
         var guest = await LockGuest(wedding.Id, candidate.Id, ct);
-        if (guest is null || guest.InvitationToken != token) throw Missing("INVITATION_NOT_FOUND");
+        if (guest is null || guest.InvitationToken != token) throw InvitationUnavailable();
         return (wedding, guest);
     }
 
     // Couple06: "Số lượng người đi vượt quá, slot còn lại {n} người".
     private static ApplicationProblemException InsufficientSlots(long remaining) =>
         new(ProblemKind.BusinessRule, "INSUFFICIENT_SLOTS", $"Số lượng người đi vượt quá, slot còn lại {Math.Max(0, remaining)} người.");
+    // Same code and text as the invitation page and Guest06/07 (GuestAccess, InvitationDesign) so the FE shows one
+    // "link unavailable" message for every API opened from /invite/{token}.
+    private static ApplicationProblemException InvitationUnavailable() => new(ProblemKind.NotFound,
+        "INVITATION_UNAVAILABLE", "Thiệp chưa được lưu hoặc liên kết không còn khả dụng.");
     private static ApplicationProblemException Missing(string code) => new(ProblemKind.NotFound, code, "Record is unavailable in this wedding.");
     private static ApplicationProblemException Rule(string code, string message) => new(ProblemKind.BusinessRule, code, message);
     private static ApplicationProblemException Conflict(string code) => new(ProblemKind.Conflict, code, "Data changed or the request conflicts. Refresh and retry.");

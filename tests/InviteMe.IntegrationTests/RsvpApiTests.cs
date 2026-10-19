@@ -248,8 +248,8 @@ public sealed class RsvpApiTests
                      new { expectedVersion = 0, decision = "ATTENDING", participantIds = new[] { a.Main }, unknown = 1 }
                  })
             Assert.Equal(HttpStatusCode.BadRequest, (await c.PostAsJsonAsync(a.Url, body)).StatusCode);
-        await AssertProblem(HttpStatusCode.NotFound, "INVITATION_NOT_FOUND", await c.GetAsync("/api/rsvp/" + new string('a', 64)));
-        await AssertProblem(HttpStatusCode.NotFound, "INVITATION_NOT_FOUND", await c.GetAsync("/api/rsvp/not-a-token"));
+        await AssertProblem(HttpStatusCode.NotFound, "INVITATION_UNAVAILABLE", await c.GetAsync("/api/rsvp/" + new string('a', 64)));
+        await AssertProblem(HttpStatusCode.NotFound, "INVITATION_UNAVAILABLE", await c.GetAsync("/api/rsvp/not-a-token"));
         await AssertProblem(HttpStatusCode.NotFound, "RSVP_NOT_FOUND", await c.PutAsJsonAsync(a.Url, new SubmitRsvp(0, "DECLINED", [])));
         await AssertProblem(HttpStatusCode.NotFound, "PARTICIPANT_NOT_FOUND", await c.PostAsJsonAsync(a.Url, new SubmitRsvp(0, "ATTENDING", [other.Main])));
         await AssertProblem(HttpStatusCode.NotFound, "PARTICIPANT_NOT_FOUND", await c.PostAsJsonAsync(a.Url, new SubmitRsvp(0, "ATTENDING", [a.Main], DietaryNotes: [new(other.Main, "Chay")])));
@@ -261,7 +261,7 @@ public sealed class RsvpApiTests
         var closed = await Wedding(db, ownerId, "rsvp-closed", 10); var z = await Party(db, owner, closed, "Z");
         Assert.Equal(HttpStatusCode.OK, (await c.GetAsync(z.Url)).StatusCode);
         await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE inviteme.weddings SET status='CANCELLED' WHERE id={closed}");
-        await AssertProblem(HttpStatusCode.NotFound, "INVITATION_NOT_FOUND", await c.GetAsync(z.Url));
+        await AssertProblem(HttpStatusCode.NotFound, "INVITATION_UNAVAILABLE", await c.GetAsync(z.Url));
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
