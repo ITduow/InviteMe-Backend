@@ -104,6 +104,28 @@ public sealed class ThankYouTemplateTests
         Assert.Contains("{{GuestName}}", json.RootElement.GetProperty("instructions").GetString());
     }
 
+    [Fact]
+    public async Task InvitationPurposeUsesSeparateEmailAndSmsPrompt()
+    {
+        string? instructions = null;
+        var responseBody = """
+            {"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"{\"subject\":\"Mời dự cưới\",\"emailContent\":\"{{GuestName}} {{RsvpLink}} {{QrLink}}\",\"smsContent\":\"{{GuestName}} {{RsvpLink}}\"}"}]}]}
+            """;
+        var transport = new FakeTransport(async (request, ct) =>
+        {
+            using var payload = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+            instructions = payload.RootElement.GetProperty("instructions").GetString();
+            return Response(200, responseBody);
+        });
+
+        var result = await Generator(transport).GenerateAsync(new("WARM", "vi", null, "WEDDING_INVITATION"), default);
+
+        Assert.Contains("emailContent", instructions);
+        Assert.Contains("smsContent", instructions);
+        Assert.Contains("never include QR", instructions);
+        Assert.Contains("\"smsContent\":", result.Text);
+    }
+
     [Theory]
     [InlineData("{}")]
     [InlineData("{\"status\":\"completed\",\"output\":[]}")]

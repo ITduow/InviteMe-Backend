@@ -74,6 +74,7 @@ app.MapAuditLogs();
 app.MapRsvp();
 app.MapGuestPlanning();
 app.MapInvitationWording();
+app.MapInvitationMessaging();
 app.MapInvitationDesign();
 app.MapGuestAccess();
 app.MapThankYouTemplates();

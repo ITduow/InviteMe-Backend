@@ -3,7 +3,7 @@ using InviteMe.Domain.AI;
 
 namespace InviteMe.Application.Ports.AI;
 
-public sealed record AiTextRequest(string Tone, string Language, string? AdditionalInstructions);
+public sealed record AiTextRequest(string Tone, string Language, string? AdditionalInstructions, string Purpose = "THANK_YOU_TEMPLATE");
 public sealed record AiTextResult(string Text, string Model, long? InputTokens = null, long? OutputTokens = null);
 public interface IAiTextGenerator
 {
