@@ -26,7 +26,7 @@ public sealed class SeatingDragLeaseService(TimeProvider clock) : ISeatingDragLe
                 throw Conflict("SEATING_PLACE_LOCKED");
             if (leases.Values.Any(x => x.ConnectionId == connectionId)) throw Conflict("SEATING_DRAG_ALREADY_ACTIVE");
             var lease = new SeatingDragLease(Guid.NewGuid(), weddingId, userId, connectionId,
-                displayName, placeIds.ToArray(), clock.GetUtcNow() + Lifetime);
+                displayName, placeIds.ToArray(), clock.GetUtcNow() + Lifetime, DragId: Guid.NewGuid());
             leases.Add(lease.Token, lease);
             Changed(weddingId);
             return lease;
@@ -42,6 +42,11 @@ public sealed class SeatingDragLeaseService(TimeProvider clock) : ISeatingDragLe
             Changed(weddingId);
             return lease;
         }
+    }
+
+    public SeatingDragLease RequireOwned(Guid weddingId, Guid token, Guid userId, string connectionId)
+    {
+        lock (gate) return Owned(weddingId, token, userId, connectionId);
     }
 
     public void Target(Guid weddingId, Guid token, Guid userId, string connectionId, Guid? tableId, int? seatNumber)
@@ -137,7 +142,7 @@ public sealed class SeatingDragLeaseService(TimeProvider clock) : ISeatingDragLe
     private void Changed(Guid weddingId) { revisions[weddingId] = ++revision; dirty.Add(weddingId); }
     private SeatingDragSnapshot Read(Guid weddingId) =>
         new(weddingId, revisions.GetValueOrDefault(weddingId), leases.Values.Where(x => x.WeddingId == weddingId)
-            .Select(x => new SeatingDragPresence(x.UserId, x.ConnectionId, x.DisplayName, x.PlaceIds, x.ExpiresAt, x.TableId, x.SeatNumber)).ToArray());
+            .Select(x => new SeatingDragPresence(x.UserId, x.ConnectionId, x.DisplayName, x.PlaceIds, x.ExpiresAt, x.TableId, x.SeatNumber, x.DragId)).ToArray());
     private static ApplicationProblemException Conflict(string code) =>
         new(ProblemKind.Conflict, code, "Chỗ đang được thao tác hoặc quyền kéo đã hết hạn.");
 }

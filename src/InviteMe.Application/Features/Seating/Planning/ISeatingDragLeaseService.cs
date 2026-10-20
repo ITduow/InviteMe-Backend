@@ -2,15 +2,17 @@ namespace InviteMe.Application.Features.Seating.Planning;
 
 public sealed record SeatingDragLease(Guid Token, Guid WeddingId, Guid UserId, string ConnectionId,
     string DisplayName, IReadOnlyList<Guid> PlaceIds, DateTimeOffset ExpiresAt,
-    Guid? TableId = null, int? SeatNumber = null);
+    Guid? TableId = null, int? SeatNumber = null, Guid DragId = default);
 public sealed record SeatingDragPresence(Guid UserId, string ConnectionId, string DisplayName,
-    IReadOnlyList<Guid> PlaceIds, DateTimeOffset ExpiresAt, Guid? TableId, int? SeatNumber);
+    IReadOnlyList<Guid> PlaceIds, DateTimeOffset ExpiresAt, Guid? TableId, int? SeatNumber, Guid DragId);
+public sealed record SeatingDragPointer(Guid WeddingId, string ConnectionId, Guid DragId, string Anchor, double X, double Y, long Sequence);
 public sealed record SeatingDragSnapshot(Guid WeddingId, long Revision, IReadOnlyList<SeatingDragPresence> Leases);
 
 public interface ISeatingDragLeaseService
 {
     SeatingDragLease Acquire(Guid weddingId, Guid userId, string connectionId, string displayName, IReadOnlyList<Guid> placeIds);
     SeatingDragLease Renew(Guid weddingId, Guid token, Guid userId, string connectionId);
+    SeatingDragLease RequireOwned(Guid weddingId, Guid token, Guid userId, string connectionId);
     void Target(Guid weddingId, Guid token, Guid userId, string connectionId, Guid? tableId, int? seatNumber);
     void Release(Guid weddingId, Guid token, Guid userId, string connectionId);
     void Disconnect(string connectionId, Guid? weddingId = null);

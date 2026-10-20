@@ -94,7 +94,7 @@ public sealed class PlanningRealtimeTests
         public IGroupManager Groups => throw new NotSupportedException();
     }
 
-    private sealed class RecordingProxy : IClientProxy
+    internal sealed class RecordingProxy : IClientProxy
     {
         public string? Method { get; private set; }
         public object?[]? Arguments { get; private set; }
@@ -110,10 +110,13 @@ public sealed class PlanningRealtimeTests
         }
     }
 
-    private sealed class RecordingClients : IHubClients
+    internal sealed class RecordingClients : IHubCallerClients, IHubClients
     {
         public string? GroupName { get; private set; }
         public RecordingProxy Proxy { get; } = new();
+        public IClientProxy Caller => Proxy;
+        public IClientProxy Others => Proxy;
+        public IClientProxy OthersInGroup(string groupName) { GroupName = groupName; return Proxy; }
         public IClientProxy Group(string groupName) { GroupName = groupName; return Proxy; }
         public IClientProxy All => throw new NotSupportedException();
         public IClientProxy AllExcept(IReadOnlyList<string> excludedConnectionIds) => throw new NotSupportedException();

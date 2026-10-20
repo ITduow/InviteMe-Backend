@@ -15,6 +15,32 @@ namespace InviteMe.IntegrationTests;
 public sealed class SeatingDragHubTests
 {
     [Fact]
+    public async Task PointerPacketsRequireTheOwningLeaseAndAreRateLimitedWithoutReadingTheDatabase()
+    {
+        using var factory = new ApiFactory(); using var scope = factory.Services.CreateScope();
+        var account = scope.ServiceProvider.GetRequiredService<IAccountStore>();
+        var leases = new SeatingDragLeaseService(TimeProvider.System); var plan = new Plan();
+        var owner = Hub("a", Guid.NewGuid(), new Permissions(), leases, plan, account);
+        var other = Hub("b", Guid.NewGuid(), new Permissions(), leases, plan, account);
+        var clients = new PlanningRealtimeTests.RecordingClients(); owner.Clients = clients;
+        var count = 0; clients.Proxy.Sending = () => count++;
+        var lease = await owner.StartSeatingDrag(plan.Wedding, [plan.Place]);
+        var reads = plan.Reads;
+        await owner.MoveSeatingPointer(plan.Wedding, lease.Token, "board", .2, .3, 1);
+        for (var i = 0; i < 10; i++) await owner.MoveSeatingPointer(plan.Wedding, lease.Token, "queue", .5, .6, i + 2);
+        Assert.Equal(1, count);
+        Assert.Equal(reads, plan.Reads);
+        Assert.Equal($"seating:{plan.Wedding:D}", clients.GroupName);
+        var pointer = Assert.IsType<SeatingDragPointer>(Assert.Single(clients.Proxy.Arguments!));
+        Assert.Equal(lease.DragId, pointer.DragId);
+        Assert.Equal("a", pointer.ConnectionId);
+        await Assert.ThrowsAsync<HubException>(() => other.MoveSeatingPointer(plan.Wedding, lease.Token, "board", .2, .3, 20));
+        await Assert.ThrowsAsync<HubException>(() => owner.MoveSeatingPointer(plan.Wedding, lease.Token, "board", double.NaN, .3, 20));
+        await Assert.ThrowsAsync<HubException>(() => owner.MoveSeatingPointer(plan.Wedding, lease.Token, "unknown", .2, .3, 20));
+        await owner.EndSeatingDrag(plan.Wedding, lease.Token);
+        await Assert.ThrowsAsync<HubException>(() => owner.MoveSeatingPointer(plan.Wedding, lease.Token, "board", .2, .3, 20));
+    }
+    [Fact]
     public async Task TwoConnectionsContendForTheSamePlaceAndDisconnectReleasesIt()
     {
         using var factory = new ApiFactory(); using var scope = factory.Services.CreateScope();
@@ -75,9 +101,13 @@ public sealed class SeatingDragHubTests
     }
     private sealed class Plan : IPlanningSeatingStore
     {
+        public int Reads;
         public Guid Wedding = Guid.NewGuid(); public Guid Place = Guid.NewGuid();
-        public Task<PlanningSeatingDto> GetAsync(Guid wedding, CancellationToken ct) => Task.FromResult(
-            new PlanningSeatingDto(Wedding, 1, [], [], [new(Place, Guid.NewGuid(), 1, null)], []));
+        public Task<PlanningSeatingDto> GetAsync(Guid wedding, CancellationToken ct)
+        {
+            Reads++;
+            return Task.FromResult(new PlanningSeatingDto(Wedding, 1, [], [], [new(Place, Guid.NewGuid(), 1, null)], []));
+        }
         public Task<PlanningSeatingDto> ChangeAsync(Guid wedding, ChangePlanningSeating input, CancellationToken ct) => throw new NotSupportedException();
     }
 }

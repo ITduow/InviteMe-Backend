@@ -69,6 +69,20 @@ public sealed class WeddingHub(IWeddingPermissionService permissions, ISeatingDr
         return Task.CompletedTask;
     }
 
+    public async Task MoveSeatingPointer(Guid weddingId, Guid token, string anchor, double x, double y, long sequence)
+    {
+        if (anchor is null || !double.IsFinite(x) || !double.IsFinite(y) || x is < 0 or > 1 || y is < 0 or > 1 || sequence < 0 ||
+            !(anchor is "queue" or "board" || (anchor.StartsWith("table:", StringComparison.Ordinal) && Guid.TryParse(anchor[6..], out _))))
+            throw new HubException("INVALID_DRAG_POINTER");
+        // The live lease already establishes permission and tab ownership. No DB lookup on pointer movement.
+        var lease = Lease(() => leases.RequireOwned(weddingId, token, UserId, Context.ConnectionId));
+        var now = Environment.TickCount64;
+        if (Context.Items.TryGetValue("seating-pointer-last", out var last) && last is long sent && now - sent < 50) return;
+        Context.Items["seating-pointer-last"] = now;
+        await Clients.OthersInGroup(SeatingGroupName(weddingId)).SendAsync("SeatingDragPointer",
+            new SeatingDragPointer(weddingId, Context.ConnectionId, lease.DragId, anchor, x, y, sequence), Context.ConnectionAborted);
+    }
+
     public override Task OnDisconnectedAsync(Exception? exception)
     {
         leases.Disconnect(Context.ConnectionId);
