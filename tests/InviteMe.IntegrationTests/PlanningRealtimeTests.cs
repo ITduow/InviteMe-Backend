@@ -12,6 +12,29 @@ namespace InviteMe.IntegrationTests;
 public sealed class PlanningRealtimeTests
 {
     [Fact]
+    public async Task PointerBroadcasterDeliversTheLatestTrailingSampleOnlyToOtherSeatingViewers()
+    {
+        var leases = new SeatingDragLeaseService(TimeProvider.System);
+        var clients = new RecordingClients();
+        var wedding = Guid.NewGuid(); var user = Guid.NewGuid();
+        var lease = leases.Acquire(wedding, user, "sender", "An", [Guid.NewGuid()]);
+        for (var i = 1; i <= 50; i++)
+            leases.QueuePointer(wedding, lease.Token, user, "sender", "board", .2, .8, i);
+        var delivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        clients.Proxy.Sending = () => delivered.TrySetResult();
+        using var worker = new SeatingPointerBroadcaster(leases, new TestHubContext(clients), NullLogger<SeatingPointerBroadcaster>.Instance);
+        await worker.StartAsync(CancellationToken.None);
+        try
+        {
+            await delivered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("SeatingDragPointer", clients.Proxy.Method);
+            Assert.Equal($"seating:{wedding:D}", clients.GroupName);
+            Assert.Equal("sender", Assert.Single(clients.Excluded!));
+            Assert.Equal(50, Assert.IsType<SeatingDragPointer>(Assert.Single(clients.Proxy.Arguments!)).Sequence);
+        }
+        finally { await worker.StopAsync(CancellationToken.None); }
+    }
+    [Fact]
     public async Task DragBroadcastRetriesWithTheLatestSnapshotAndNeverExposesTheLeaseToken()
     {
         var leases = new SeatingDragLeaseService(TimeProvider.System);
@@ -113,6 +136,7 @@ public sealed class PlanningRealtimeTests
     internal sealed class RecordingClients : IHubCallerClients, IHubClients
     {
         public string? GroupName { get; private set; }
+        public IReadOnlyList<string>? Excluded { get; private set; }
         public RecordingProxy Proxy { get; } = new();
         public IClientProxy Caller => Proxy;
         public IClientProxy Others => Proxy;
@@ -122,7 +146,8 @@ public sealed class PlanningRealtimeTests
         public IClientProxy AllExcept(IReadOnlyList<string> excludedConnectionIds) => throw new NotSupportedException();
         public IClientProxy Client(string connectionId) => throw new NotSupportedException();
         public IClientProxy Clients(IReadOnlyList<string> connectionIds) => throw new NotSupportedException();
-        public IClientProxy GroupExcept(string groupName, IReadOnlyList<string> excludedConnectionIds) => throw new NotSupportedException();
+        public IClientProxy GroupExcept(string groupName, IReadOnlyList<string> excludedConnectionIds)
+        { GroupName = groupName; Excluded = excludedConnectionIds; return Proxy; }
         public IClientProxy Groups(IReadOnlyList<string> groupNames) => throw new NotSupportedException();
         public IClientProxy User(string userId) => throw new NotSupportedException();
         public IClientProxy Users(IReadOnlyList<string> userIds) => throw new NotSupportedException();

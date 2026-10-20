@@ -13,6 +13,8 @@ public interface ISeatingDragLeaseService
     SeatingDragLease Acquire(Guid weddingId, Guid userId, string connectionId, string displayName, IReadOnlyList<Guid> placeIds);
     SeatingDragLease Renew(Guid weddingId, Guid token, Guid userId, string connectionId);
     SeatingDragLease RequireOwned(Guid weddingId, Guid token, Guid userId, string connectionId);
+    void QueuePointer(Guid weddingId, Guid token, Guid userId, string connectionId, string anchor, double x, double y, long sequence);
+    IReadOnlyList<SeatingDragPointer> DrainPointers();
     void Target(Guid weddingId, Guid token, Guid userId, string connectionId, Guid? tableId, int? seatNumber);
     void Release(Guid weddingId, Guid token, Guid userId, string connectionId);
     void Disconnect(string connectionId, Guid? weddingId = null);

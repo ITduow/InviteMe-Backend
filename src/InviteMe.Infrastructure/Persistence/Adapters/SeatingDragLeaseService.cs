@@ -11,6 +11,8 @@ public sealed class SeatingDragLeaseService(TimeProvider clock) : ISeatingDragLe
     private readonly Dictionary<Guid, long> revisions = [];
     private readonly HashSet<Guid> dirty = [];
     private readonly HashSet<Guid> writers = [];
+    private readonly Dictionary<Guid, SeatingDragPointer> pointers = [];
+    private readonly Dictionary<Guid, long> pointerSequences = [];
     private long revision;
     private static readonly TimeSpan Lifetime = TimeSpan.FromSeconds(15);
 
@@ -49,6 +51,29 @@ public sealed class SeatingDragLeaseService(TimeProvider clock) : ISeatingDragLe
         lock (gate) return Owned(weddingId, token, userId, connectionId);
     }
 
+    public void QueuePointer(Guid weddingId, Guid token, Guid userId, string connectionId, string anchor, double x, double y, long sequence)
+    {
+        lock (gate)
+        {
+            var lease = Owned(weddingId, token, userId, connectionId);
+            if (pointerSequences.TryGetValue(token, out var last) && sequence <= last) return;
+            pointerSequences[token] = sequence;
+            pointers[token] = new(weddingId, connectionId, lease.DragId, anchor, x, y, sequence);
+        }
+    }
+
+    public IReadOnlyList<SeatingDragPointer> DrainPointers()
+    {
+        lock (gate)
+        {
+            var now = clock.GetUtcNow();
+            var result = pointers.Where(pair => leases.TryGetValue(pair.Key, out var lease) && lease.ExpiresAt > now)
+                .Select(pair => pair.Value).ToArray();
+            pointers.Clear();
+            return result;
+        }
+    }
+
     public void Target(Guid weddingId, Guid token, Guid userId, string connectionId, Guid? tableId, int? seatNumber)
     {
         lock (gate)
@@ -68,6 +93,7 @@ public sealed class SeatingDragLeaseService(TimeProvider clock) : ISeatingDragLe
             if (!leases.ContainsKey(token)) return;
             Owned(weddingId, token, userId, connectionId);
             leases.Remove(token);
+            ForgetPointer(token);
             Changed(weddingId);
         }
     }
@@ -79,6 +105,7 @@ public sealed class SeatingDragLeaseService(TimeProvider clock) : ISeatingDragLe
                          (weddingId == null || x.WeddingId == weddingId)).ToArray())
             {
                 leases.Remove(lease.Token);
+                ForgetPointer(lease.Token);
                 Changed(lease.WeddingId);
             }
     }
@@ -133,6 +160,7 @@ public sealed class SeatingDragLeaseService(TimeProvider clock) : ISeatingDragLe
         if (lease.ExpiresAt <= clock.GetUtcNow())
         {
             leases.Remove(token);
+            ForgetPointer(token);
             Changed(weddingId);
             throw Conflict("SEATING_DRAG_EXPIRED");
         }
@@ -143,9 +171,11 @@ public sealed class SeatingDragLeaseService(TimeProvider clock) : ISeatingDragLe
         foreach (var lease in leases.Values.Where(x => x.ExpiresAt <= clock.GetUtcNow()).ToArray())
         {
             leases.Remove(lease.Token);
+            ForgetPointer(lease.Token);
             Changed(lease.WeddingId);
         }
     }
+    private void ForgetPointer(Guid token) { pointers.Remove(token); pointerSequences.Remove(token); }
     private void Changed(Guid weddingId) { revisions[weddingId] = ++revision; dirty.Add(weddingId); }
     private SeatingDragSnapshot Read(Guid weddingId) =>
         new(weddingId, revisions.GetValueOrDefault(weddingId), leases.Values.Where(x => x.WeddingId == weddingId)

@@ -6,6 +6,30 @@ namespace InviteMe.UnitTests;
 public sealed class SeatingDragLeaseTests
 {
     [Fact]
+    public void PointerQueueCoalescesLatestRejectsReorderingAndDropsEndedOrExpiredGestures()
+    {
+        var clock = new Clock(); var service = new SeatingDragLeaseService(clock);
+        var wedding = Guid.NewGuid(); var user = Guid.NewGuid();
+        var lease = service.Acquire(wedding, user, "owner", "An", [Guid.NewGuid()]);
+        for (var i = 1; i <= 100; i++)
+            service.QueuePointer(wedding, lease.Token, user, "owner", "board", .5, .5, i);
+        Assert.Equal(100, Assert.Single(service.DrainPointers()).Sequence);
+        service.QueuePointer(wedding, lease.Token, user, "owner", "board", .1, .1, 99);
+        Assert.Empty(service.DrainPointers());
+        service.QueuePointer(wedding, lease.Token, user, "owner", "board", .1, .1, 101);
+        service.Release(wedding, lease.Token, user, "owner");
+        Assert.Empty(service.DrainPointers());
+        lease = service.Acquire(wedding, user, "owner", "An", [Guid.NewGuid()]);
+        service.QueuePointer(wedding, lease.Token, user, "owner", "board", .1, .1, 1);
+        clock.Now += TimeSpan.FromSeconds(16);
+        Assert.Empty(service.DrainPointers());
+        service.DrainChanges();
+        lease = service.Acquire(wedding, user, "owner", "An", [Guid.NewGuid()]);
+        service.QueuePointer(wedding, lease.Token, user, "owner", "board", .1, .1, 1);
+        service.Disconnect("owner");
+        Assert.Empty(service.DrainPointers());
+    }
+    [Fact]
     public void PointerOwnershipLookupChecksOnlyItsLeaseAndStillRejectsExpiryAndWrongOwner()
     {
         var clock = new Clock(); var service = new SeatingDragLeaseService(clock);

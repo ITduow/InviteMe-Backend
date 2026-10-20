@@ -22,22 +22,20 @@ public sealed class SeatingDragHubTests
         var leases = new SeatingDragLeaseService(TimeProvider.System); var plan = new Plan();
         var owner = Hub("a", Guid.NewGuid(), new Permissions(), leases, plan, account);
         var other = Hub("b", Guid.NewGuid(), new Permissions(), leases, plan, account);
-        var clients = new PlanningRealtimeTests.RecordingClients(); owner.Clients = clients;
-        var count = 0; clients.Proxy.Sending = () => count++;
         var lease = await owner.StartSeatingDrag(plan.Wedding, [plan.Place]);
         var reads = plan.Reads;
         await owner.MoveSeatingPointer(plan.Wedding, lease.Token, "board", .2, .3, 1);
         for (var i = 0; i < 10; i++) await owner.MoveSeatingPointer(plan.Wedding, lease.Token, "queue", .5, .6, i + 2);
-        Assert.Equal(1, count);
         Assert.Equal(reads, plan.Reads);
-        Assert.Equal($"seating:{plan.Wedding:D}", clients.GroupName);
-        var pointer = Assert.IsType<SeatingDragPointer>(Assert.Single(clients.Proxy.Arguments!));
+        var pointer = Assert.Single(leases.DrainPointers());
+        Assert.Equal(11, pointer.Sequence);
         Assert.Equal(lease.DragId, pointer.DragId);
         Assert.Equal("a", pointer.ConnectionId);
         await Assert.ThrowsAsync<HubException>(() => other.MoveSeatingPointer(plan.Wedding, lease.Token, "board", .2, .3, 20));
         await Assert.ThrowsAsync<HubException>(() => owner.MoveSeatingPointer(plan.Wedding, lease.Token, "board", double.NaN, .3, 20));
         await Assert.ThrowsAsync<HubException>(() => owner.MoveSeatingPointer(plan.Wedding, lease.Token, "unknown", .2, .3, 20));
         await owner.EndSeatingDrag(plan.Wedding, lease.Token);
+        Assert.Empty(leases.DrainPointers());
         await Assert.ThrowsAsync<HubException>(() => owner.MoveSeatingPointer(plan.Wedding, lease.Token, "board", .2, .3, 20));
     }
     [Fact]
