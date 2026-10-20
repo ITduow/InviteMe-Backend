@@ -3,11 +3,14 @@ using InviteMe.Application.Common.Errors;
 using InviteMe.Domain.Weddings;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
+using InviteMe.Application.Features.Seating.Planning;
+using InviteMe.Application.Ports.Authentication;
 
 namespace InviteMe.Api.Hubs;
 
 [Authorize]
-public sealed class WeddingHub(IWeddingPermissionService permissions) : Hub
+public sealed class WeddingHub(IWeddingPermissionService permissions, ISeatingDragLeaseService leases,
+    IPlanningSeatingStore seating, IAccountStore accounts) : Hub
 {
     public async Task JoinWedding(Guid weddingId)
     {
@@ -22,8 +25,73 @@ public sealed class WeddingHub(IWeddingPermissionService permissions) : Hub
         await Groups.AddToGroupAsync(Context.ConnectionId, GroupName(weddingId), Context.ConnectionAborted);
     }
 
-    public Task LeaveWedding(Guid weddingId) =>
-        Groups.RemoveFromGroupAsync(Context.ConnectionId, GroupName(weddingId), Context.ConnectionAborted);
+    public async Task LeaveWedding(Guid weddingId)
+    {
+        leases.Disconnect(Context.ConnectionId, weddingId);
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, GroupName(weddingId), Context.ConnectionAborted);
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, SeatingGroupName(weddingId), Context.ConnectionAborted);
+    }
+
+    public async Task<SeatingDragSnapshot> GetSeatingDrags(Guid weddingId)
+    {
+        await RequireSeating(weddingId, false);
+        await Groups.AddToGroupAsync(Context.ConnectionId, SeatingGroupName(weddingId), Context.ConnectionAborted);
+        return leases.Snapshot(weddingId);
+    }
+
+    public async Task<SeatingDragLease> StartSeatingDrag(Guid weddingId, IReadOnlyList<Guid> placeIds)
+    {
+        await RequireSeating(weddingId, true);
+        if (placeIds.Count is < 1 or > 500) throw new HubException("INVALID_DRAG_PLACES");
+        var plan = await seating.GetAsync(weddingId, Context.ConnectionAborted);
+        if (placeIds.Any(id => !plan.Places.Any(p => p.Id == id))) throw new HubException("PLACE_NOT_FOUND");
+        var account = await accounts.GetAsync(UserId, Context.ConnectionAborted);
+        return Lease(() => leases.Acquire(weddingId, UserId, Context.ConnectionId, account?.DisplayName ?? "Cohost", placeIds));
+    }
+
+    public async Task<SeatingDragLease> RenewSeatingDrag(Guid weddingId, Guid token)
+    {
+        await RequireSeating(weddingId, true);
+        return Lease(() => leases.Renew(weddingId, token, UserId, Context.ConnectionId));
+    }
+
+    public async Task TargetSeatingDrag(Guid weddingId, Guid token, Guid? tableId, int? seatNumber)
+    {
+        await RequireSeating(weddingId, true);
+        if (tableId == Guid.Empty || seatNumber is < 1 or > 20 || (seatNumber != null && tableId == null))
+            throw new HubException("INVALID_DRAG_TARGET");
+        Lease(() => { leases.Target(weddingId, token, UserId, Context.ConnectionId, tableId, seatNumber); return true; });
+    }
+
+    public Task EndSeatingDrag(Guid weddingId, Guid token)
+    {
+        Lease(() => { leases.Release(weddingId, token, UserId, Context.ConnectionId); return true; });
+        return Task.CompletedTask;
+    }
+
+    public override Task OnDisconnectedAsync(Exception? exception)
+    {
+        leases.Disconnect(Context.ConnectionId);
+        return base.OnDisconnectedAsync(exception);
+    }
+
+    private Guid UserId => Guid.Parse(Context.User!.FindFirst("sub")!.Value);
+    private async Task RequireSeating(Guid weddingId, bool edit)
+    {
+        try
+        {
+            await permissions.RequireAsync(weddingId, WeddingPermission.WEDDING_VIEW, Context.ConnectionAborted);
+            await permissions.RequireAsync(weddingId, WeddingPermission.SEATING_VIEW, Context.ConnectionAborted);
+            if (edit) await permissions.RequireAsync(weddingId, WeddingPermission.SEATING_EDIT, Context.ConnectionAborted);
+        }
+        catch (ApplicationProblemException) { throw new HubException("SEATING_ACCESS_DENIED"); }
+    }
+    private static T Lease<T>(Func<T> action)
+    {
+        try { return action(); }
+        catch (ApplicationProblemException error) { throw new HubException(error.Code); }
+    }
 
     internal static string GroupName(Guid weddingId) => $"wedding:{weddingId:D}";
+    internal static string SeatingGroupName(Guid weddingId) => $"seating:{weddingId:D}";
 }
