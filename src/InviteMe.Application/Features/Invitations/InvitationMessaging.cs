@@ -210,7 +210,7 @@ public sealed class InvitationMessagingHandler(
         var guest = await store.FindRecipientAsync(weddingId, guestId, ct)
             ?? throw new ApplicationProblemException(ProblemKind.NotFound, "GUEST_NOT_FOUND", "Guest is unavailable in this wedding.");
         var (rsvp, qr) = Links(guest.Token!);
-        return new(guest.Id, guest.RecipientName, draft.Subject,
+        return new(guest.Id, guest.RecipientName, InvitationMessageTemplate.Render(draft.Subject, guest.RecipientName, rsvp, qr),
             InvitationMessageTemplate.Render(draft.Content, guest.RecipientName, rsvp, qr),
             InvitationMessageTemplate.Render(draft.SmsContent, guest.RecipientName, rsvp, ""), rsvp, qr);
     }
@@ -257,7 +257,8 @@ public sealed class InvitationMessagingHandler(
             ?? throw new ApplicationProblemException(ProblemKind.NotFound, "GUEST_NOT_FOUND", "Guest is unavailable in this wedding.");
         var (rsvp, qr) = Links(guest.Token!);
         var message = new InvitationOutboundMessage(Guid.NewGuid(), weddingId, "EMAIL", account.Email,
-            draft.Subject, InvitationMessageTemplate.Render(draft.Content, guest.RecipientName, rsvp, qr), rsvp, qr);
+            InvitationMessageTemplate.Render(draft.Subject, guest.RecipientName, rsvp, qr),
+            InvitationMessageTemplate.Render(draft.Content, guest.RecipientName, rsvp, qr), rsvp, qr);
         await channels.SendAsync(message, ct);
         await store.RecordTestSendAsync(weddingId, guestId, actor, ct);
     }
