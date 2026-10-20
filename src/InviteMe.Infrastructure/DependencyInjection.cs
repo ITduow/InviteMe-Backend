@@ -87,6 +87,8 @@ public static class DependencyInjection
             configuration["InvitationMessaging:PublicApiUrl"] ?? "http://localhost:5000"));
         services.AddScoped<InviteMe.Application.Features.Invitations.IInvitationDesignStore, InvitationDesignStore>();
         services.AddScoped<InviteMe.Application.Features.Seating.Planning.IPlanningSeatingStore, PlanningSeatingStore>();
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<InviteMe.Application.Features.Seating.Planning.ISeatingDragLeaseService, SeatingDragLeaseService>();
         services.AddScoped<InviteMe.Application.Features.Guests.Access.IGuestAccessStore, GuestAccessStore>();
         services.AddSingleton<InviteMe.Application.Ports.Invitations.IQrCodeRenderer, InviteMe.Infrastructure.Invitations.QrCodeRenderer>();
         services.AddScoped<InviteMe.Application.Ports.Rsvps.IRsvpStore, InviteMe.Infrastructure.Persistence.Adapters.Rsvps.RsvpStore>();

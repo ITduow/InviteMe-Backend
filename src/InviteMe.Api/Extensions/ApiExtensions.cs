@@ -50,6 +50,8 @@ internal static class ApiExtensions
         services.AddExceptionHandler<ApiExceptionHandler>();
         services.AddSignalR(options => options.EnableDetailedErrors = false);
         services.AddScoped<IPlanningChangePublisher, SignalRPlanningChangePublisher>();
+        services.AddHostedService<SeatingDragBroadcaster>();
+        services.AddHostedService<SeatingPointerBroadcaster>();
         services.AddOpenApi(options =>
         {
             options.AddDocumentTransformer((document, _, _) =>
