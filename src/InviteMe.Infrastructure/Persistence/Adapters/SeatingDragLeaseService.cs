@@ -126,9 +126,16 @@ public sealed class SeatingDragLeaseService(TimeProvider clock) : ISeatingDragLe
 
     private SeatingDragLease Owned(Guid weddingId, Guid token, Guid userId, string connectionId)
     {
-        Expire();
         if (!leases.TryGetValue(token, out var lease) || lease.WeddingId != weddingId ||
             lease.UserId != userId || lease.ConnectionId != connectionId) throw Conflict("SEATING_DRAG_EXPIRED");
+        // Hot path for pointer packets: inspect only this lease. DrainChanges still
+        // sweeps all expired leases in the background for authoritative snapshots.
+        if (lease.ExpiresAt <= clock.GetUtcNow())
+        {
+            leases.Remove(token);
+            Changed(weddingId);
+            throw Conflict("SEATING_DRAG_EXPIRED");
+        }
         return lease;
     }
     private void Expire()

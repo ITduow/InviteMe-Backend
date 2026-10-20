@@ -6,6 +6,22 @@ namespace InviteMe.UnitTests;
 public sealed class SeatingDragLeaseTests
 {
     [Fact]
+    public void PointerOwnershipLookupChecksOnlyItsLeaseAndStillRejectsExpiryAndWrongOwner()
+    {
+        var clock = new Clock(); var service = new SeatingDragLeaseService(clock);
+        var wedding = Guid.NewGuid(); var user = Guid.NewGuid();
+        var lease = service.Acquire(wedding, user, "owner", "An", [Guid.NewGuid()]);
+        for (var i = 0; i < 100; i++)
+            service.Acquire(Guid.NewGuid(), user, $"other-{i}", "Other", [Guid.NewGuid()]);
+        var before = clock.Reads;
+        Assert.Equal(lease, service.RequireOwned(wedding, lease.Token, user, "owner"));
+        Assert.Equal(1, clock.Reads - before);
+        Assert.Throws<ApplicationProblemException>(() => service.RequireOwned(wedding, lease.Token, user, "other"));
+        clock.Now += TimeSpan.FromSeconds(16);
+        Assert.Throws<ApplicationProblemException>(() => service.RequireOwned(wedding, lease.Token, user, "owner"));
+        Assert.All(service.DrainChanges(), snapshot => Assert.Empty(snapshot.Leases));
+    }
+    [Fact]
     public void WriteAdmissionChecksLeaseOwnershipAndBlocksReassignmentUntilCommit()
     {
         var clock = new Clock(); var service = new SeatingDragLeaseService(clock);
@@ -48,7 +64,8 @@ public sealed class SeatingDragLeaseTests
     private sealed class Clock : TimeProvider
     {
         public DateTimeOffset Now = DateTimeOffset.UtcNow;
-        public override DateTimeOffset GetUtcNow() => Now;
+        public int Reads;
+        public override DateTimeOffset GetUtcNow() { Reads++; return Now; }
     }
 
     [Fact]
