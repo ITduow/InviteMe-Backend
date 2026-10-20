@@ -5,11 +5,40 @@ using InviteMe.Application.Features.Seating.Planning;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using InviteMe.Infrastructure.Persistence.Adapters;
 
 namespace InviteMe.IntegrationTests;
 
 public sealed class PlanningRealtimeTests
 {
+    [Fact]
+    public async Task DragBroadcastRetriesWithTheLatestSnapshotAndNeverExposesTheLeaseToken()
+    {
+        var leases = new SeatingDragLeaseService(TimeProvider.System);
+        var clients = new RecordingClients(); clients.Proxy.Fail = true;
+        var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var delivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        clients.Proxy.Sending = () =>
+        {
+            if (clients.Proxy.Fail) failed.TrySetResult();
+            else if (clients.Proxy.Arguments?[0] is SeatingDragSnapshot { Leases.Count: 0 }) delivered.TrySetResult();
+        };
+        var wedding = Guid.NewGuid(); var user = Guid.NewGuid();
+        var lease = leases.Acquire(wedding, user, "a", "An", [Guid.NewGuid()]);
+        Assert.DoesNotContain(lease.Token.ToString(), JsonSerializer.Serialize(leases.Snapshot(wedding)));
+        using var worker = new SeatingDragBroadcaster(leases, new TestHubContext(clients), NullLogger<SeatingDragBroadcaster>.Instance);
+        await worker.StartAsync(CancellationToken.None);
+        try
+        {
+            await failed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            leases.Release(wedding, lease.Token, user, "a");
+            clients.Proxy.Fail = false;
+            await delivered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal($"seating:{wedding:D}", clients.GroupName);
+            Assert.Equal("SeatingDragSnapshot", clients.Proxy.Method);
+        }
+        finally { await worker.StopAsync(CancellationToken.None); }
+    }
     [Fact]
     public void ApiResolvesPlanningHandlersAndTheirOwnPublisher()
     {
@@ -71,10 +100,13 @@ public sealed class PlanningRealtimeTests
         public object?[]? Arguments { get; private set; }
         public CancellationToken Token { get; private set; }
         public bool Fail { get; set; }
+        public Action? Sending { get; set; }
         public Task SendCoreAsync(string method, object?[] args, CancellationToken cancellationToken = default)
         {
             Method = method; Arguments = args; Token = cancellationToken;
-            return Fail ? Task.FromException(new InvalidOperationException("Transport unavailable")) : Task.CompletedTask;
+            var fail = Fail;
+            Sending?.Invoke();
+            return fail ? Task.FromException(new InvalidOperationException("Transport unavailable")) : Task.CompletedTask;
         }
     }
 
