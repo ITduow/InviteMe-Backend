@@ -1,6 +1,7 @@
 using System.Data;
 using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Application.Features.Seating.Planning;
+using InviteMe.Application.Ports.Authentication;
 using InviteMe.Domain.Guests;
 using InviteMe.Domain.Seating;
 using Microsoft.EntityFrameworkCore;
@@ -8,7 +9,7 @@ using static InviteMe.Infrastructure.Persistence.Adapters.PlanningPersistence;
 
 namespace InviteMe.Infrastructure.Persistence.Adapters;
 
-public sealed class PlanningSeatingStore(InviteMeDbContext db) : IPlanningSeatingStore
+public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLeaseService leases, ICurrentUser user) : IPlanningSeatingStore
 {
     public async Task<PlanningSeatingDto> GetAsync(Guid weddingId, CancellationToken ct)
     {
@@ -28,6 +29,18 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db) : IPlanningSeatin
         if (plan is null) { plan = new() { WeddingId = weddingId }; db.Add(plan); }
         var tables = await db.Set<PlanningTable>().Where(x => x.WeddingId == weddingId).ToListAsync(ct);
         var table = input.TableId is { } id ? tables.SingleOrDefault(x => x.Id == id) ?? throw Missing("TABLE_NOT_FOUND") : null;
+        IReadOnlyList<Guid>? affected = input.Action switch
+        {
+            "MOVE_PLACES" => input.PlaceIds,
+            "APPLY_SUGGESTION" => null,
+            "UPDATE_TABLE" or "DELETE_TABLE" => await db.Set<PlanningSeatAssignment>().Where(x => x.TableId == input.TableId)
+                .Select(x => x.PlaceId).ToArrayAsync(ct),
+            _ => []
+        };
+        // Reserve only for the mutation, never a database transaction across the drag itself.
+        // Admission stays reserved until commit so an expiring lease cannot be reassigned mid-write.
+        using var write = leases.BeginWrite(weddingId, user.UserId ?? throw new InvalidOperationException("Authenticated user required."),
+            input.DragToken, affected, input.Action is "UPDATE_TABLE" or "DELETE_TABLE" ? input.TableId : null);
         if (input.Action == "APPLY_SUGGESTION")
         {
             var source = await Snapshot(weddingId, ct);

@@ -10,6 +10,7 @@ public sealed class SeatingDragLeaseService(TimeProvider clock) : ISeatingDragLe
     private readonly Dictionary<Guid, SeatingDragLease> leases = [];
     private readonly Dictionary<Guid, long> revisions = [];
     private readonly HashSet<Guid> dirty = [];
+    private readonly HashSet<Guid> writers = [];
     private long revision;
     private static readonly TimeSpan Lifetime = TimeSpan.FromSeconds(15);
 
@@ -18,6 +19,7 @@ public sealed class SeatingDragLeaseService(TimeProvider clock) : ISeatingDragLe
         lock (gate)
         {
             Expire();
+            if (writers.Contains(weddingId)) throw Conflict("SEATING_WRITE_IN_PROGRESS");
             if (placeIds.Count is < 1 or > 500 || placeIds.Any(x => x == Guid.Empty) || placeIds.Distinct().Count() != placeIds.Count)
                 throw new ApplicationProblemException(ProblemKind.BadRequest, "INVALID_DRAG_PLACES", "Chọn các chỗ hợp lệ.");
             if (leases.Values.Any(x => x.WeddingId == weddingId && x.PlaceIds.Intersect(placeIds).Any()))
@@ -90,6 +92,31 @@ public sealed class SeatingDragLeaseService(TimeProvider clock) : ISeatingDragLe
             dirty.Clear();
             return result;
         }
+    }
+
+    public IDisposable BeginWrite(Guid weddingId, Guid userId, Guid? token, IReadOnlyList<Guid>? placeIds, Guid? tableId = null)
+    {
+        lock (gate)
+        {
+            Expire();
+            if (writers.Contains(weddingId)) throw Conflict("SEATING_WRITE_IN_PROGRESS");
+            if (token.HasValue)
+            {
+                if (!leases.TryGetValue(token.Value, out var own) || own.WeddingId != weddingId || own.UserId != userId ||
+                    placeIds == null || !own.PlaceIds.ToHashSet().SetEquals(placeIds)) throw Conflict("SEATING_DRAG_EXPIRED");
+            }
+            var conflicts = leases.Values.Where(x => x.WeddingId == weddingId && x.Token != token &&
+                (placeIds == null || x.PlaceIds.Intersect(placeIds).Any() || (tableId != null && x.TableId == tableId)));
+            if (conflicts.Any()) throw Conflict("SEATING_PLACE_LOCKED");
+            writers.Add(weddingId);
+            return new WriteScope(() => { lock (gate) writers.Remove(weddingId); });
+        }
+    }
+
+    private sealed class WriteScope(Action release) : IDisposable
+    {
+        private Action? cleanup = release;
+        public void Dispose() => Interlocked.Exchange(ref cleanup, null)?.Invoke();
     }
 
     private SeatingDragLease Owned(Guid weddingId, Guid token, Guid userId, string connectionId)

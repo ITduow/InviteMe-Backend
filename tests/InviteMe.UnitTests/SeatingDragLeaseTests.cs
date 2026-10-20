@@ -5,6 +5,46 @@ namespace InviteMe.UnitTests;
 
 public sealed class SeatingDragLeaseTests
 {
+    [Fact]
+    public void WriteAdmissionChecksLeaseOwnershipAndBlocksReassignmentUntilCommit()
+    {
+        var clock = new Clock(); var service = new SeatingDragLeaseService(clock);
+        var wedding = Guid.NewGuid(); var user = Guid.NewGuid(); var place = Guid.NewGuid(); var other = Guid.NewGuid();
+        var lease = service.Acquire(wedding, user, "a", "An", [place]);
+        Assert.Throws<ApplicationProblemException>(() => service.BeginWrite(wedding, user, null, [place]));
+        Assert.Throws<ApplicationProblemException>(() => service.BeginWrite(wedding, Guid.NewGuid(), lease.Token, [place]));
+        Assert.Throws<ApplicationProblemException>(() => service.BeginWrite(wedding, user, lease.Token, [place, other]));
+        Assert.Throws<ApplicationProblemException>(() => service.BeginWrite(wedding, user, null, null));
+        using (service.BeginWrite(wedding, user, lease.Token, [place]))
+        {
+            clock.Now += TimeSpan.FromSeconds(20);
+            Assert.Throws<ApplicationProblemException>(() => service.Acquire(wedding, user, "b", "Binh", [place]));
+        }
+        Assert.Throws<ApplicationProblemException>(() => service.BeginWrite(wedding, user, lease.Token, [place]));
+        service.Acquire(wedding, user, "b", "Binh", [place]);
+        using var independent = service.BeginWrite(wedding, user, null, [other]);
+    }
+
+    [Fact]
+    public void TableChangesRespectHoverTargetsAndOnlyOneConcurrentAcquireSucceeds()
+    {
+        var service = new SeatingDragLeaseService(new Clock());
+        var wedding = Guid.NewGuid(); var user = Guid.NewGuid(); var place = Guid.NewGuid(); var table = Guid.NewGuid();
+        var wins = 0;
+        Parallel.For(0, 20, i =>
+        {
+            try { service.Acquire(wedding, user, i.ToString(), "An", [place]); Interlocked.Increment(ref wins); }
+            catch (ApplicationProblemException) { }
+        });
+        Assert.Equal(1, wins);
+        // Find the winner without exposing the private token to observers.
+        var connection = Assert.Single(service.Snapshot(wedding).Leases).ConnectionId;
+        service.Disconnect(connection);
+        var lease = service.Acquire(wedding, user, "a", "An", [place]);
+        service.Target(wedding, lease.Token, user, "a", table, 1);
+        Assert.Throws<ApplicationProblemException>(() => service.BeginWrite(wedding, user, null, [], table));
+        using var unrelated = service.BeginWrite(wedding, user, null, [], Guid.NewGuid());
+    }
     private sealed class Clock : TimeProvider
     {
         public DateTimeOffset Now = DateTimeOffset.UtcNow;

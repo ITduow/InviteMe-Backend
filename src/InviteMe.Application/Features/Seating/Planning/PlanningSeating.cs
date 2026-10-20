@@ -13,7 +13,8 @@ public sealed record PlanningSeatingDto(Guid WeddingId, int Version, IReadOnlyLi
     IReadOnlyList<PlanningGuestDto> Guests, IReadOnlyList<PlanningSeatingPlace> Places, IReadOnlyList<PlanningAssignmentDto> Assignments);
 public sealed record ChangePlanningSeating(int ExpectedVersion, string Action, Guid? TableId = null,
     string? Name = null, int? Capacity = null, IReadOnlyList<Guid>? PlaceIds = null, int? SeatNumber = null,
-    int? TableCount = null, string? Strategy = null, string Mode = "UNASSIGNED", string? SourceFingerprint = null, bool ConfirmReplace = false);
+    int? TableCount = null, string? Strategy = null, string Mode = "UNASSIGNED", string? SourceFingerprint = null, bool ConfirmReplace = false,
+    Guid? DragToken = null);
 
 public interface IPlanningSeatingStore
 {

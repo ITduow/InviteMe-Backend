@@ -16,4 +16,5 @@ public interface ISeatingDragLeaseService
     void Disconnect(string connectionId, Guid? weddingId = null);
     SeatingDragSnapshot Snapshot(Guid weddingId);
     IReadOnlyList<SeatingDragSnapshot> DrainChanges();
+    IDisposable BeginWrite(Guid weddingId, Guid userId, Guid? token, IReadOnlyList<Guid>? placeIds, Guid? tableId = null);
 }
