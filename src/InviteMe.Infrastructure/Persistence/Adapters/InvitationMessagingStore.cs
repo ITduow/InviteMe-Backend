@@ -144,7 +144,8 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
                 {
                     Id = Guid.NewGuid(), BatchId = batch.Id, WeddingId = weddingId, PlanningGuestId = guest.Id,
                     Channel = channel, Recipient = channel == "EMAIL" ? guest.Email!.Trim() : guest.Phone!.Trim(),
-                    Subject = subject, Content = rendered, RsvpLink = rsvp, QrLink = qr,
+                    Subject = InvitationMessageTemplate.Render(subject, guest.RecipientName, rsvp, qr),
+                    Content = rendered, RsvpLink = rsvp, QrLink = qr,
                     Status = "PENDING", NextAttemptAt = clock.GetUtcNow(), CreatedAt = clock.GetUtcNow()
                 });
             }

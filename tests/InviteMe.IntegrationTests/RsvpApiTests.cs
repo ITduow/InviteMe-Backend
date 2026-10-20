@@ -7,6 +7,8 @@ using InviteMe.Application.Common.Models;
 using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Application.Features.Identity.Accounts;
 using InviteMe.Application.Features.Rsvps;
+using InviteMe.Application.Features.Seating.Planning;
+using InviteMe.Application.Features.Weddings.Setup;
 using InviteMe.Application.Features.Weddings.CoHosts;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Domain.Guests;
@@ -30,6 +32,91 @@ namespace InviteMe.IntegrationTests;
 public sealed class RsvpApiTests
 {
     private const string Password = "Test-only-Pass123!";
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task WeddingWithThirtyImportedInvitationsFlowsThroughRsvpWaitlistAndSeating() => WithApi(async (db, factory, owner, _) =>
+    {
+        var eventAt = DateTimeOffset.UtcNow.AddMonths(6);
+        var wedding = await Read<WeddingSetupDto>(await owner.PostAsJsonAsync("/api/weddings",
+            new CreateWeddingInput("Thirty guest RSVP flow", "rsvp-flow-thirty", eventAt,
+                "Test hall", "Test address", 80, eventAt.AddDays(-10))));
+        var w = wedding.Id;
+        var emptyDraft = await owner.GetAsync($"/api/weddings/{w}/invitation-messages/draft");
+        Assert.Equal(HttpStatusCode.OK, emptyDraft.StatusCode);
+        Assert.Equal("null", await emptyDraft.Content.ReadAsStringAsync());
+        var rows = Enumerable.Range(0, 30).Select(i => new PlanningRow(i + 2, $"QA guest {i + 1:00}",
+            Honorific: i % 3 == 0 ? "Bác" : i % 3 == 1 ? "Anh" : "Bạn",
+            InvitationKind: i % 3 == 0 ? "FAMILY" : i % 3 == 1 ? "GROUP" : "INDIVIDUAL",
+            ExpectedPeople: i % 3 == 0 ? 4 : i % 3 == 1 ? 2 : 1,
+            Side: i % 2 == 0 ? "BRIDE" : "GROOM",
+            Group: new PlanningGroupInput(NewName: i % 2 == 0 ? "Họ ngoại" : "Đồng nghiệp", Confirmed: true),
+            Note: i == 0 ? "Gần lối đi" : null)).ToArray();
+        using var import = new HttpRequestMessage(HttpMethod.Post, $"/api/weddings/{w}/guest-planning/imports")
+        { Content = JsonContent.Create(new PlanningImport(rows)) };
+        import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        var imported = await Read<PlanningImportResult>(await owner.SendAsync(import));
+        Assert.Equal((30, 70, 2), (imported.CreatedGuestCount, imported.CreatedPlaceCount, imported.CreatedGroups.Count));
+        Assert.Equal(30, (await owner.GetFromJsonAsync<PlanningGuestPage>($"/api/weddings/{w}/guest-planning/guests?pageSize=50"))!.TotalItems);
+
+        var family = await Seed(db, imported.Items[0].GuestId);
+        var group = await Seed(db, imported.Items[1].GuestId);
+        var individual = await Seed(db, imported.Items[2].GuestId);
+        var lockedGuest = await Seed(db, imported.Items[3].GuestId);
+        var seatingUrl = $"/api/weddings/{w}/guest-planning/seating-plan";
+        var plan = (await owner.GetFromJsonAsync<PlanningSeatingDto>(seatingUrl))!;
+        Assert.Equal(70, plan.Places.Count);
+        plan = await Read<PlanningSeatingDto>(await owner.PatchAsJsonAsync(seatingUrl,
+            new ChangePlanningSeating(plan.Version, "CREATE_TABLE", Name: "Bàn gia đình", Capacity: 4)));
+        var table = Assert.Single(plan.Tables);
+        var familyPlaces = plan.Places.Where(p => p.GuestId == family.GuestId).OrderBy(p => p.Position).Select(p => p.Id).ToArray();
+        plan = await Read<PlanningSeatingDto>(await owner.PatchAsJsonAsync(seatingUrl,
+            new ChangePlanningSeating(plan.Version, "MOVE_PLACES", table.Id, PlaceIds: familyPlaces)));
+        Assert.Equal(4, plan.Assignments.Count);
+
+        var events = new RecordingPublisher();
+        await using var app = factory.WithWebHostBuilder(b => b.ConfigureTestServices(s =>
+        { s.RemoveAll<IPlanningChangePublisher>(); s.AddSingleton<IPlanningChangePublisher>(events); }));
+        using var guest = app.CreateClient(new() { BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false, HandleCookies = false });
+        var initial = (await guest.GetFromJsonAsync<RsvpDto>(family.Url))!;
+        Assert.Equal((4, "PENDING"), (initial.Places.Count, initial.Status));
+        var answered = await Created(await guest.PostAsJsonAsync(family.Url,
+            new SubmitRsvp(0, "ATTENDING", [family.Main], ["QA family 2", "QA family 3"], Note: "Gần lối đi")));
+        Assert.Equal((3, "UNUSED"), (answered.ConfirmedPartySize, answered.Places[3].Status));
+        Assert.Contains(events.Changes, e => e.WeddingId == w && e.Change.Type == RsvpHandler.RsvpChanged);
+        Assert.Contains(events.Changes, e => e.WeddingId == w && e.Change.Type == RsvpHandler.SeatingNeedsAttention);
+        plan = (await owner.GetFromJsonAsync<PlanningSeatingDto>(seatingUrl))!;
+        Assert.Equal(4, plan.Assignments.Count);
+        Assert.Null(plan.Places.Single(p => p.Id == familyPlaces[3]).Person);
+
+        await Created(await guest.PostAsJsonAsync(individual.Url, new SubmitRsvp(0, "DECLINED", [])));
+        var waiting = await Created(await guest.PostAsJsonAsync(group.Url,
+            new SubmitRsvp(0, "ATTENDING", [group.Main], ["QA group 2", "QA extra"])));
+        Assert.Equal((2, 1, RsvpCapacityOutcome.PartiallyWaitlisted),
+            (waiting.ConfirmedPartySize, waiting.WaitlistedPartySize, waiting.CapacityOutcome));
+        var waitlist = (await owner.GetFromJsonAsync<PagedResult<WaitlistDto>>($"/api/weddings/{w}/rsvps/waitlist"))!;
+        var entry = Assert.Single(waitlist.Items);
+        Assert.Equal(group.GuestId, entry.GuestId);
+        var promoted = await Read<RsvpDto>(await owner.PostAsync($"/api/weddings/{w}/rsvps/waitlist/{entry.Id}/promote", null));
+        Assert.Equal((3, 0), (promoted.ConfirmedPartySize, promoted.WaitlistedPartySize));
+        Assert.Empty((await owner.GetFromJsonAsync<PagedResult<WaitlistDto>>($"/api/weddings/{w}/rsvps/waitlist"))!.Items);
+
+        await Read<LockRsvpsResult>(await owner.PutAsJsonAsync($"/api/weddings/{w}/rsvps/locks", new LockRsvps(true, [lockedGuest.GuestId])));
+        var queued = await guest.PostAsJsonAsync(lockedGuest.Url, new SubmitRsvp(0, "ATTENDING", [lockedGuest.Main]));
+        Assert.Equal(HttpStatusCode.Accepted, queued.StatusCode);
+        Assert.Equal(1, (await owner.GetFromJsonAsync<RsvpDashboardDto>($"/api/weddings/{w}/rsvps/dashboard"))!.PendingRequests);
+        var request = Assert.Single((await owner.GetFromJsonAsync<PagedResult<RsvpRequestDto>>($"/api/weddings/{w}/rsvps/requests"))!.Items);
+        await Read<RsvpDto>(await owner.PostAsync($"/api/weddings/{w}/rsvps/requests/{request.Id}/approve", null));
+
+        var dashboard = (await owner.GetFromJsonAsync<RsvpDashboardDto>($"/api/weddings/{w}/rsvps/dashboard"))!;
+        Assert.Equal((30, 4, 26), (dashboard.Invitations.Invited, dashboard.Invitations.Responded, dashboard.Invitations.NotResponded));
+        Assert.Equal((71, 7, 73L), (dashboard.People.InvitedPlaces, dashboard.People.Confirmed, dashboard.Capacity.Remaining!.Value));
+        Assert.Equal(0, dashboard.PendingRequests);
+        Assert.Equal(15, dashboard.BySide.Single(x => x.Side == "BRIDE").Invited);
+        Assert.Equal(15, dashboard.BySide.Single(x => x.Side == "GROOM").Invited);
+        Assert.Equal(26, (await owner.GetFromJsonAsync<PagedResult<RsvpGuestRowDto>>(
+            $"/api/weddings/{w}/rsvps/dashboard/guests?status=NOT_RESPONDED&pageSize=50"))!.TotalCount);
+        Assert.Equal(4, await db.Set<PlanningSeatAssignment>().CountAsync(x => x.TableId == table.Id));
+    });
 
     // ---------------- Guest03: submit / update / history ----------------
 
