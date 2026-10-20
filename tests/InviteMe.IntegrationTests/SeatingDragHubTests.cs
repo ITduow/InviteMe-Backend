@@ -31,6 +31,18 @@ public sealed class SeatingDragHubTests
         Assert.Equal(11, pointer.Sequence);
         Assert.Equal(lease.DragId, pointer.DragId);
         Assert.Equal("a", pointer.ConnectionId);
+        var table = Guid.NewGuid();
+        await owner.MoveSeatingPointerWithTarget(plan.Wedding, lease.Token, $"table:{table}", .5, .6, 12, table, 2);
+        var targeted = Assert.Single(leases.DrainPointers());
+        Assert.True(targeted.HasTarget);
+        Assert.Equal(table, targeted.TableId);
+        Assert.Equal(2, targeted.SeatNumber);
+        Assert.Equal(12, Assert.Single(leases.Snapshot(plan.Wedding).Leases).TargetSequence);
+        // An out-of-order pointer must not revert either the target or its sequence.
+        await owner.MoveSeatingPointerWithTarget(plan.Wedding, lease.Token, "board", .5, .6, 11, null, null);
+        Assert.Empty(leases.DrainPointers());
+        Assert.Equal(table, Assert.Single(leases.Snapshot(plan.Wedding).Leases).TableId);
+        await Assert.ThrowsAsync<HubException>(() => owner.MoveSeatingPointerWithTarget(plan.Wedding, lease.Token, "board", .5, .6, 13, null, 2));
         await Assert.ThrowsAsync<HubException>(() => other.MoveSeatingPointer(plan.Wedding, lease.Token, "board", .2, .3, 20));
         await Assert.ThrowsAsync<HubException>(() => owner.MoveSeatingPointer(plan.Wedding, lease.Token, "board", double.NaN, .3, 20));
         await Assert.ThrowsAsync<HubException>(() => owner.MoveSeatingPointer(plan.Wedding, lease.Token, "unknown", .2, .3, 20));

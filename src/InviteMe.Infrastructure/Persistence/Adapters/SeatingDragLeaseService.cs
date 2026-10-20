@@ -51,14 +51,20 @@ public sealed class SeatingDragLeaseService(TimeProvider clock) : ISeatingDragLe
         lock (gate) return Owned(weddingId, token, userId, connectionId);
     }
 
-    public void QueuePointer(Guid weddingId, Guid token, Guid userId, string connectionId, string anchor, double x, double y, long sequence)
+    public void QueuePointer(Guid weddingId, Guid token, Guid userId, string connectionId, string anchor, double x, double y, long sequence,
+        Guid? tableId = null, int? seatNumber = null, bool hasTarget = false)
     {
         lock (gate)
         {
             var lease = Owned(weddingId, token, userId, connectionId);
             if (pointerSequences.TryGetValue(token, out var last) && sequence <= last) return;
             pointerSequences[token] = sequence;
-            pointers[token] = new(weddingId, connectionId, lease.DragId, anchor, x, y, sequence);
+            if (hasTarget && (lease.TableId != tableId || lease.SeatNumber != seatNumber))
+            {
+                leases[token] = lease with { TableId = tableId, SeatNumber = seatNumber, TargetSequence = sequence };
+                Changed(weddingId);
+            }
+            pointers[token] = new(weddingId, connectionId, lease.DragId, anchor, x, y, sequence, tableId, seatNumber, hasTarget);
         }
     }
 
@@ -179,7 +185,7 @@ public sealed class SeatingDragLeaseService(TimeProvider clock) : ISeatingDragLe
     private void Changed(Guid weddingId) { revisions[weddingId] = ++revision; dirty.Add(weddingId); }
     private SeatingDragSnapshot Read(Guid weddingId) =>
         new(weddingId, revisions.GetValueOrDefault(weddingId), leases.Values.Where(x => x.WeddingId == weddingId)
-            .Select(x => new SeatingDragPresence(x.UserId, x.ConnectionId, x.DisplayName, x.PlaceIds, x.ExpiresAt, x.TableId, x.SeatNumber, x.DragId)).ToArray());
+            .Select(x => new SeatingDragPresence(x.UserId, x.ConnectionId, x.DisplayName, x.PlaceIds, x.ExpiresAt, x.TableId, x.SeatNumber, x.DragId, x.TargetSequence)).ToArray());
     private static ApplicationProblemException Conflict(string code) =>
         new(ProblemKind.Conflict, code, "Chỗ đang được thao tác hoặc quyền kéo đã hết hạn.");
 }

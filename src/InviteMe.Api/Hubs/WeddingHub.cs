@@ -70,12 +70,22 @@ public sealed class WeddingHub(IWeddingPermissionService permissions, ISeatingDr
     }
 
     public Task MoveSeatingPointer(Guid weddingId, Guid token, string anchor, double x, double y, long sequence)
+        => QueuePointer(weddingId, token, anchor, x, y, sequence, null, null, false);
+
+    public Task MoveSeatingPointerWithTarget(Guid weddingId, Guid token, string anchor, double x, double y, long sequence,
+        Guid? tableId, int? seatNumber)
+        => QueuePointer(weddingId, token, anchor, x, y, sequence, tableId, seatNumber, true);
+
+    private Task QueuePointer(Guid weddingId, Guid token, string anchor, double x, double y, long sequence,
+        Guid? tableId, int? seatNumber, bool hasTarget)
     {
         if (anchor is null || !double.IsFinite(x) || !double.IsFinite(y) || x is < 0 or > 1 || y is < 0 or > 1 || sequence < 0 ||
             !(anchor is "queue" or "board" || (anchor.StartsWith("table:", StringComparison.Ordinal) && Guid.TryParse(anchor[6..], out _))))
             throw new HubException("INVALID_DRAG_POINTER");
+        if (tableId == Guid.Empty || seatNumber is < 1 or > 20 || (seatNumber != null && tableId == null))
+            throw new HubException("INVALID_DRAG_TARGET");
         // The live lease already establishes permission and tab ownership. No DB lookup on pointer movement.
-        Lease(() => { leases.QueuePointer(weddingId, token, UserId, Context.ConnectionId, anchor, x, y, sequence); return true; });
+        Lease(() => { leases.QueuePointer(weddingId, token, UserId, Context.ConnectionId, anchor, x, y, sequence, tableId, seatNumber, hasTarget); return true; });
         return Task.CompletedTask;
     }
 
