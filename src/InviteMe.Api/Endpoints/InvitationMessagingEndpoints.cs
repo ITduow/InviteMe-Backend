@@ -10,7 +10,10 @@ internal static class InvitationMessagingEndpoints
             .RequireAuthorization().WithTags("Invitation Messaging");
 
         group.MapGet("/draft", async (Guid weddingId, InvitationMessagingHandler handler, CancellationToken ct) =>
-            Results.Ok(await handler.GetDraftAsync(weddingId, ct)))
+        {
+            var draft = await handler.GetDraftAsync(weddingId, ct);
+            return draft is null ? Results.Content("null", "application/json") : Results.Ok(draft);
+        })
             .WithName("GetInvitationMessageDraft").Produces<InvitationDraftDto>().ProducesProblem(403);
         group.MapPost("/draft/generate", async (Guid weddingId, GenerateInvitationDraft input, InvitationMessagingHandler handler, CancellationToken ct) =>
             Results.Ok(await handler.GenerateAsync(weddingId, input, ct)))
