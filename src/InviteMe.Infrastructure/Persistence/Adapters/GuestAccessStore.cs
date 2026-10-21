@@ -1,5 +1,6 @@
 using InviteMe.Application.Features.Guests.Access;
 using InviteMe.Application.Features.Rsvps;
+using InviteMe.Domain.CheckIn;
 using InviteMe.Domain.Guests;
 using InviteMe.Domain.Rsvps;
 using InviteMe.Domain.Seating;
@@ -25,7 +26,7 @@ public sealed class GuestAccessStore(InviteMeDbContext db, TimeProvider clock) :
          select new GuestAccessTarget(g.Id, g.WeddingId, g.RecipientName, g.Honorific)).SingleOrDefaultAsync(ct);
 
     // Place status follows RsvpStore: PENDING until the party answers, then USED when the place's person attends.
-    public async Task<IReadOnlyList<GuestSeatDto>> SeatsAsync(Guid guestId, CancellationToken ct)
+    public async Task<IReadOnlyList<ReceptionSeatDto>> SeatsAsync(Guid guestId, CancellationToken ct)
     {
         var answered = await db.Set<PlanningRsvp>().AnyAsync(x => x.GuestId == guestId, ct);
         var rows = await (from place in db.Set<PlanningPlace>().AsNoTracking()
@@ -36,15 +37,18 @@ public sealed class GuestAccessStore(InviteMeDbContext db, TimeProvider clock) :
                           from assignment in assignments.DefaultIfEmpty()
                           join table in db.Set<PlanningTable>() on assignment.TableId equals table.Id into tables
                           from table in tables.DefaultIfEmpty()
+                          join checkIn in db.Set<PlanningCheckIn>() on place.Id equals checkIn.PlaceId into checkIns
+                          from checkIn in checkIns.DefaultIfEmpty()
                           orderby place.Position
                           select new
                           {
-                              place.Position, PersonName = person == null ? null : person.FullName,
+                              place.Id, place.Position, place.ParticipantId, PersonName = person == null ? null : person.FullName,
                               Attending = person != null && person.AttendanceStatus == "ATTENDING",
-                              Table = table == null ? null : table.Name, SeatNumber = assignment == null ? null : (int?)assignment.SeatNumber
+                              Table = table == null ? null : table.Name, SeatNumber = assignment == null ? null : (int?)assignment.SeatNumber,
+                              CheckedInAt = checkIn == null ? null : (DateTimeOffset?)checkIn.CheckedInAt
                           }).ToListAsync(ct);
-        return rows.Select(x => new GuestSeatDto(x.Position, x.PersonName, RsvpPlaceStatus.Of(answered, x.Attending), x.Table, x.SeatNumber))
-            .ToList();
+        return rows.Select(x => new ReceptionSeatDto(x.Id, x.Position, x.ParticipantId, x.PersonName, RsvpPlaceStatus.Of(answered, x.Attending),
+            x.Table, x.SeatNumber, x.CheckedInAt)).ToList();
     }
 
     public async Task<SeatingPublicationDto> PublicationAsync(Guid weddingId, CancellationToken ct) =>
