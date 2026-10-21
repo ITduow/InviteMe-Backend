@@ -12,12 +12,9 @@ public sealed class WeddingListReader(InviteMeDbContext db) : IWeddingListReader
     {
         var accessible = db.Weddings.AsNoTracking().Where(w =>
             db.Users.Any(u => u.Id == userId && u.Status == "ACTIVE") &&
+            // Same rule as WeddingAccess: an active co-host always sees the wedding (WEDDING_VIEW comes with the membership).
             (w.OwnerUserId == userId || db.WeddingMembers.Any(member =>
-                member.WeddingId == w.Id && member.UserId == userId && member.MemberRole == "CO_HOST" && member.Status == "ACTIVE" &&
-                (db.WeddingMemberPermissions.Any(grant => grant.MemberId == member.Id &&
-                    db.Permissions.Any(permission => permission.Id == grant.PermissionId &&
-                        permission.Scope == "WEDDING" && permission.Code == nameof(WeddingPermission.WEDDING_VIEW))) ||
-                 db.WeddingMemberGroupPermissions.Any(grant => grant.MemberId == member.Id)))));
+                member.WeddingId == w.Id && member.UserId == userId && member.MemberRole == "CO_HOST" && member.Status == "ACTIVE")));
 
         if (!string.IsNullOrWhiteSpace(query.Search))
         {

@@ -30,6 +30,27 @@ public sealed class AuthorizationTests
     }
 
     [Fact]
+    public void ActiveCohostSeesTheWeddingButGetsNothingElseImplicitly()
+    {
+        var owner = Guid.NewGuid();
+        var cohost = Guid.NewGuid();
+        var noGrants = new WeddingAccess(owner, true, new HashSet<WeddingPermission>());
+        Assert.True(noGrants.Allows(cohost, WeddingPermission.WEDDING_VIEW));
+        Assert.True(noGrants.IsWeddingWide(cohost, WeddingPermission.WEDDING_VIEW));
+        Assert.All(Enum.GetValues<WeddingPermission>().Where(x => x != WeddingPermission.WEDDING_VIEW),
+            permission => Assert.False(noGrants.Allows(cohost, permission)));
+        Assert.False((noGrants with { IsActiveMember = false }).Allows(cohost, WeddingPermission.WEDDING_VIEW));
+
+        // A group grant stays a group grant: seeing the wedding does not widen guest access.
+        var groupGuests = new WeddingAccess(owner, true, new HashSet<WeddingPermission>(), new HashSet<WeddingPermission>(),
+            new Dictionary<WeddingPermission, IReadOnlySet<Guid>> { [WeddingPermission.GUEST_VIEW] = new HashSet<Guid> { Guid.NewGuid() } });
+        Assert.True(groupGuests.Allows(cohost, WeddingPermission.WEDDING_VIEW));
+        Assert.True(groupGuests.Allows(cohost, WeddingPermission.GUEST_VIEW));
+        Assert.False(groupGuests.IsWeddingWide(cohost, WeddingPermission.GUEST_VIEW));
+        Assert.False(groupGuests.Allows(cohost, WeddingPermission.CHECKIN_MANAGE));
+    }
+
+    [Fact]
     public void CheckInPermissionRequiresWeddingWideGrant()
     {
         var owner = Guid.NewGuid();

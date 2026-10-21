@@ -58,7 +58,7 @@ public sealed class WeddingAccessApiTests(ApiFactory factory) : IClassFixture<Ap
         var permissions = body.GetProperty("permissions").EnumerateArray().Select(x => x.GetString()!).ToArray();
         if (scenario == "owner")
             Assert.Equal(Enum.GetValues<WeddingPermission>().Select(x => x.ToString()), permissions);
-        else Assert.Equal(["GUEST_VIEW"], permissions);
+        else Assert.Equal(["WEDDING_VIEW", "GUEST_VIEW"], permissions); // WEDDING_VIEW comes with an active membership
     }
 
     private sealed class Reader(WeddingAccess? access) : IWeddingAccessReader

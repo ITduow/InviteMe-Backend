@@ -83,9 +83,13 @@ public sealed class WeddingSetupApiTests(ApiFactory apiFactory) : IClassFixture<
 
         using var viewer = await SignIn(factory, "setup-viewer");
         var addViewer = await owner.PostAsJsonAsync($"/api/weddings/{first.Id}/co-hosts",
-            new AddCoHostInput("setup-viewer@example.test", ["WEDDING_VIEW"]));
+            new AddCoHostInput("setup-viewer@example.test", ["CHECKIN_MANAGE"])); // any active co-host reads the setup, only the owner edits it
         Assert.Equal(HttpStatusCode.Created, addViewer.StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await viewer.GetAsync($"/api/weddings/{first.Id}")).StatusCode);
+        // Seeing the wedding does not open the guest list, the RSVP dashboard or the co-host management.
+        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.GetAsync($"/api/weddings/{first.Id}/guest-planning/guests")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.GetAsync($"/api/weddings/{first.Id}/rsvps/dashboard")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.GetAsync($"/api/weddings/{first.Id}/co-hosts")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await viewer.PutAsJsonAsync($"/api/weddings/{first.Id}", UpdateInput("viewer-edit", updated.Version))).StatusCode);
     });
 

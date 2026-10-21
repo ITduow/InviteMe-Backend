@@ -43,7 +43,9 @@ public sealed class WeddingHub(IWeddingPermissionService permissions, ISeatingDr
     {
         await RequireSeating(weddingId, true);
         if (placeIds.Count is < 1 or > 500) throw new HubException("INVALID_DRAG_PLACES");
-        var plan = await seating.GetAsync(weddingId, Context.ConnectionAborted);
+        // Only places inside the caller's seating edit scope can be locked: a group co-host cannot hold other groups' guests.
+        var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_EDIT, Context.ConnectionAborted);
+        var plan = await seating.GetScopedAsync(weddingId, Context.ConnectionAborted, scope.IsWeddingWide ? null : scope.GroupIds);
         if (placeIds.Any(id => !plan.Places.Any(p => p.Id == id))) throw new HubException("PLACE_NOT_FOUND");
         var account = await accounts.GetAsync(UserId, Context.ConnectionAborted);
         return Lease(() => leases.Acquire(weddingId, UserId, Context.ConnectionId, account?.DisplayName ?? "Cohost", placeIds));

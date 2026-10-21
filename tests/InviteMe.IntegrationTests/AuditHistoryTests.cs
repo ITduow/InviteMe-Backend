@@ -29,7 +29,7 @@ public sealed class AuditHistoryTests
         await AssertStatus(HttpStatusCode.Forbidden, outsider.GetAsync($"{url}?pageSize=0"), "outsider with invalid paging hits authorization first");
         await AssertStatus(HttpStatusCode.NotFound, owner.GetAsync("/api/weddings/not-a-guid/audit-logs"), "malformed wedding id");
 
-        var all = Enum.GetNames<WeddingPermission>();
+        var all = CoHostPermissionTests.Delegable;
         await AssertStatus(HttpStatusCode.Created, owner.PostAsJsonAsync(CoHostRoot(wedding.Id), new AddCoHostInput(cohostAccount.Email, all)), "add co-host with every permission");
         await AssertStatus(HttpStatusCode.Forbidden, cohost.GetAsync(url), "co-host with every permission");
 
@@ -51,7 +51,7 @@ public sealed class AuditHistoryTests
         await AssertStatus(HttpStatusCode.Created, owner.PostAsJsonAsync(root, new AddCoHostInput(cohostAccount.Email, ["GUEST_VIEW"])), "add");
         await AssertStatus(HttpStatusCode.OK, owner.PutAsJsonAsync($"{root}/{cohostAccount.Id}/permissions", new UpdateCoHostPermissionsInput(["GUEST_VIEW", "GUEST_EDIT"])), "update");
         await AssertStatus(HttpStatusCode.NoContent, owner.DeleteAsync($"{root}/{cohostAccount.Id}"), "revoke");
-        await AssertStatus(HttpStatusCode.Created, owner.PostAsJsonAsync(root, new AddCoHostInput(cohostAccount.Email, ["GIFT_VIEW"])), "reactivate");
+        await AssertStatus(HttpStatusCode.Created, owner.PostAsJsonAsync(root, new AddCoHostInput(cohostAccount.Email, ["RSVP_VIEW"])), "reactivate");
 
         var page = await Query(owner, wedding.Id, "entityType=wedding_members");
         Assert.Equal(4, page.TotalCount);
@@ -72,7 +72,7 @@ public sealed class AuditHistoryTests
         Assert.Equal("REVOKED", Status(reactivated, "before"));
         Assert.Empty(Permissions(reactivated, "before"));
         Assert.Equal("ACTIVE", Status(reactivated, "after"));
-        Assert.Equal(["GIFT_VIEW"], Permissions(reactivated, "after"));
+        Assert.Equal(["RSVP_VIEW"], Permissions(reactivated, "after"));
 
         var revoked = page.Items[1].Metadata!.Value;
         Assert.Equal("ACTIVE", Status(revoked, "before"));
