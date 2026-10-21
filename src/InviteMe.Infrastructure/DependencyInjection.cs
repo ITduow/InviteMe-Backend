@@ -66,7 +66,10 @@ public static class DependencyInjection
             .Validate(x => x.MaximumFileSizeBytes is > 0 and <= 5 * 1024 * 1024, "WeddingMedia:MaximumFileSizeBytes must be between 1 byte and 5 MB.")
             .Validate(x => x.AllowedFormats.All(f => new[] { "jpeg", "jpg", "png", "webp" }.Contains(f, StringComparer.OrdinalIgnoreCase)), "WeddingMedia:AllowedFormats may include only JPEG, PNG and WebP.")
             .ValidateOnStart();
-        services.AddSingleton<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage, LocalWeddingMediaStorage>();
+        if (!string.IsNullOrWhiteSpace(configuration["WeddingMedia:S3BucketName"]))
+            services.AddHttpClient<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage, S3WeddingMediaStorage>();
+        else
+            services.AddSingleton<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage, LocalWeddingMediaStorage>();
         services.AddScoped<InviteMe.Application.Ports.Audit.IAuditReader, AuditReader>();
         services.AddScoped<InviteMe.Application.Ports.AI.IThankYouTemplateStore, ThankYouTemplateStore>();
         services.AddScoped<InviteMe.Application.Ports.AI.IThankYouGuestReader, ThankYouGuestReader>();
