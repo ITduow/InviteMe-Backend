@@ -16,8 +16,6 @@ BE_InviteMe/
 |   |-- architecture-diagram-alignment.md
 |   |-- architecture.md
 |   |-- database.md
-|   |-- RSVP-02_DB_Audit.md
-|   |-- RSVP-02_Implementation_Notes.md
 |   |-- solution-tree.md
 |   `-- verification.md
 |-- scripts/

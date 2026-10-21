@@ -23,7 +23,7 @@ namespace InviteMe.Infrastructure.Persistence.Adapters.Rsvps;
 /// - After the RSVP deadline, or when the hosts locked the guest/group, a guest change becomes a request the hosts approve.
 /// - Places left empty after an answer become UNUSED (no fake people). Seated places that stop being used keep their seat
 ///   and are flagged (SEAT_NEEDS_ATTENTION) for the hosts.
-/// Capacity source: weddings.max_capacity; only ATTENDING people (plus checked-in walk-ins) consume it.
+/// Capacity source: weddings.max_capacity; only ATTENDING people consume it (walk-ins from reception are ATTENDING people too).
 /// Lock order for every write: wedding row → planning guest row (FOR UPDATE).
 /// </summary>
 public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpStore
@@ -563,11 +563,10 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
             participants = participants.OrderBy(p => p.Id).Select(p => new { id = p.Id, role = p.Role, attendanceStatus = p.AttendanceStatus })
         }, SnapshotJson);
 
+    // Walk-ins added at the counter (Cohost04) are planning participants with ATTENDING, so they are already counted here.
     private async Task<long> Occupied(Guid weddingId, CancellationToken ct) =>
         await (from p in db.Set<PlanningParticipant>() join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
-               where g.WeddingId == weddingId && p.AttendanceStatus == Attending select p).LongCountAsync(ct)
-        + await (from check in db.CheckIns where check.WeddingId == weddingId && check.Status == "CHECKED_IN"
-                 join walk in db.WalkIns on check.WalkinId equals (Guid?)walk.Id select (long)walk.PartySize).SumAsync(ct);
+               where g.WeddingId == weddingId && p.AttendanceStatus == Attending select p).LongCountAsync(ct);
 
     private async Task<Wedding> LockWedding(Guid weddingId, CancellationToken ct)
     {
