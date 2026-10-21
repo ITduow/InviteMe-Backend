@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using InviteMe.Application.Common.Errors;
 using InviteMe.Application.Features.Invitations.Messaging;
+using InviteMe.Application.Features.Weddings.Website;
 using InviteMe.Domain.Audit;
 using InviteMe.Domain.Guests;
 using InviteMe.Domain.Invitations;
@@ -57,9 +58,12 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
         return Dto(draft);
     }
 
-    public Task<InvitationRecipient?> FindRecipientAsync(Guid weddingId, Guid guestId, CancellationToken ct) =>
-        db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Id == guestId)
+    public async Task<InvitationRecipient?> FindRecipientAsync(Guid weddingId, Guid guestId, CancellationToken ct)
+    {
+        var guest = await db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Id == guestId)
             .Select(x => new InvitationRecipient(x.Id, x.RecipientName, x.Email, x.Phone, x.InvitationToken)).SingleOrDefaultAsync(ct);
+        return guest is null ? null : guest with { CoupleNames = await CoupleNamesAsync(weddingId, ct) };
+    }
 
     public async Task<InvitationBatchWriteResult> QueueAsync(Guid weddingId, Guid actorId, string idempotencyKey,
         QueueInvitationBatch input, InvitationDraftDto draft, string frontendUrl, string publicApiUrl, CancellationToken ct)
@@ -116,6 +120,8 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
         if (guests.Any(x => x.InvitationToken is not { Length: 64 }))
             throw new ApplicationProblemException(ProblemKind.BusinessRule, "GUEST_INVITATION_TOKEN_REQUIRED", "Every selected guest must have an invitation link before sending.");
 
+        var coupleNames = await CoupleNamesAsync(weddingId, ct);
+
         var missing = guests.SelectMany(g => channels.Where(c => c == "EMAIL" ? string.IsNullOrWhiteSpace(g.Email) : string.IsNullOrWhiteSpace(g.Phone))
             .Select(c => new { GuestId = g.Id, Channel = c })).ToArray();
         if (missing.Length > 0)
@@ -144,7 +150,7 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
                 {
                     Id = Guid.NewGuid(), BatchId = batch.Id, WeddingId = weddingId, PlanningGuestId = guest.Id,
                     Channel = channel, Recipient = channel == "EMAIL" ? guest.Email!.Trim() : guest.Phone!.Trim(),
-                    Subject = InvitationMessageTemplate.Render(subject, guest.RecipientName, rsvp, qr),
+                    Subject = InvitationMessageTemplate.PersonalizeSubject(subject, guest.RecipientName, coupleNames),
                     Content = rendered, RsvpLink = rsvp, QrLink = qr,
                     Status = "PENDING", NextAttemptAt = clock.GetUtcNow(), CreatedAt = clock.GetUtcNow()
                 });
@@ -270,6 +276,24 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
 
     private static InvitationDraftDto Dto(InvitationDraft x) => new(x.WeddingId, x.Subject, x.Content, x.Tone, x.Version,
         x.UsedFallback, x.SmsContent, x.SmsUsedFallback);
+
+    private async Task<string> CoupleNamesAsync(Guid weddingId, CancellationToken ct)
+    {
+        var wedding = await db.Weddings.AsNoTracking().Where(x => x.Id == weddingId)
+            .Select(x => new { x.Title, WebsiteJson = db.WeddingSettings.Where(s => s.WeddingId == weddingId)
+                .Select(s => s.WebsiteDraftJson).SingleOrDefault() }).SingleAsync(ct);
+        if (wedding.WebsiteJson is not null)
+        {
+            try
+            {
+                var website = JsonSerializer.Deserialize<WebsiteDocument>(wedding.WebsiteJson, PublicationJson.Web);
+                if (!string.IsNullOrWhiteSpace(website?.PartnerOne) && !string.IsNullOrWhiteSpace(website.PartnerTwo))
+                    return $"{website.PartnerOne.Trim()} & {website.PartnerTwo.Trim()}";
+            }
+            catch (JsonException) { }
+        }
+        return wedding.Title;
+    }
 
     private async Task LockWedding(Guid weddingId, CancellationToken ct) =>
         await db.Database.ExecuteSqlInterpolatedAsync($"SELECT id FROM inviteme.weddings WHERE id={weddingId} FOR UPDATE", ct);

@@ -24,6 +24,33 @@ public sealed class InvitationMessagingTests
         Assert.Equal("Hi Linh https://invite.test/a https://api.test/qr/a", rendered);
     }
 
+    [Fact]
+    public void Invitation_subject_names_the_couple_and_the_guest()
+    {
+        Assert.Equal("Thiệp mời Huỳnh Tấn Dương — Minh & Lan",
+            InvitationMessageTemplate.PersonalizeSubject("Thiệp mời {{GuestName}}", "Huỳnh Tấn Dương", "Minh & Lan"));
+        Assert.Equal("Mời dự cưới — Minh & Lan mời Huỳnh Tấn Dương",
+            InvitationMessageTemplate.PersonalizeSubject("Mời dự cưới", "Huỳnh Tấn Dương", "Minh & Lan"));
+    }
+
+    [Fact]
+    public void Email_formatter_turns_escaped_newlines_into_html_and_uses_an_embedded_qr()
+    {
+        var item = new InvitationOutboundMessage(Guid.NewGuid(), Guid.NewGuid(), "EMAIL", "guest@example.test", "Wedding",
+            "Thân gửi Huỳnh Tấn Dương,\\n\\nMời bạn tham dự. RSVP: https://invite.test/token QR: https://api.test/qr/token",
+            "https://invite.test/token", "https://api.test/qr/token");
+
+        var html = InvitationEmailFormatter.BuildHtml(item);
+        var plainText = InvitationEmailFormatter.BuildPlainText(item);
+
+        Assert.Equal(2, html.Split("<br>", StringSplitOptions.None).Length - 1);
+        Assert.DoesNotContain("\\n", html);
+        Assert.Contains("src=\"cid:invitation-qr\"", html);
+        Assert.Contains("href=\"https://invite.test/token\"", html);
+        Assert.DoesNotContain("https://api.test/qr/token</div>", html);
+        Assert.Contains("\n\nMời bạn tham dự", plainText);
+    }
+
     [Theory]
     [InlineData("Chào {{GuestName}}, RSVP {{RsvpLink}}", true)]
     [InlineData("Chào {{GuestName}}, RSVP {{RsvpLink}} QR {{QrLink}}", false)]
