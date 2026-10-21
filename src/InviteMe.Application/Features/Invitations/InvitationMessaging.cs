@@ -23,7 +23,7 @@ public sealed record InvitationSendJobDto(Guid Id, Guid GuestId, string Channel,
 public sealed record InvitationSendBatchDto(Guid Id, string Status, int TotalCount, int SentCount, int FailedCount,
     int PendingCount, DateTimeOffset CreatedAt, IReadOnlyList<InvitationSendJobDto> Jobs);
 
-public sealed record InvitationRecipient(Guid Id, string RecipientName, string? Email, string? Phone, string? Token);
+public sealed record InvitationRecipient(Guid Id, string RecipientName, string? Email, string? Phone, string? Token, string CoupleNames = "");
 public sealed record InvitationBatchWriteResult(Guid BatchId, bool Replayed);
 public sealed record InvitationMessagingLinks(string FrontendUrl, string PublicApiUrl);
 public sealed record InvitationOutboundMessage(Guid JobId, Guid WeddingId, string Channel, string Recipient,
@@ -132,6 +132,22 @@ public static class InvitationMessageTemplate
             .Replace(Placeholders[1], rsvpLink, StringComparison.Ordinal)
             .Replace(Placeholders[2], qrLink, StringComparison.Ordinal);
 
+    public static string PersonalizeSubject(string template, string guestName, string coupleNames)
+    {
+        var subject = Render(template, guestName, "", "").Trim();
+        var includesGuest = subject.Contains(guestName, StringComparison.OrdinalIgnoreCase);
+        var includesCouple = subject.Contains(coupleNames, StringComparison.OrdinalIgnoreCase);
+        var suffix = (includesCouple, includesGuest) switch
+        {
+            (true, true) => "",
+            (true, false) => $"mời {guestName}",
+            (false, true) => coupleNames,
+            _ => $"{coupleNames} mời {guestName}"
+        };
+        var result = suffix.Length == 0 ? subject : $"{subject} — {suffix}";
+        return result.Length <= 200 ? result : result[..197].TrimEnd() + "...";
+    }
+
     public static string Default(string tone) => tone switch
     {
         "FORMAL" => "Trân trọng kính mời {{GuestName}} đến chung vui cùng chúng tôi. Xác nhận tham dự: {{RsvpLink}} QR thiệp: {{QrLink}}",
@@ -210,7 +226,7 @@ public sealed class InvitationMessagingHandler(
         var guest = await store.FindRecipientAsync(weddingId, guestId, ct)
             ?? throw new ApplicationProblemException(ProblemKind.NotFound, "GUEST_NOT_FOUND", "Guest is unavailable in this wedding.");
         var (rsvp, qr) = Links(guest.Token!);
-        return new(guest.Id, guest.RecipientName, InvitationMessageTemplate.Render(draft.Subject, guest.RecipientName, rsvp, qr),
+        return new(guest.Id, guest.RecipientName, InvitationMessageTemplate.PersonalizeSubject(draft.Subject, guest.RecipientName, guest.CoupleNames),
             InvitationMessageTemplate.Render(draft.Content, guest.RecipientName, rsvp, qr),
             InvitationMessageTemplate.Render(draft.SmsContent, guest.RecipientName, rsvp, ""), rsvp, qr);
     }
@@ -259,7 +275,7 @@ public sealed class InvitationMessagingHandler(
             ?? throw new ApplicationProblemException(ProblemKind.NotFound, "GUEST_NOT_FOUND", "Guest is unavailable in this wedding.");
         var (rsvp, qr) = Links(guest.Token!);
         var message = new InvitationOutboundMessage(Guid.NewGuid(), weddingId, "EMAIL", account.Email,
-            InvitationMessageTemplate.Render(draft.Subject, guest.RecipientName, rsvp, qr),
+            InvitationMessageTemplate.PersonalizeSubject(draft.Subject, guest.RecipientName, guest.CoupleNames),
             InvitationMessageTemplate.Render(draft.Content, guest.RecipientName, rsvp, qr), rsvp, qr);
         await channels.SendAsync(message, ct);
         await store.RecordTestSendAsync(weddingId, guestId, actor, ct);

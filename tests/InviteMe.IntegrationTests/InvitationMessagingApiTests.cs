@@ -85,7 +85,7 @@ public sealed class InvitationMessagingApiTests
         Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
         var previewBody = await preview.Content.ReadFromJsonAsync<InvitationPreviewDto>();
         Assert.Contains("Nguyễn Văn An", previewBody!.Content);
-        Assert.Equal("Thiệp mời Nguyễn Văn An", previewBody.Subject);
+        Assert.Equal("Thiệp mời Nguyễn Văn An — CoHost Test Wedding", previewBody.Subject);
         Assert.Contains("Nguyễn Văn An", previewBody.SmsContent);
         Assert.DoesNotContain("/qr?", previewBody.SmsContent);
         Assert.Contains("/invite/", previewBody.RsvpLink);
@@ -111,7 +111,7 @@ public sealed class InvitationMessagingApiTests
         var queuedJobs = await db.InvitationSendJobs.Where(x => x.BatchId == batch.Id).ToListAsync();
         var smsJob = Assert.Single(queuedJobs, x => x.Channel == "SMS");
         var emailJob = Assert.Single(queuedJobs, x => x.Channel == "EMAIL");
-        Assert.Equal("Thiệp mời Nguyễn Văn An", emailJob.Subject);
+        Assert.Equal("Thiệp mời Nguyễn Văn An — CoHost Test Wedding", emailJob.Subject);
         Assert.Contains("RSVP tại", smsJob.Content);
         Assert.DoesNotContain("/qr?", smsJob.Content);
         Assert.Contains("thân mến", smsJob.Content);
