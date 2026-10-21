@@ -13,6 +13,7 @@ namespace InviteMe.Application.Features.AI.ThankYouTemplates;
 public sealed record GenerateThankYouTemplate(string Tone = "WARM", string Language = "vi", string? AdditionalInstructions = null);
 public sealed record UpdateThankYouTemplate(string Content, int ExpectedVersion);
 public sealed record ApproveThankYouTemplate(int ExpectedVersion);
+// WeddingGuestId is a Guest Planning v2 guest id (planning_guests.Id); the name keeps the existing request shape.
 public sealed record PreviewThankYouTemplate(Guid WeddingGuestId);
 public sealed record ThankYouTemplateDto(Guid Id, Guid WeddingId, string Content, string Tone, string Language,
     string Status, string Model, long? InputTokens, long? OutputTokens, bool UsedFallback, int Version,

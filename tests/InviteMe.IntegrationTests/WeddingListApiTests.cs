@@ -62,12 +62,9 @@ public sealed class WeddingListApiTests(ApiFactory apiFactory) : IClassFixture<A
                 new AddCoHostInput(revokedAccount.Email, ["CHECKIN_MANAGE"]))).StatusCode);
             Assert.Equal(HttpStatusCode.NoContent, (await owner.DeleteAsync($"/api/weddings/{aprilThirteen.Id}/co-hosts/{revokedAccount.Id}")).StatusCode);
 
-            var guest = WeddingGuest.Create(aprilTwelve.Id, "GUEST-1", "Confirmed Guest", null, null, "MUTUAL", 0, 0);
-            var attending = GuestParticipant.Create(guest.Id, "Confirmed Guest", "PRIMARY");
-            attending.SetAttendance("ATTENDING");
-            db.WeddingGuests.Add(guest);
-            db.GuestParticipants.Add(attending);
-            await db.SaveChangesAsync();
+            // ParticipantCount counts confirmed planning participants only.
+            await PlanningTestData.Guests(db, aprilTwelve.Id, "ATTENDING", "Confirmed Guest");
+            await PlanningTestData.Guests(db, aprilTwelve.Id, "PENDING", "Undecided Guest");
 
             var firstPage = await Read<PagedResult<WeddingSummaryDto>>(await owner.GetAsync("/api/weddings?page=1&pageSize=2&search=&sort=weddingDate"));
             Assert.Equal((3, 1, 2), (firstPage.TotalCount, firstPage.Page, firstPage.PageSize));

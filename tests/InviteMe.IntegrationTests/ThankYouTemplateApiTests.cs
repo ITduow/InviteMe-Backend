@@ -60,8 +60,7 @@ public sealed class ThankYouTemplateApiTests
         Assert.Equal(HttpStatusCode.Conflict, (await f.Owner.PutAsJsonAsync(id, new UpdateThankYouTemplate("{{GuestName}}", 1))).StatusCode);
         var approved = await Read<ThankYouTemplateDto>(await f.Owner.PostAsJsonAsync(id + "/approve", new ApproveThankYouTemplate(2)));
         Assert.Equal("APPROVED", approved.Status); Assert.NotNull(approved.ApprovedAt); Assert.Equal(f.OwnerId, approved.ApprovedBy);
-        var guest = WeddingGuest.Create(f.WeddingId, "APPROVED-PREVIEW", "Khách Minh", null, null, "MUTUAL", 0, 0);
-        db.Add(guest); await db.SaveChangesAsync();
+        var guest = (await PlanningTestData.Guests(db, f.WeddingId, "PENDING", "Khách Minh"))[0];
         var preview = await Read<ThankYouPreviewDto>(await f.Owner.PostAsJsonAsync(id + "/preview", new PreviewThankYouTemplate(guest.Id)));
         Assert.Equal("Xin cảm ơn Khách Minh!", preview.RenderedContent);
         Assert.Equal(HttpStatusCode.Conflict, (await f.Owner.PutAsJsonAsync(id, new UpdateThankYouTemplate("{{GuestName}}", 3))).StatusCode);
@@ -82,8 +81,7 @@ public sealed class ThankYouTemplateApiTests
         using var outsider = f.Client(); await SignIn(outsider, "outsider");
         var outsiderAccount = (await outsider.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
         var foreign = await CoHostPermissionTests.CreateWedding(db, outsider, "thank-you-foreign");
-        var otherGuest = WeddingGuest.Create(foreign.Id, "FOREIGN", "Khách riêng", null, null, "MUTUAL", 0, 0);
-        db.Add(otherGuest); await db.SaveChangesAsync();
+        var otherGuest = (await PlanningTestData.Guests(db, foreign.Id, "PENDING", "Khách riêng"))[0];
         // Even a co-host with every existing permission is not a template owner.
         var add = await f.Owner.PostAsJsonAsync($"/api/weddings/{f.WeddingId}/co-hosts", new AddCoHostInput(outsiderAccount.Email, CoHostPermissionTests.Delegable));
         Assert.Equal(HttpStatusCode.Created, add.StatusCode);
@@ -110,14 +108,13 @@ public sealed class ThankYouTemplateApiTests
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task OneGenerationThen180PreviewsNeverCallAiAgainOrMutateStoredTemplate() => WithApi(async (db, f) =>
     {
-        var guests = Enumerable.Range(1, 180).Select(i => WeddingGuest.Create(f.WeddingId, $"G{i}", $"Khách Nguyễn {i}", null, null, "MUTUAL", 0, 0)).ToArray();
-        db.AddRange(guests); await db.SaveChangesAsync();
+        var guests = await PlanningTestData.Guests(db, f.WeddingId, "PENDING", Enumerable.Range(1, 180).Select(i => $"Khách Nguyễn {i}").ToArray());
         var draft = await Generate(f);
         foreach (var guest in guests)
         {
             var preview = await Read<ThankYouPreviewDto>(await f.Owner.PostAsJsonAsync(f.Root + "/" + draft.Id + "/preview", new PreviewThankYouTemplate(guest.Id)));
-            Assert.Equal(guest.FullName, preview.GuestName);
-            Assert.Contains(guest.FullName, preview.RenderedContent);
+            Assert.Equal(guest.RecipientName, preview.GuestName);
+            Assert.Contains(guest.RecipientName, preview.RenderedContent);
             Assert.DoesNotContain("{{GuestName}}", preview.RenderedContent);
         }
         Assert.Equal(1, f.Ai.Calls);
