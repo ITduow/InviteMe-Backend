@@ -14,7 +14,8 @@ namespace InviteMe.Application.Features.Rsvps;
 public sealed record RsvpDashboardPerson(Guid Id, string FullName, string Role, string AttendanceStatus, string? DietaryNote, int? Position);
 public sealed record RsvpDashboardGuest(Guid Id, string RecipientName, int RowNumber, string Side, Guid? GroupId, string? GroupName,
     string? Phone, string? Email, string? RsvpStatus, int ConfirmedPartySize, string? Note, DateTimeOffset? SubmittedAt, DateTimeOffset? UpdatedAt,
-    bool Locked, bool PendingRequest, IReadOnlyList<string> PlaceStatuses, IReadOnlyList<RsvpDashboardPerson> People);
+    bool Locked, bool PendingRequest, IReadOnlyList<string> PlaceStatuses, IReadOnlyList<RsvpDashboardPerson> People,
+    int RemindersSent = 0, DateTimeOffset? LastRemindedAt = null, string? LastReminderStatus = null);
 public sealed record RsvpDashboardData(Guid WeddingId, int? Capacity, long Occupied, DateTimeOffset? RsvpDeadline, IReadOnlyList<RsvpDashboardGuest> Guests);
 
 // ---------- API contracts ----------
@@ -39,10 +40,13 @@ public sealed record RsvpDashboardDto(Guid WeddingId, DateTimeOffset GeneratedAt
     RsvpInvitationStats Invitations, RsvpPeopleStats People, int PendingRequests, int LockedGuests, RsvpNoteStats Notes,
     IReadOnlyList<RsvpSideStats> BySide);
 
-/// <summary>One invitation in the host list. Phone/Email are only filled for users who may view guests (GUEST_VIEW).</summary>
+/// <summary>
+/// One invitation in the host list. Phone/Email are only filled for users who may view guests (GUEST_VIEW).
+/// Guest05: RemindersSent (of at most 3), when the last reminder went out and the status of the latest one.
+/// </summary>
 public sealed record RsvpGuestRowDto(Guid GuestId, string RecipientName, string Side, Guid? GroupId, string? GroupName, string? Phone, string? Email,
     string RsvpStatus, int InvitedPlaces, int ConfirmedPeople, int WaitlistedPeople, bool Locked, bool PendingRequest, string? Note,
-    DateTimeOffset? RespondedAt, DateTimeOffset? UpdatedAt);
+    DateTimeOffset? RespondedAt, DateTimeOffset? UpdatedAt, int RemindersSent, DateTimeOffset? LastRemindedAt, string? LastReminderStatus);
 
 public sealed record RsvpExportFile(byte[] Content, string FileName);
 
@@ -168,7 +172,7 @@ public static class RsvpDashboardMath
     public static RsvpGuestRowDto Row(RsvpDashboardGuest g, bool contacts) =>
         new(g.Id, g.RecipientName, g.Side, g.GroupId, g.GroupName, contacts ? g.Phone : null, contacts ? g.Email : null, RsvpGuestStatus.Of(g),
             g.PlaceStatuses.Count, g.People.Count(p => p.AttendanceStatus == "ATTENDING"), g.People.Count(p => p.AttendanceStatus == "WAITLISTED"),
-            g.Locked, g.PendingRequest, g.Note, g.SubmittedAt, g.UpdatedAt);
+            g.Locked, g.PendingRequest, g.Note, g.SubmittedAt, g.UpdatedAt, g.RemindersSent, g.LastRemindedAt, g.LastReminderStatus);
 
     /// <summary>One line per person (UTF-8 with BOM so Excel shows Vietnamese). Cells are protected against formula injection.</summary>
     public static byte[] Csv(IEnumerable<RsvpDashboardGuest> guests, bool contacts)
@@ -176,7 +180,8 @@ public static class RsvpDashboardMath
         var sb = new StringBuilder();
         var header = new List<string> { "Khách mời", "Bên", "Nhóm" };
         if (contacts) header.AddRange(["Số điện thoại", "Email"]);
-        header.AddRange(["Trạng thái RSVP", "Người", "Vai trò", "Tham dự", "Chỗ số", "Món ăn", "Ghi chú RSVP", "Trả lời lúc (UTC)"]);
+        header.AddRange(["Trạng thái RSVP", "Người", "Vai trò", "Tham dự", "Chỗ số", "Món ăn", "Ghi chú RSVP", "Trả lời lúc (UTC)",
+            "Đã nhắc (lần)", "Nhắc gần nhất (UTC)"]);
         Line(sb, header);
         foreach (var g in guests)
             foreach (var p in g.People.OrderBy(p => p.Position ?? int.MaxValue).ThenBy(p => p.FullName, StringComparer.CurrentCulture))
@@ -184,7 +189,9 @@ public static class RsvpDashboardMath
                 var cells = new List<string?> { g.RecipientName, g.Side, g.GroupName };
                 if (contacts) cells.AddRange([g.Phone, g.Email]);
                 cells.AddRange([RsvpGuestStatus.Of(g), p.FullName, p.Role, p.AttendanceStatus, p.Position?.ToString(CultureInfo.InvariantCulture),
-                    p.DietaryNote, g.Note, g.SubmittedAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)]);
+                    p.DietaryNote, g.Note, g.SubmittedAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
+                    g.RemindersSent.ToString(CultureInfo.InvariantCulture),
+                    g.LastRemindedAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)]);
                 Line(sb, cells);
             }
         return [.. Encoding.UTF8.GetPreamble(), .. Encoding.UTF8.GetBytes(sb.ToString())];

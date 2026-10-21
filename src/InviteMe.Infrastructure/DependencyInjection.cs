@@ -97,6 +97,11 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Features.Guests.Reception.IReceptionStore, ReceptionStore>();
         services.AddSingleton<InviteMe.Application.Ports.Invitations.IQrCodeRenderer, InviteMe.Infrastructure.Invitations.QrCodeRenderer>();
         services.AddScoped<InviteMe.Application.Ports.Rsvps.IRsvpStore, InviteMe.Infrastructure.Persistence.Adapters.Rsvps.RsvpStore>();
+        services.AddScoped<InviteMe.Application.Ports.Rsvps.IRsvpReminderStore, InviteMe.Infrastructure.Persistence.Adapters.Rsvps.RsvpReminderStore>();
+        services.AddSingleton<InviteMe.Application.Ports.Rsvps.IRsvpReminderFailureClassifier, InviteMe.Infrastructure.Rsvps.RsvpReminderFailureClassifier>();
+        services.AddOptions<InviteMe.Infrastructure.Rsvps.RsvpReminderOptions>().BindConfiguration(InviteMe.Infrastructure.Rsvps.RsvpReminderOptions.SectionName);
+        if (configuration.GetValue($"{InviteMe.Infrastructure.Rsvps.RsvpReminderOptions.SectionName}:WorkerEnabled", true))
+            services.AddHostedService<InviteMe.Infrastructure.Rsvps.RsvpReminderWorker>();
         services.AddDataProtection().SetApplicationName("InviteMe")
             .PersistKeysToFileSystem(new DirectoryInfo(configuration["Invitations:KeyDirectory"] ??
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "InviteMe", "DataProtectionKeys")));
