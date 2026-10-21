@@ -232,6 +232,24 @@ public sealed class RsvpApiTests
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task WalkInsAddedAtReceptionUseTheSameCapacity() => WithApi(async (db, factory, owner, ownerId) =>
+    {
+        // Cohost04 walk-ins are planning people with ATTENDING, so RSVP counts them (the old walk_ins table is not used).
+        var w = await Wedding(db, ownerId, "rsvp-walkin-capacity", 3);
+        var a = await Party(db, owner, w, "A", people: 2);
+        using var walkIn = new HttpRequestMessage(HttpMethod.Post, $"/api/weddings/{w}/guest-planning/walk-ins")
+        { Content = JsonContent.Create(new InviteMe.Application.Features.Guests.Reception.AddWalkIn(null, "Khách vãng lai", 2)) };
+        walkIn.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        Assert.True((await owner.SendAsync(walkIn)).IsSuccessStatusCode);
+        using var c = factory.CreateHttpsClient();
+        var full = await c.PostAsJsonAsync(a.Url, new SubmitRsvp(0, "ATTENDING", [a.Main], ["A2"]));
+        await AssertProblem(HttpStatusCode.UnprocessableEntity, "INSUFFICIENT_SLOTS", full);
+        Assert.Contains("slot còn lại 1 người", JsonDocument.Parse(await full.Content.ReadAsStringAsync()).RootElement.GetProperty("detail").GetString());
+        var dashboard = (await owner.GetFromJsonAsync<RsvpDashboardDto>($"/api/weddings/{w}/rsvps/dashboard"))!;
+        Assert.Equal((3, 2L, 1L), (dashboard.Capacity.Max, dashboard.Capacity.Occupied, dashboard.Capacity.Remaining));
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task MorePeopleThanTheWeddingHasLeftIsRefusedWithTheRemainingSlots() => WithApi(async (db, factory, owner, ownerId) =>
     {
         // Couple06: INSUFFICIENT_SLOTS ("Số lượng người đi vượt quá, slot còn lại {n} người"); nothing is saved.
