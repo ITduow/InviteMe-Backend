@@ -25,7 +25,7 @@ internal static class WeddingAccessEndpoints
             var permissions = Enum.GetValues<WeddingPermission>()
                 .Where(permission => access.Allows(userId.Value, permission))
                 .Select(permission => permission.ToString()).ToArray();
-            return Results.Ok(new { weddingId = id, permissions });
+            return Results.Ok(new { weddingId = id, permissions, isOwner = access.IsOwner(userId.Value) });
         }).RequireAuthorization().WithTags("Weddings");
 
         return endpoints;

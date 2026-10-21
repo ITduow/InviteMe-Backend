@@ -104,7 +104,7 @@ public sealed class CheckWeddingSlugValidator : AbstractValidator<string>
 public sealed class WeddingSetupHandler(IWeddingSetupStore store, IWeddingMediaStorage mediaStorage, IWeddingPermissionService permissions,
     IWeddingAccessReader accessReader, ICurrentUser currentUser,
     RequestValidation<CreateWeddingInput> createValidation, RequestValidation<UpdateWeddingInput> updateValidation,
-    RequestValidation<string> slugValidation)
+    RequestValidation<string> slugValidation, InviteMe.Application.Features.Guests.Planning.IPlanningChangePublisher changes)
 {
     public async Task<WeddingSetupDto> CreateAsync(CreateWeddingInput input, CancellationToken ct)
     {
@@ -127,7 +127,9 @@ public sealed class WeddingSetupHandler(IWeddingSetupStore store, IWeddingMediaS
         if (access is null || !access.IsOwner(ownerId))
             throw new ApplicationProblemException(ProblemKind.Forbidden, "WEDDING_ACCESS_DENIED", "Only the wedding owner can update setup.");
         await updateValidation.ValidateAsync(input, ct);
-        return await store.UpdateAsync(weddingId, input, WeddingSlug.Normalize(input.Slug), ct);
+        var result = await store.UpdateAsync(weddingId, input, WeddingSlug.Normalize(input.Slug), ct);
+        await changes.PublishAsync(weddingId, new("WeddingSetupChanged", weddingId, result.Version), ct);
+        return result;
     }
 
     public async Task<WeddingSlugAvailability> CheckSlugAsync(string slug, Guid? weddingId, CancellationToken ct)
@@ -165,11 +167,8 @@ public sealed class WeddingSetupHandler(IWeddingSetupStore store, IWeddingMediaS
             throw;
         }
 
-        if (mediaStorage.TryGetOwnedFileName(weddingId, update.PreviousCoverImageUrl, out var oldFile))
-        {
-            try { await mediaStorage.DeleteAsync(weddingId, oldFile, ct); }
-            catch { /* The database points to the committed replacement; leave old media for later cleanup. */ }
-        }
+        // Media URLs are immutable. Replacing a cover unlinks it; existing published snapshots may still use the file.
+        await changes.PublishAsync(weddingId, new("WeddingSetupChanged", weddingId, update.Version), ct);
         return new(stored.PublicUrl, update.Version);
     }
 
@@ -178,11 +177,8 @@ public sealed class WeddingSetupHandler(IWeddingSetupStore store, IWeddingMediaS
         var ownerId = await RequireOwner(weddingId, ct);
         if (expectedVersion <= 0) throw BadCoverRequest("EXPECTED_VERSION_REQUIRED", "A valid expectedVersion is required.");
         var update = await store.RemoveCoverImageAsync(weddingId, expectedVersion, ownerId, ct);
-        if (mediaStorage.TryGetOwnedFileName(weddingId, update.PreviousCoverImageUrl, out var oldFile))
-        {
-            try { await mediaStorage.DeleteAsync(weddingId, oldFile, ct); }
-            catch { /* The reference is already cleared; a failed cleanup leaves only an inaccessible orphan. */ }
-        }
+        // Removing the cover unlinks the reference without deleting snapshot media.
+        await changes.PublishAsync(weddingId, new("WeddingSetupChanged", weddingId, update.Version), ct);
         return update.Version;
     }
 

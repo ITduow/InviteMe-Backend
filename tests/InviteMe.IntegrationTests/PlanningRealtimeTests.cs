@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using InviteMe.Infrastructure.Persistence.Adapters;
+using InviteMe.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 
 namespace InviteMe.IntegrationTests;
 
@@ -80,7 +82,8 @@ public sealed class PlanningRealtimeTests
         var weddingId = Guid.NewGuid();
         var change = new PlanningChange(type, weddingId, version);
         var clients = new RecordingClients();
-        var publisher = new SignalRPlanningChangePublisher(new TestHubContext(clients), NullLogger<SignalRPlanningChangePublisher>.Instance);
+        var publisher = new SignalRPlanningChangePublisher(new TestHubContext(clients),
+            new TestPublicHubContext(new RecordingClients()), NullLogger<SignalRPlanningChangePublisher>.Instance);
         using var request = new CancellationTokenSource();
         request.Cancel();
 
@@ -102,7 +105,8 @@ public sealed class PlanningRealtimeTests
     {
         var clients = new RecordingClients();
         clients.Proxy.Fail = true;
-        var publisher = new SignalRPlanningChangePublisher(new TestHubContext(clients), NullLogger<SignalRPlanningChangePublisher>.Instance);
+        var publisher = new SignalRPlanningChangePublisher(new TestHubContext(clients),
+            new TestPublicHubContext(new RecordingClients()), NullLogger<SignalRPlanningChangePublisher>.Instance);
         var weddingId = Guid.NewGuid();
 
         var error = await Record.ExceptionAsync(() => publisher.PublishAsync(weddingId, new("PlanningSeatingChanged", weddingId, 2), CancellationToken.None));
@@ -111,7 +115,30 @@ public sealed class PlanningRealtimeTests
         Assert.Equal("weddingChanged", clients.Proxy.Method);
     }
 
+    [Theory]
+    [InlineData("WeddingWebsitePublished")]
+    [InlineData("WeddingWebsiteUnpublished")]
+    [InlineData("WeddingSetupChanged")]
+    [InlineData("InvitationDesignPublished")]
+    public async Task PublicNotificationUsesStableWeddingGroupEvenIfHostDeliveryFails(string type)
+    {
+        var host = new RecordingClients(); host.Proxy.Fail = true;
+        var guests = new RecordingClients();
+        var publisher = new SignalRPlanningChangePublisher(new TestHubContext(host), new TestPublicHubContext(guests),
+            NullLogger<SignalRPlanningChangePublisher>.Instance);
+        var wedding = Guid.NewGuid();
+        await publisher.PublishAsync(wedding, new(type, wedding, 2), default);
+        Assert.Equal(type == "InvitationDesignPublished" ? PublicWeddingHub.InvitationGroup(wedding) : PublicWeddingHub.WebsiteGroup(wedding), guests.GroupName);
+        Assert.Equal("contentChanged", guests.Proxy.Method);
+        Assert.Empty(guests.Proxy.Arguments!);
+    }
+
     private sealed class TestHubContext(IHubClients clients) : IHubContext<WeddingHub>
+    {
+        public IHubClients Clients => clients;
+        public IGroupManager Groups => throw new NotSupportedException();
+    }
+    private sealed class TestPublicHubContext(IHubClients clients) : IHubContext<PublicWeddingHub>
     {
         public IHubClients Clients => clients;
         public IGroupManager Groups => throw new NotSupportedException();

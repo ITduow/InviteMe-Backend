@@ -113,7 +113,6 @@ public sealed class InvitationMessagingTests
         Assert.True(approvedBrandname.IsConfigured);
     }
 
-    [Fact]
     [Theory]
     [InlineData("sender not found")]
     [InlineData(" Sender Not Found ")]

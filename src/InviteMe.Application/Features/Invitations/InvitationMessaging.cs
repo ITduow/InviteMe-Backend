@@ -144,7 +144,7 @@ public sealed class InvitationMessagingHandler(
     IInvitationMessagingStore store, IWeddingPermissionService permissions, ICurrentUser currentUser,
     IAiTextGenerator ai, RequestValidation<GenerateInvitationDraft> generateValidation,
     RequestValidation<SaveInvitationDraft> saveValidation, RequestValidation<QueueInvitationBatch> batchValidation,
-    InvitationMessagingLinks links, IInvitationChannelSender channels, IAccountStore accounts)
+    InvitationMessagingLinks links, IInvitationChannelSender channels, IAccountStore accounts, IInvitationDesignStore designs)
 {
     private Guid Actor => currentUser.UserId is { } id && id != Guid.Empty
         ? id : throw new ApplicationProblemException(ProblemKind.Unauthenticated, "AUTHENTICATION_REQUIRED", "Sign in first.");
@@ -218,6 +218,7 @@ public sealed class InvitationMessagingHandler(
     public async Task<InvitationSendBatchDto> QueueAsync(Guid weddingId, string? idempotencyKey, QueueInvitationBatch input, CancellationToken ct)
     {
         await permissions.RequireAsync(weddingId, WeddingPermission.INVITATION_SEND, ct);
+        await RequirePublished(weddingId, ct);
         await batchValidation.ValidateAsync(input, ct);
         var unavailable = input.Channels.FirstOrDefault(channel => !channels.IsAvailable(channel));
         if (unavailable is not null)
@@ -247,6 +248,7 @@ public sealed class InvitationMessagingHandler(
     {
         var actor = Actor;
         await permissions.RequireAsync(weddingId, WeddingPermission.INVITATION_SEND, ct);
+        await RequirePublished(weddingId, ct);
         if (!channels.IsAvailable("EMAIL"))
             throw new ApplicationProblemException(ProblemKind.Unavailable, "INVITATION_CHANNEL_NOT_CONFIGURED", "The EMAIL delivery provider is not configured.");
         var account = await accounts.GetAsync(actor, ct)
@@ -261,6 +263,12 @@ public sealed class InvitationMessagingHandler(
             InvitationMessageTemplate.Render(draft.Content, guest.RecipientName, rsvp, qr), rsvp, qr);
         await channels.SendAsync(message, ct);
         await store.RecordTestSendAsync(weddingId, guestId, actor, ct);
+    }
+
+    private async Task RequirePublished(Guid id, CancellationToken ct)
+    {
+        if (!await designs.IsPublishedAsync(id, ct))
+            throw new ApplicationProblemException(ProblemKind.BusinessRule, "INVITATION_NOT_PUBLISHED", "Publish the invitation before sending its link.");
     }
 
     private (string Rsvp, string Qr) Links(string token)

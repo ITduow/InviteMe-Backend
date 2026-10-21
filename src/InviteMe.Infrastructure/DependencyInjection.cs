@@ -86,6 +86,8 @@ public static class DependencyInjection
             configuration["Frontend:Url"] ?? "http://localhost:3000",
             configuration["InvitationMessaging:PublicApiUrl"] ?? "http://localhost:5000"));
         services.AddScoped<InviteMe.Application.Features.Invitations.IInvitationDesignStore, InvitationDesignStore>();
+        services.AddScoped<InviteMe.Application.Features.Weddings.Website.IWeddingWebsiteStore, WeddingWebsiteStore>();
+        services.AddScoped<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaCatalog, WeddingMediaCatalog>();
         services.AddScoped<InviteMe.Application.Features.Seating.Planning.IPlanningSeatingStore, PlanningSeatingStore>();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<InviteMe.Application.Features.Seating.Planning.ISeatingDragLeaseService, SeatingDragLeaseService>();
