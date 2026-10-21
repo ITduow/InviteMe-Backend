@@ -55,11 +55,11 @@ public sealed class WeddingListApiTests(ApiFactory apiFactory) : IClassFixture<A
             var revokedAccount = (await revoked.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
 
             Assert.Equal(HttpStatusCode.Created, (await owner.PostAsJsonAsync($"/api/weddings/{aprilTen.Id}/co-hosts",
-                new AddCoHostInput(coHostAccount.Email, ["WEDDING_VIEW"]))).StatusCode);
+                new AddCoHostInput(coHostAccount.Email, ["CHECKIN_MANAGE"]))).StatusCode);
             Assert.Equal(HttpStatusCode.Created, (await owner.PostAsJsonAsync($"/api/weddings/{aprilTwelve.Id}/co-hosts",
                 new AddCoHostInput(guestAccount.Email, ["GUEST_VIEW"]))).StatusCode);
             Assert.Equal(HttpStatusCode.Created, (await owner.PostAsJsonAsync($"/api/weddings/{aprilThirteen.Id}/co-hosts",
-                new AddCoHostInput(revokedAccount.Email, ["WEDDING_VIEW"]))).StatusCode);
+                new AddCoHostInput(revokedAccount.Email, ["CHECKIN_MANAGE"]))).StatusCode);
             Assert.Equal(HttpStatusCode.NoContent, (await owner.DeleteAsync($"/api/weddings/{aprilThirteen.Id}/co-hosts/{revokedAccount.Id}")).StatusCode);
 
             var guest = WeddingGuest.Create(aprilTwelve.Id, "GUEST-1", "Confirmed Guest", null, null, "MUTUAL", 0, 0);
@@ -89,7 +89,8 @@ public sealed class WeddingListApiTests(ApiFactory apiFactory) : IClassFixture<A
             var coHostSecondPage = await Read<PagedResult<WeddingSummaryDto>>(await coHost.GetAsync("/api/weddings?page=2&pageSize=1"));
             Assert.Empty(coHostSecondPage.Items);
             Assert.Equal(1, coHostSecondPage.TotalCount);
-            Assert.Empty((await Read<PagedResult<WeddingSummaryDto>>(await guestOnly.GetAsync("/api/weddings"))).Items);
+            // Every active co-host sees the wedding they help with, whatever their grants; revoked members and strangers see nothing.
+            Assert.Equal([aprilTwelve.Id], (await Read<PagedResult<WeddingSummaryDto>>(await guestOnly.GetAsync("/api/weddings"))).Items.Select(x => x.Id).ToArray());
             Assert.Empty((await Read<PagedResult<WeddingSummaryDto>>(await revoked.GetAsync("/api/weddings"))).Items);
             Assert.Empty((await Read<PagedResult<WeddingSummaryDto>>(await unrelated.GetAsync("/api/weddings"))).Items);
 

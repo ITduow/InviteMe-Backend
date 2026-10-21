@@ -39,8 +39,11 @@ public sealed record WeddingAccess(
         return IsWeddingWide(userId, permission) || GroupPermissions?.ContainsKey(permission) == true;
     }
 
+    // Every active co-host sees the wedding itself (setup, media, wedding list, realtime channel): WEDDING_VIEW is not
+    // delegable, it comes with the membership. Guest data stays behind the guest, RSVP and seating permissions and scopes.
     public bool IsWeddingWide(Guid userId, WeddingPermission permission) =>
-        userId != Guid.Empty && (OwnerId == userId || (WeddingWidePermissions ?? Permissions).Contains(permission));
+        userId != Guid.Empty && (OwnerId == userId || (permission == WeddingPermission.WEDDING_VIEW && IsActiveMember)
+                                 || (WeddingWidePermissions ?? Permissions).Contains(permission));
 
     public IReadOnlySet<Guid> GroupsFor(WeddingPermission permission) =>
         GroupPermissions?.GetValueOrDefault(permission) ?? new HashSet<Guid>();

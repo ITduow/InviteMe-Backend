@@ -60,11 +60,11 @@ public sealed class CoHostPermissionCoverageTests
         var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "coh-full");
         var cohostAccount = await Me(cohost);
         var ownerAccount = await Me(owner);
-        var allPermissions = Enum.GetNames<WeddingPermission>();
-        Assert.Equal(12, allPermissions.Length);
+        var allPermissions = CoHostPermissionTests.Delegable;
+        Assert.Equal(6, allPermissions.Length);
 
         var added = await AddCoHost(owner, wedding.Id, cohostAccount.Email, allPermissions);
-        Assert.Equal(12, added.Permissions.Count);
+        Assert.Equal(6, added.Permissions.Count);
         var root = Root(wedding.Id);
 
         await AssertStatus(HttpStatusCode.Forbidden, cohost.GetAsync(root), "GET list");
@@ -75,7 +75,7 @@ public sealed class CoHostPermissionCoverageTests
 
         var stored = (await owner.GetFromJsonAsync<CoHostDto>($"{root}/{cohostAccount.Id}"))!;
         Assert.Equal("ACTIVE", stored.Status);
-        Assert.Equal(12, stored.Permissions.Count);
+        Assert.Equal(6, stored.Permissions.Count);
 
     });
 
@@ -95,7 +95,7 @@ public sealed class CoHostPermissionCoverageTests
         var added = await AddCoHost(owner, wedding.Id, cohostAccount.Email, "GUEST_VIEW");
         await AssertStatus(HttpStatusCode.OK, SetPermissions(owner, wedding.Id, cohostAccount.Id, "GUEST_VIEW", "GUEST_EDIT"), "update");
         await AssertStatus(HttpStatusCode.NoContent, owner.DeleteAsync($"{Root(wedding.Id)}/{cohostAccount.Id}"), "revoke");
-        await AddCoHost(owner, wedding.Id, cohostAccount.Email, "GIFT_VIEW");
+        await AddCoHost(owner, wedding.Id, cohostAccount.Email, "RSVP_VIEW");
 
         var rows = await db.AuditLogs.AsNoTracking()
             .Where(x => x.WeddingId == wedding.Id && x.EntityType == "wedding_members")
@@ -163,7 +163,7 @@ public sealed class CoHostPermissionCoverageTests
         var cohostAccount = await Me(cohost);
         var root = Root(wedding.Id);
 
-        await AddCoHost(owner, wedding.Id, cohostAccount.Email, "GUEST_VIEW", "GIFT_VIEW");
+        await AddCoHost(owner, wedding.Id, cohostAccount.Email, "GUEST_VIEW", "RSVP_VIEW");
         await AssertStatus(HttpStatusCode.NoContent, owner.DeleteAsync($"{root}/{cohostAccount.Id}"), "revoke");
 
         var detail = (await owner.GetFromJsonAsync<CoHostDto>($"{root}/{cohostAccount.Id}"))!;
@@ -239,17 +239,17 @@ public sealed class CoHostPermissionCoverageTests
         var cohostAccount = await Me(cohost);
         var codes = await db.Permissions.AsNoTracking().ToDictionaryAsync(x => x.Id, x => x.Code);
 
-        await AddCoHost(owner, wedding.Id, cohostAccount.Email, "GUEST_VIEW", "GIFT_VIEW");
+        await AddCoHost(owner, wedding.Id, cohostAccount.Email, "GUEST_VIEW", "RSVP_VIEW");
         var before = (await db.WeddingMemberPermissions.AsNoTracking().ToListAsync()).ToDictionary(x => codes[x.PermissionId], x => x.GrantedAt);
         await Task.Delay(50);
 
-        var response = await SetPermissions(owner, wedding.Id, cohostAccount.Id, "GUEST_VIEW", "GIFT_EDIT");
+        var response = await SetPermissions(owner, wedding.Id, cohostAccount.Id, "GUEST_VIEW", "CHECKIN_MANAGE");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var after = (await db.WeddingMemberPermissions.AsNoTracking().ToListAsync()).ToDictionary(x => codes[x.PermissionId], x => x.GrantedAt);
-        Assert.Equal(["GIFT_EDIT", "GUEST_VIEW"], after.Keys.Order().ToArray());
+        Assert.Equal(["CHECKIN_MANAGE", "GUEST_VIEW"], after.Keys.Order().ToArray());
         Assert.Equal(before["GUEST_VIEW"], after["GUEST_VIEW"]);
-        Assert.True(after["GIFT_EDIT"] > before["GUEST_VIEW"]);
+        Assert.True(after["CHECKIN_MANAGE"] > before["GUEST_VIEW"]);
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
@@ -260,15 +260,15 @@ public sealed class CoHostPermissionCoverageTests
         var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "coh-seed");
         var cohostAccount = await Me(cohost);
         var root = Root(wedding.Id);
-        await db.Database.ExecuteSqlRawAsync("DELETE FROM inviteme.permissions WHERE code = 'GIFT_EDIT'");
+        await db.Database.ExecuteSqlRawAsync("DELETE FROM inviteme.permissions WHERE code = 'CHECKIN_MANAGE'");
 
-        await AssertStatus(HttpStatusCode.UnprocessableEntity, owner.PostAsJsonAsync(root, new AddCoHostInput(cohostAccount.Email, ["GUEST_VIEW", "GIFT_EDIT"])), "add with missing catalog permission");
+        await AssertStatus(HttpStatusCode.UnprocessableEntity, owner.PostAsJsonAsync(root, new AddCoHostInput(cohostAccount.Email, ["GUEST_VIEW", "CHECKIN_MANAGE"])), "add with missing catalog permission");
         Assert.Equal(0, await db.WeddingMembers.CountAsync(x => x.WeddingId == wedding.Id));
         Assert.Equal(0, await db.WeddingMemberPermissions.CountAsync());
         Assert.Equal(0, await db.AuditLogs.CountAsync(x => x.EntityType == "wedding_members"));
 
         await AddCoHost(owner, wedding.Id, cohostAccount.Email, "GUEST_VIEW");
-        await AssertStatus(HttpStatusCode.UnprocessableEntity, SetPermissions(owner, wedding.Id, cohostAccount.Id, "GIFT_EDIT"), "update with missing catalog permission");
+        await AssertStatus(HttpStatusCode.UnprocessableEntity, SetPermissions(owner, wedding.Id, cohostAccount.Id, "CHECKIN_MANAGE"), "update with missing catalog permission");
         var stored = (await owner.GetFromJsonAsync<CoHostDto>($"{root}/{cohostAccount.Id}"))!;
         Assert.Equal(["GUEST_VIEW"], stored.Permissions.ToArray());
         Assert.Equal(1, await db.AuditLogs.CountAsync(x => x.EntityType == "wedding_members"));
@@ -288,7 +288,7 @@ public sealed class CoHostPermissionCoverageTests
         {
             owner.DeleteAsync($"{root}/{cohostAccount.Id}"),
             SetPermissions(owner, wedding.Id, cohostAccount.Id, "GUEST_VIEW", "GUEST_EDIT"),
-            SetPermissions(owner, wedding.Id, cohostAccount.Id, "GIFT_VIEW"),
+            SetPermissions(owner, wedding.Id, cohostAccount.Id, "RSVP_VIEW"),
             SetPermissions(owner, wedding.Id, cohostAccount.Id, "SEATING_VIEW", "SEATING_EDIT")
         };
         var responses = await Task.WhenAll(calls);

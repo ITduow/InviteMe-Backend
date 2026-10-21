@@ -99,9 +99,12 @@ public sealed partial class GuestAccessHandler(IGuestAccessStore store, IQrCodeR
         return await store.PublicationAsync(weddingId, ct);
     }
 
+    // Publishing shows every guest's table, so a co-host who seats only some guest groups cannot do it.
     public async Task<SeatingPublicationDto> SetPublishedAsync(Guid weddingId, bool published, CancellationToken ct)
     {
-        await permissions.RequireAsync(weddingId, WeddingPermission.SEATING_EDIT, ct);
+        if (!(await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_EDIT, ct)).IsWeddingWide)
+            throw new ApplicationProblemException(ProblemKind.Forbidden, "WEDDING_SCOPE_REQUIRED",
+                "Publishing the seating plan requires wedding-wide seating permission.");
         var result = await store.SetPublishedAsync(weddingId, user.UserId, published, ct);
         await changes.PublishAsync(weddingId, new(published ? "PlanningSeatingPublished" : "PlanningSeatingUnpublished", weddingId), ct);
         return result;

@@ -83,7 +83,21 @@ public sealed class SeatingDragHubTests
         Assert.Empty(leases.Snapshot(plan.Wedding).Leases);
     }
 
-    private static WeddingHub Hub(string connection, Guid user, Permissions permissions, ISeatingDragLeaseService leases,
+    [Fact]
+    public async Task GroupSeatingEditorCannotLockPlacesOutsideTheirGroups()
+    {
+        using var factory = new ApiFactory(); using var scope = factory.Services.CreateScope();
+        var account = scope.ServiceProvider.GetRequiredService<IAccountStore>();
+        var leases = new SeatingDragLeaseService(TimeProvider.System); var plan = new Plan();
+        var group = Hub("group", Guid.NewGuid(), new GroupPermissions(), leases, plan, account);
+        Assert.Equal("PLACE_NOT_FOUND", (await Assert.ThrowsAsync<HubException>(() => group.StartSeatingDrag(plan.Wedding, [plan.OtherPlace]))).Message);
+        Assert.Empty(leases.Snapshot(plan.Wedding).Leases);
+        await group.StartSeatingDrag(plan.Wedding, [plan.Place]);
+        var weddingWide = Hub("wide", Guid.NewGuid(), new Permissions(), leases, plan, account);
+        await weddingWide.StartSeatingDrag(plan.Wedding, [plan.OtherPlace]);
+    }
+
+    private static WeddingHub Hub(string connection, Guid user, IWeddingPermissionService permissions, ISeatingDragLeaseService leases,
         IPlanningSeatingStore plan, IAccountStore account) => new(permissions, leases, plan, account)
         { Context = new Caller(connection, user), Groups = new Groups() };
     private sealed class Caller(string connection, Guid user) : HubCallerContext
@@ -109,14 +123,27 @@ public sealed class SeatingDragHubTests
                 Task.FromException(new ApplicationProblemException(ProblemKind.Forbidden, "DENIED", "Denied"));
         public Task<bool> HasPermissionAsync(Guid wedding, WeddingPermission permission, CancellationToken ct) => Task.FromResult(View);
     }
+    // A co-host whose seating grants cover one guest group only.
+    private sealed class GroupPermissions : IWeddingPermissionService
+    {
+        public Task RequireAsync(Guid wedding, WeddingPermission permission, CancellationToken ct) => Task.CompletedTask;
+        public Task<bool> HasPermissionAsync(Guid wedding, WeddingPermission permission, CancellationToken ct) => Task.FromResult(true);
+        public Task<WeddingPermissionScope> RequireScopeAsync(Guid wedding, WeddingPermission permission, CancellationToken ct) =>
+            Task.FromResult(new WeddingPermissionScope(false, new HashSet<Guid> { Guid.NewGuid() }));
+    }
     private sealed class Plan : IPlanningSeatingStore
     {
         public int Reads;
-        public Guid Wedding = Guid.NewGuid(); public Guid Place = Guid.NewGuid();
-        public Task<PlanningSeatingDto> GetAsync(Guid wedding, CancellationToken ct)
+        public Guid Wedding = Guid.NewGuid(); public Guid Place = Guid.NewGuid(); public Guid OtherPlace = Guid.NewGuid();
+        public Task<PlanningSeatingDto> GetAsync(Guid wedding, CancellationToken ct) => GetScopedAsync(wedding, ct, null);
+        // A group scope sees Place only; OtherPlace belongs to another group.
+        public Task<PlanningSeatingDto> GetScopedAsync(Guid wedding, CancellationToken ct, IReadOnlySet<Guid>? groupScope)
         {
             Reads++;
-            return Task.FromResult(new PlanningSeatingDto(Wedding, 1, [], [], [new(Place, Guid.NewGuid(), 1, null)], []));
+            IReadOnlyList<PlanningSeatingPlace> places = groupScope is null
+                ? [new(Place, Guid.NewGuid(), 1, null), new(OtherPlace, Guid.NewGuid(), 1, null)]
+                : [new(Place, Guid.NewGuid(), 1, null)];
+            return Task.FromResult(new PlanningSeatingDto(Wedding, 1, [], [], places, []));
         }
         public Task<PlanningSeatingDto> ChangeAsync(Guid wedding, ChangePlanningSeating input, CancellationToken ct) => throw new NotSupportedException();
     }

@@ -46,10 +46,10 @@ internal static class GuestAccessEndpoints
             .Produces<SeatingPublicationDto>().ProducesProblem(StatusCodes.Status403Forbidden);
         host.MapPost("/seating-plan/publish", (Guid weddingId, GuestAccessHandler h, CancellationToken ct) => h.SetPublishedAsync(weddingId, true, ct))
             .WithName("PublishSeatingPlan")
-            .WithSummary("Show tables to guests (SEATING_EDIT). The plan stays editable; guests always see the latest seats.")
+            .WithSummary("Show tables to guests (wedding-wide SEATING_EDIT). The plan stays editable; guests always see the latest seats.")
             .Produces<SeatingPublicationDto>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
         host.MapDelete("/seating-plan/publish", (Guid weddingId, GuestAccessHandler h, CancellationToken ct) => h.SetPublishedAsync(weddingId, false, ct))
-            .WithName("UnpublishSeatingPlan").WithSummary("Hide tables from guests again (SEATING_EDIT).")
+            .WithName("UnpublishSeatingPlan").WithSummary("Hide tables from guests again (wedding-wide SEATING_EDIT).")
             .Produces<SeatingPublicationDto>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         // Cohost04/Cohost05: reception counter. CHECKIN_MANAGE covers every guest of the wedding, whatever the co-host's guest groups.
