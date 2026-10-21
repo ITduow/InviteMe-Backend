@@ -1,5 +1,6 @@
 using InviteMe.Application.Common.Behaviors;
 using InviteMe.Application.Features.Guests.Planning;
+using InviteMe.Application.Ports.Authentication;
 using InviteMe.Application.Ports.Authorization;
 using InviteMe.Domain.Weddings;
 
@@ -14,7 +15,8 @@ public sealed class PlanningInvitationLinkTests
     {
         var store = new Store();
         var handler = new GuestPlanningHandler(store, new Permissions(canSend),
-            new RequestValidation<PlanningImport>([]), new RequestValidation<PlanningGuestQuery>([]), new Publisher());
+            new RequestValidation<PlanningImport>([]), new RequestValidation<PlanningGuestQuery>([]),
+            new RequestValidation<UpdatePlanningGuest>([]), new CurrentUser(Guid.NewGuid()), new Publisher());
         var weddingId = Guid.NewGuid();
         var page = await handler.ListAsync(weddingId, new(), default);
         var detail = await handler.DetailAsync(weddingId, store.Guest.Id, default);
@@ -29,6 +31,8 @@ public sealed class PlanningInvitationLinkTests
         public Task<bool> HasPermissionAsync(Guid id, WeddingPermission permission, CancellationToken ct) =>
             Task.FromResult(permission == WeddingPermission.INVITATION_SEND && canSend);
     }
+
+    private sealed record CurrentUser(Guid? UserId) : ICurrentUser;
 
     private sealed class Publisher : IPlanningChangePublisher
     {

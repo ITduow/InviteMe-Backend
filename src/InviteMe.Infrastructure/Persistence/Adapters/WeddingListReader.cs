@@ -14,9 +14,10 @@ public sealed class WeddingListReader(InviteMeDbContext db) : IWeddingListReader
             db.Users.Any(u => u.Id == userId && u.Status == "ACTIVE") &&
             (w.OwnerUserId == userId || db.WeddingMembers.Any(member =>
                 member.WeddingId == w.Id && member.UserId == userId && member.MemberRole == "CO_HOST" && member.Status == "ACTIVE" &&
-                db.WeddingMemberPermissions.Any(grant => grant.MemberId == member.Id &&
+                (db.WeddingMemberPermissions.Any(grant => grant.MemberId == member.Id &&
                     db.Permissions.Any(permission => permission.Id == grant.PermissionId &&
-                        permission.Scope == "WEDDING" && permission.Code == nameof(WeddingPermission.WEDDING_VIEW))))));
+                        permission.Scope == "WEDDING" && permission.Code == nameof(WeddingPermission.WEDDING_VIEW))) ||
+                 db.WeddingMemberGroupPermissions.Any(grant => grant.MemberId == member.Id)))));
 
         if (!string.IsNullOrWhiteSpace(query.Search))
         {

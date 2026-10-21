@@ -6,7 +6,7 @@ using InviteMe.Domain.Weddings;
 
 namespace InviteMe.Application.Features.Seating.Planning;
 
-public sealed record PlanningTableDto(Guid Id, string Name, int Capacity);
+public sealed record PlanningTableDto(Guid Id, string Name, int Capacity, Guid? GroupId = null);
 public sealed record PlanningAssignmentDto(Guid PlaceId, Guid TableId, int SeatNumber);
 public sealed record PlanningSeatingPlace(Guid Id, Guid GuestId, int Position, PlanningPersonDto? Person);
 public sealed record PlanningSeatingDto(Guid WeddingId, int Version, IReadOnlyList<PlanningTableDto> Tables,
@@ -14,12 +14,14 @@ public sealed record PlanningSeatingDto(Guid WeddingId, int Version, IReadOnlyLi
 public sealed record ChangePlanningSeating(int ExpectedVersion, string Action, Guid? TableId = null,
     string? Name = null, int? Capacity = null, IReadOnlyList<Guid>? PlaceIds = null, int? SeatNumber = null,
     int? TableCount = null, string? Strategy = null, string Mode = "UNASSIGNED", string? SourceFingerprint = null, bool ConfirmReplace = false,
-    Guid? DragToken = null);
+    Guid? DragToken = null, Guid? GroupId = null);
 
 public interface IPlanningSeatingStore
 {
     Task<PlanningSeatingDto> GetAsync(Guid weddingId, CancellationToken ct);
     Task<PlanningSeatingDto> ChangeAsync(Guid weddingId, ChangePlanningSeating input, CancellationToken ct);
+    Task<PlanningSeatingDto> GetScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<Guid>? groupScope) => GetAsync(weddingId, ct);
+    Task<PlanningSeatingDto> ChangeScopedAsync(Guid weddingId, ChangePlanningSeating input, CancellationToken ct, IReadOnlySet<Guid>? groupScope) => ChangeAsync(weddingId, input, ct);
 }
 public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePlanningSeating>
 {
@@ -28,6 +30,7 @@ public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePla
         RuleFor(x => x.ExpectedVersion).GreaterThanOrEqualTo(0);
         RuleFor(x => x.Action).Must(x => x is "CREATE_TABLE" or "CREATE_TABLES" or "UPDATE_TABLE" or "DELETE_TABLE" or "MOVE_PLACES" or "APPLY_SUGGESTION");
         RuleFor(x => x.TableId).NotEqual(Guid.Empty).When(x => x.TableId.HasValue);
+        RuleFor(x => x.GroupId).NotEqual(Guid.Empty).When(x => x.GroupId.HasValue);
         RuleFor(x => x).Must(x => x.TableId.HasValue).When(x => x.Action is "UPDATE_TABLE" or "DELETE_TABLE");
         When(x => x.Action is "CREATE_TABLE" or "UPDATE_TABLE", () =>
         {
@@ -60,21 +63,28 @@ public sealed class PlanningSeatingHandler(IPlanningSeatingStore store, IWedding
 {
     public async Task<PlanningSeatingDto> GetAsync(Guid weddingId, CancellationToken ct)
     {
-        await permissions.RequireAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
-        return await store.GetAsync(weddingId, ct);
+        var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
+        return await store.GetScopedAsync(weddingId, ct, scope.IsWeddingWide ? null : scope.GroupIds);
     }
     public async Task<PlanningSeatingDto> ChangeAsync(Guid weddingId, ChangePlanningSeating input, CancellationToken ct)
     {
-        await permissions.RequireAsync(weddingId, WeddingPermission.SEATING_EDIT, ct);
-        await permissions.RequireAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
+        var editScope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_EDIT, ct);
+        var viewScope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
+        if (!viewScope.IsWeddingWide && (editScope.IsWeddingWide || !editScope.GroupIds.IsSubsetOf(viewScope.GroupIds)))
+            throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.Forbidden, "SEATING_SCOPE_MISMATCH", "Seating edit scope must be contained in the assigned view scope.");
+        var groupScope = editScope.IsWeddingWide ? null : editScope.GroupIds;
+        if (groupScope is not null && input.Action == "APPLY_SUGGESTION")
+            throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.Forbidden, "SEATING_SUGGESTION_REQUIRES_WEDDING_SCOPE", "Automatic seating suggestions require wedding-wide seating access.");
         await validation.ValidateAsync(input, ct);
-        var result = await store.ChangeAsync(weddingId, input, ct);
+        var result = await store.ChangeScopedAsync(weddingId, input, ct, groupScope);
         await changes.PublishAsync(weddingId, new("PlanningSeatingChanged", weddingId, result.Version), ct);
         return result;
     }
     public async Task<PlanningSeatingSuggestion> SuggestAsync(Guid weddingId, SuggestPlanningSeating input, CancellationToken ct)
     {
-        await permissions.RequireAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
+        var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
+        if (!scope.IsWeddingWide)
+            throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.Forbidden, "SEATING_SUGGESTION_REQUIRES_WEDDING_SCOPE", "Automatic seating suggestions require wedding-wide seating access.");
         await suggestions.ValidateAsync(input, ct);
         return SeatingSuggestions.Generate(await store.GetAsync(weddingId, ct), input);
     }

@@ -80,34 +80,40 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
     }
 
     public async Task<RsvpDashboardData> DashboardAsync(Guid weddingId, CancellationToken ct)
+        => await DashboardScopedAsync(weddingId, ct, null);
+
+    public async Task<RsvpDashboardData> DashboardScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<Guid>? groupScope)
     {
         // One consistent snapshot of the wedding (a host may be editing while the dashboard reads).
         await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct);
         var wedding = await db.Weddings.AsNoTracking().SingleOrDefaultAsync(x => x.Id == weddingId, ct) ?? throw Missing("WEDDING_NOT_FOUND");
+        var scopedIds = groupScope?.ToArray();
         var guests = await (from g in db.Set<PlanningGuest>().AsNoTracking()
                             join grp in db.Set<PlanningGroup>() on g.GroupId equals (Guid?)grp.Id into groups
                             from grp in groups.DefaultIfEmpty()
-                            where g.WeddingId == weddingId
+                            where g.WeddingId == weddingId && (scopedIds == null || g.GroupId.HasValue && scopedIds.Contains(g.GroupId.Value))
                             select new { g.Id, g.RecipientName, g.RowNumber, g.Side, g.GroupId, GroupName = grp == null ? null : grp.Name, g.Phone, g.Email }).ToListAsync(ct);
         var rsvps = await db.Set<PlanningRsvp>().AsNoTracking().Where(x => x.WeddingId == weddingId).ToDictionaryAsync(x => x.GuestId, ct);
         var people = (await (from p in db.Set<PlanningParticipant>().AsNoTracking()
                              join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
                              join n in db.Set<PlanningDietaryNote>() on p.Id equals n.ParticipantId into notes
                              from n in notes.DefaultIfEmpty()
-                             where g.WeddingId == weddingId
+                             where g.WeddingId == weddingId && (scopedIds == null || g.GroupId.HasValue && scopedIds.Contains(g.GroupId.Value))
                              select new { p.GuestId, p.Id, p.FullName, p.Role, p.AttendanceStatus, Dietary = n == null ? null : n.Note }).ToListAsync(ct))
             .ToLookup(x => x.GuestId);
         var places = (await (from x in db.Set<PlanningPlace>().AsNoTracking() join g in db.Set<PlanningGuest>() on x.GuestId equals g.Id
-                             where g.WeddingId == weddingId select new { x.GuestId, x.Position, x.ParticipantId }).ToListAsync(ct))
+                             where g.WeddingId == weddingId && (scopedIds == null || g.GroupId.HasValue && scopedIds.Contains(g.GroupId.Value)) select new { x.GuestId, x.Position, x.ParticipantId }).ToListAsync(ct))
             .ToLookup(x => x.GuestId);
         var locked = (await db.Set<PlanningRsvpLock>().AsNoTracking().Where(x => x.WeddingId == weddingId).Select(x => x.GuestId).ToListAsync(ct)).ToHashSet();
         var pending = (await db.Set<PlanningRsvpRequest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Status == PlanningRsvpRequest.Pending)
             .Select(x => x.GuestId).ToListAsync(ct)).ToHashSet();
         var deadline = await Deadline(weddingId, ct);
         var lateForAll = deadline <= clock.GetUtcNow();
-        var occupied = await Occupied(weddingId, ct);
+        var occupied = scopedIds is null ? await Occupied(weddingId, ct) : await (from p in db.Set<PlanningParticipant>().AsNoTracking()
+            join g in db.Set<PlanningGuest>().AsNoTracking() on p.GuestId equals g.Id
+            where g.WeddingId == weddingId && scopedIds.Contains(g.GroupId!.Value) && p.AttendanceStatus == Attending select p.Id).LongCountAsync(ct);
         await tx.CommitAsync(ct);
-        return new(weddingId, wedding.MaxCapacity, occupied, deadline, guests.Select(g =>
+        return new(weddingId, scopedIds is null ? wedding.MaxCapacity : null, occupied, deadline, guests.Select(g =>
         {
             var rsvp = rsvps.GetValueOrDefault(g.Id);
             var position = places[g.Id].Where(x => x.ParticipantId is not null).ToDictionary(x => x.ParticipantId!.Value, x => x.Position);

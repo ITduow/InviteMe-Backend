@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Domain.Guests;
+using InviteMe.Domain.Audit;
 using InviteMe.Infrastructure.Authentication;
 using Microsoft.EntityFrameworkCore;
 using static InviteMe.Infrastructure.Persistence.Adapters.PlanningPersistence;
@@ -11,6 +12,38 @@ namespace InviteMe.Infrastructure.Persistence.Adapters;
 
 public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningStore
 {
+    public async Task<PlanningGuestDto> UpdateAsync(Guid weddingId, Guid guestId, UpdatePlanningGuest input, Guid actorId,
+        CancellationToken ct, IReadOnlySet<Guid>? groupScope = null)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var guest = await db.Set<PlanningGuest>().FromSqlInterpolated($"SELECT * FROM inviteme.planning_guests WHERE \"Id\"={guestId} AND \"WeddingId\"={weddingId} FOR UPDATE").SingleOrDefaultAsync(ct)
+            ?? throw Missing("GUEST_NOT_FOUND");
+        var scopeIds = groupScope?.ToArray();
+        if (scopeIds is not null && (guest.GroupId is null || !scopeIds.Contains(guest.GroupId.Value))) throw Missing("GUEST_NOT_FOUND");
+        if (guest.Version != input.ExpectedVersion) throw Conflict("GUEST_VERSION_CONFLICT");
+        if (input.GroupId is { } groupId && !await db.Set<PlanningGroup>().AnyAsync(x => x.Id == groupId && x.WeddingId == weddingId, ct))
+            throw Missing("GROUP_NOT_FOUND");
+        if (scopeIds is not null && input.GroupId != guest.GroupId && (input.GroupId is null || !scopeIds.Contains(input.GroupId.Value)))
+            throw Missing("GUEST_NOT_FOUND");
+        var oldName = guest.RecipientName;
+        guest.RecipientName = PlanningText.Clean(input.RecipientName);
+        guest.Honorific = Optional(input.Honorific);
+        guest.Side = input.Side;
+        guest.GroupId = input.GroupId;
+        guest.Phone = Optional(input.Phone);
+        guest.Note = Optional(input.Note);
+        guest.Email = Optional(input.Email);
+        guest.Version++;
+        var primary = await db.Set<PlanningParticipant>().SingleOrDefaultAsync(x => x.GuestId == guestId && x.Role == "PRIMARY", ct);
+        if (primary is not null && primary.FullName == oldName) primary.FullName = guest.RecipientName;
+        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_guests", guestId, "GUEST_UPDATED", actorId, metadata:
+            JsonSerializer.Serialize(new { previousVersion = input.ExpectedVersion, version = guest.Version, fields = new[] { "recipientName", "honorific", "side", "groupId", "phone", "email", "note" } })));
+        await db.SaveChangesAsync(ct);
+        var result = await Guests(db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Id == guestId)).SingleAsync(ct);
+        await tx.CommitAsync(ct);
+        return result;
+    }
+
     public async Task<PlanningImportOutcome> ImportAsync(Guid weddingId, Guid key, PlanningImport input, CancellationToken ct)
     {
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(input))));
@@ -86,9 +119,19 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
             g.ExpectedPeople, g.Side, grp == null ? null : new PlanningGroupDto(grp.Id, grp.Name), g.Phone, g.Note, g.Email,
             g.InvitationToken == null ? null : "/invite/" + g.InvitationToken);
 
-    public async Task<PlanningGuestPage> ListAsync(Guid weddingId, int page, int pageSize, string? search, string? side, Guid? groupId, CancellationToken ct)
+    private static string? Optional(string? value) => string.IsNullOrWhiteSpace(value) ? null : PlanningText.Clean(value);
+
+    public Task<PlanningGuestPage> ListAsync(Guid weddingId, int page, int pageSize, string? search, string? side, Guid? groupId, CancellationToken ct) =>
+        ListScopedAsync(weddingId, page, pageSize, search, side, groupId, ct, null);
+
+    public async Task<PlanningGuestPage> ListScopedAsync(Guid weddingId, int page, int pageSize, string? search, string? side, Guid? groupId, CancellationToken ct, IReadOnlySet<Guid>? groupScope)
     {
         var query = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId);
+        if (groupScope is not null)
+        {
+            if (groupScope.Count == 0) query = query.Where(_ => false);
+            else { var scopedIds = groupScope.ToArray(); query = query.Where(x => x.GroupId.HasValue && scopedIds.Contains(x.GroupId.Value)); }
+        }
         if (!string.IsNullOrWhiteSpace(search)) { var text = search.Trim().ToUpper(); query = query.Where(x => x.RecipientName.ToUpper().Contains(text)); }
         if (side is not null) query = query.Where(x => x.Side == side);
         if (groupId is not null) query = query.Where(x => x.GroupId == groupId);

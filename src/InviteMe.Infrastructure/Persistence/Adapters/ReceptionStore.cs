@@ -30,16 +30,22 @@ public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : I
 
     // One wedding's guests are a few hundred rows; the handler matches names without accents in memory.
     public async Task<IReadOnlyList<ReceptionCandidate>> CandidatesAsync(Guid weddingId, CancellationToken ct)
+        => await CandidatesScopedAsync(weddingId, ct, null);
+
+    public async Task<IReadOnlyList<ReceptionCandidate>> CandidatesScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<Guid>? groupScope)
     {
-        var guests = await db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId)
+        var scopeIds = groupScope?.ToArray();
+        var guestQuery = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId);
+        if (scopeIds is not null) guestQuery = guestQuery.Where(x => x.GroupId.HasValue && scopeIds.Contains(x.GroupId.Value));
+        var guests = await guestQuery
             .Select(x => new { x.Id, x.RecipientName, x.Honorific, x.Side, x.Phone }).ToListAsync(ct);
         var people = (await (from p in db.Set<PlanningParticipant>().AsNoTracking()
                              join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
-                             where g.WeddingId == weddingId
+                             where g.WeddingId == weddingId && (scopeIds == null || g.GroupId.HasValue && scopeIds.Contains(g.GroupId.Value))
                              select new { p.GuestId, p.FullName }).ToListAsync(ct)).ToLookup(x => x.GuestId, x => x.FullName);
         var places = (await (from place in db.Set<PlanningPlace>().AsNoTracking()
                              join g in db.Set<PlanningGuest>() on place.GuestId equals g.Id
-                             where g.WeddingId == weddingId
+                             where g.WeddingId == weddingId && (scopeIds == null || g.GroupId.HasValue && scopeIds.Contains(g.GroupId.Value))
                              join assignment in db.Set<PlanningSeatAssignment>() on place.Id equals assignment.PlaceId into assignments
                              from assignment in assignments.DefaultIfEmpty()
                              join table in db.Set<PlanningTable>() on assignment.TableId equals table.Id into tables
@@ -82,11 +88,14 @@ public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : I
         return inserted;
     }
 
-    public async Task<IReadOnlyList<CheckInPlaceStats>> PlaceStatsAsync(Guid weddingId, CancellationToken ct)
+    public Task<IReadOnlyList<CheckInPlaceStats>> PlaceStatsAsync(Guid weddingId, CancellationToken ct) => PlaceStatsScopedAsync(weddingId, ct, null);
+
+    public async Task<IReadOnlyList<CheckInPlaceStats>> PlaceStatsScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<Guid>? groupScope)
     {
+        var scopeIds = groupScope?.ToArray();
         var rows = await (from place in db.Set<PlanningPlace>().AsNoTracking()
                           join g in db.Set<PlanningGuest>() on place.GuestId equals g.Id
-                          where g.WeddingId == weddingId
+                          where g.WeddingId == weddingId && (scopeIds == null || g.GroupId.HasValue && scopeIds.Contains(g.GroupId.Value))
                           join person in db.Set<PlanningParticipant>() on place.ParticipantId equals (Guid?)person.Id into people
                           from person in people.DefaultIfEmpty()
                           select new
@@ -99,6 +108,12 @@ public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : I
         return rows.Select(x => new CheckInPlaceStats(x.Side, RsvpPlaceStatus.Of(x.Answered, x.Attending), x.Kind is not null,
             x.Kind == PlanningCheckInKind.WalkIn)).ToList();
     }
+
+    public Task<Guid?> FindGuestIdByPlaceAsync(Guid weddingId, Guid placeId, CancellationToken ct) =>
+        (from place in db.Set<PlanningPlace>().AsNoTracking()
+         join guest in db.Set<PlanningGuest>().AsNoTracking() on place.GuestId equals guest.Id
+         where guest.WeddingId == weddingId && place.Id == placeId && db.Set<PlanningCheckIn>().Any(x => x.PlaceId == placeId)
+         select (Guid?)guest.Id).SingleOrDefaultAsync(ct);
 
     // Lock order as RsvpStore: wedding row, then the planning guest row. The key is stored as a planning import batch, which
     // also owns a new walk-in guest (every planning guest belongs to a batch), so a retried request replays its first outcome.

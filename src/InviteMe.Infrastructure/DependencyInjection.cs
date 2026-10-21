@@ -58,6 +58,8 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Ports.Authentication.IAccountStore, InviteMe.Infrastructure.Authentication.AccountStore>();
         services.AddScoped<InviteMe.Application.Ports.Authentication.IRefreshTokenStore, InviteMe.Infrastructure.Authentication.RefreshTokenStore>();
         services.AddScoped<InviteMe.Application.Ports.Weddings.ICoHostStore, CoHostStore>();
+        services.AddScoped<InviteMe.Application.Features.Weddings.CoHosts.ICoHostInvitationStore, CoHostInvitationStore>();
+        services.AddScoped<InviteMe.Application.Features.Weddings.CoHosts.ICoHostInvitationEmailSender, SmtpCoHostInvitationEmailSender>();
         services.AddScoped<InviteMe.Application.Features.Weddings.Setup.IWeddingSetupStore, WeddingSetupStore>();
         services.AddScoped<InviteMe.Application.Features.Weddings.Setup.IWeddingListReader, WeddingListReader>();
         services.AddOptions<WeddingMediaOptions>().BindConfiguration(WeddingMediaOptions.SectionName)

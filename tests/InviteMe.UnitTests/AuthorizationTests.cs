@@ -30,6 +30,24 @@ public sealed class AuthorizationTests
     }
 
     [Fact]
+    public void CheckInPermissionRequiresWeddingWideGrant()
+    {
+        var owner = Guid.NewGuid();
+        var cohost = Guid.NewGuid();
+        var groupOnly = new WeddingAccess(owner, true,
+            new HashSet<WeddingPermission> { WeddingPermission.CHECKIN_MANAGE },
+            new HashSet<WeddingPermission>(),
+            new Dictionary<WeddingPermission, IReadOnlySet<Guid>>
+            { [WeddingPermission.CHECKIN_MANAGE] = new HashSet<Guid> { Guid.NewGuid() } });
+
+        Assert.False(groupOnly.Allows(cohost, WeddingPermission.CHECKIN_MANAGE));
+        Assert.True((groupOnly with
+        {
+            WeddingWidePermissions = new HashSet<WeddingPermission> { WeddingPermission.CHECKIN_MANAGE }
+        }).Allows(cohost, WeddingPermission.CHECKIN_MANAGE));
+    }
+
+    [Fact]
     public async Task ServicePassesBothScopeKeysAndDeniesMissingWedding()
     {
         var wedding = Guid.NewGuid();
@@ -65,14 +83,40 @@ public sealed class AuthorizationTests
         Assert.True(await service.HasPermissionAsync(wedding, WeddingPermission.WEDDING_VIEW, default));
     }
 
+    [Fact]
+    public async Task GroupScopedPermissionAllowsOnlyGuestsInAssignedGroup()
+    {
+        var user = Guid.NewGuid();
+        var wedding = Guid.NewGuid();
+        var allowedGroup = Guid.NewGuid();
+        var guestGroup = Guid.NewGuid();
+        var access = new WeddingAccess(Guid.NewGuid(), true, new HashSet<WeddingPermission> { WeddingPermission.GUEST_VIEW },
+            new HashSet<WeddingPermission>(), new Dictionary<WeddingPermission, IReadOnlySet<Guid>>
+            { [WeddingPermission.GUEST_VIEW] = new HashSet<Guid> { allowedGroup } });
+        var reader = new AccessReader(access, guestGroup);
+        var service = new WeddingPermissionService(new CurrentUser(user), reader);
+
+        var scope = await service.RequireScopeAsync(wedding, WeddingPermission.GUEST_VIEW, default);
+        Assert.False(scope.IsWeddingWide);
+        Assert.Equal([allowedGroup], scope.GroupIds);
+        var denied = await Assert.ThrowsAsync<ApplicationProblemException>(() =>
+            service.RequireGuestAsync(wedding, WeddingPermission.GUEST_VIEW, Guid.NewGuid(), default));
+        Assert.Equal(ProblemKind.NotFound, denied.Kind);
+
+        reader.GuestGroup = allowedGroup;
+        await service.RequireGuestAsync(wedding, WeddingPermission.GUEST_VIEW, Guid.NewGuid(), default);
+    }
+
     private sealed record CurrentUser(Guid? UserId) : ICurrentUser;
-    private sealed class AccessReader(WeddingAccess? result = null) : IWeddingAccessReader
+    private sealed class AccessReader(WeddingAccess? result = null, Guid? guestGroup = null) : IWeddingAccessReader
     {
         public (Guid WeddingId, Guid UserId)? LastRequest { get; private set; }
+        public Guid? GuestGroup { get; set; } = guestGroup;
         public Task<WeddingAccess?> FindAsync(Guid weddingId, Guid userId, CancellationToken cancellationToken)
         {
             LastRequest = (weddingId, userId);
             return Task.FromResult(result);
         }
+        public Task<Guid?> FindGuestGroupIdAsync(Guid weddingId, Guid guestId, CancellationToken cancellationToken) => Task.FromResult(GuestGroup);
     }
 }

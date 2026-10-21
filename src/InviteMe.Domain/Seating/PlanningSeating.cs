@@ -14,6 +14,7 @@ public sealed class PlanningTable
     public Guid WeddingId { get; set; }
     public string Name { get; set; } = "";
     public int Capacity { get; set; }
+    public Guid? GroupId { get; set; }
 }
 public sealed class PlanningSeatAssignment
 {
