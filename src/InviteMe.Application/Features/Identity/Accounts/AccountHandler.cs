@@ -10,7 +10,9 @@ public sealed record AccountDto(
     string DisplayName,
     string Email,
     string Role,
-    bool EmailConfirmed = false);
+    bool EmailConfirmed = false,
+    string? Phone = null,
+    string? AvatarUrl = null);
 
 public sealed record TokenDto(
     string AccessToken,
@@ -150,6 +152,34 @@ public sealed class ChangePasswordValidator : AbstractValidator<ChangePassword>
     }
 }
 
+public sealed class UpdateProfileValidator : AbstractValidator<UpdateProfile>
+{
+    public UpdateProfileValidator()
+    {
+        RuleFor(x => x.DisplayName)
+            .NotEmpty()
+            .Must(x => !string.IsNullOrWhiteSpace(x))
+            .Must(x => x is not null && x.Trim().Length <= 50)
+            .WithMessage("DisplayName must not be empty and cannot exceed 50 characters.");
+
+        When(x => !string.IsNullOrWhiteSpace(x.Phone), () =>
+        {
+            RuleFor(x => x.Phone!)
+                .Must(phone => global::System.Text.RegularExpressions.Regex.IsMatch(phone.Trim(), @"^0\d{9}$"))
+                .WithMessage("Phone must start with 0 and contain exactly 10 digits.");
+        });
+
+        When(x => !string.IsNullOrWhiteSpace(x.AvatarUrl), () =>
+        {
+            RuleFor(x => x.AvatarUrl!)
+                .MaximumLength(2048)
+                .Must(url => Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri)
+                    && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+                .WithMessage("AvatarUrl must be a valid HTTP or HTTPS URL.");
+        });
+    }
+}
+
 public sealed class GoogleLoginValidator : AbstractValidator<GoogleLogin>
 {
     public GoogleLoginValidator()
@@ -198,7 +228,8 @@ public sealed class AccountHandler(
     RequestValidation<ChangePassword> changeValidation,
     IGoogleTokenValidator googleValidator,
     RequestValidation<GoogleLogin> googleValidation,
-    RequestValidation<DeleteAccount> deleteValidation)
+    RequestValidation<DeleteAccount> deleteValidation,
+    RequestValidation<UpdateProfile> updateProfileValidation)
 {
     private readonly RequestValidation<RefreshSession> _ = refreshValidation;
 
@@ -326,6 +357,14 @@ public sealed class AccountHandler(
         return MapToDto(account);
     }
 
+    public async Task<AccountDto> UpdateProfileAsync(UpdateProfile input, CancellationToken ct)
+    {
+        await updateProfileValidation.ValidateAsync(input, ct);
+        var userId = GetCurrentUserId();
+        var account = await store.UpdateProfileAsync(userId, input, ct);
+        return MapToDto(account);
+    }
+
     public Task LogoutAsync(CancellationToken ct) => LogoutAsync(null, null, ct);
 
     public async Task LogoutAsync(string? bearerToken, string? refreshToken, CancellationToken ct)
@@ -433,6 +472,8 @@ public sealed class AccountHandler(
             account.DisplayName,
             account.Email,
             account.Role,
-            account.EmailConfirmed);
+            account.EmailConfirmed,
+            account.Phone,
+            account.AvatarUrl);
     }
 }
