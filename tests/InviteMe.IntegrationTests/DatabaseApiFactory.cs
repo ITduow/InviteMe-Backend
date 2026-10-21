@@ -23,6 +23,8 @@ internal sealed class DatabaseApiFactory(string connection, string? mediaDirecto
         {
             services.RemoveAll<IAccountEmailSender>();
             services.AddScoped<IAccountEmailSender, AutoConfirmTestEmailSender>();
+            services.RemoveAll<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage>();
+            services.AddSingleton<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage, InviteMe.Infrastructure.Media.LocalWeddingMediaStorage>();
         });
     }
     protected override void ConfigureClient(HttpClient client)
