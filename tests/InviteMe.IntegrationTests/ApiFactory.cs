@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using InviteMe.Application.Ports.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -11,6 +12,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
 {
     public static readonly byte[] SigningKey = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
     public const string DefaultSessionStamp = "test-session-stamp";
+    private readonly ConcurrentDictionary<Guid, AccountIdentity> _profiles = new();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -26,7 +28,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
         builder.ConfigureServices(services =>
         {
             services.RemoveAll<IAccountStore>();
-            services.AddScoped<IAccountStore, TestAccountStore>();
+            services.AddScoped<IAccountStore>(_ => new TestAccountStore(_profiles));
         });
     }
 
@@ -41,10 +43,29 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
         BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false, HandleCookies = false
     });
 
-    private sealed class TestAccountStore : IAccountStore
+    private sealed class TestAccountStore(ConcurrentDictionary<Guid, AccountIdentity> profiles) : IAccountStore
     {
-        public Task<AccountIdentity?> GetAsync(Guid id, CancellationToken ct) =>
-            Task.FromResult<AccountIdentity?>(new AccountIdentity(id, "Test User", "test@example.com", "USER", DefaultSessionStamp));
+        public Task<AccountIdentity?> GetAsync(Guid id, CancellationToken ct)
+        {
+            var identity = profiles.GetOrAdd(id,
+                uid => new AccountIdentity(uid, "Test User", "test@example.com", "USER", DefaultSessionStamp, true));
+            return Task.FromResult<AccountIdentity?>(identity);
+        }
+
+        public Task<AccountIdentity> UpdateProfileAsync(Guid userId, UpdateProfile input, CancellationToken ct)
+        {
+            var updated = new AccountIdentity(
+                userId,
+                input.DisplayName.Trim(),
+                "test@example.com",
+                "USER",
+                DefaultSessionStamp,
+                true,
+                string.IsNullOrWhiteSpace(input.Phone) ? null : input.Phone.Trim(),
+                string.IsNullOrWhiteSpace(input.AvatarUrl) ? null : input.AvatarUrl.Trim());
+            profiles[userId] = updated;
+            return Task.FromResult(updated);
+        }
 
         public Task<AccountIdentity> RegisterAsync(RegisterAccount input, CancellationToken ct) => throw new NotImplementedException();
         public Task<AccountIdentity> LoginAsync(LoginAccount input, CancellationToken ct) => throw new NotImplementedException();

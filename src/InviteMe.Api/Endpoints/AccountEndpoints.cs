@@ -91,6 +91,12 @@ internal static class AccountEndpoints
             return Results.Ok(account);
         }).RequireAuthorization();
 
+        group.MapPut("/me", async (UpdateProfile input, AccountHandler handler, CancellationToken ct) =>
+        {
+            var account = await handler.UpdateProfileAsync(input, ct);
+            return Results.Ok(account);
+        }).RequireAuthorization();
+
         group.MapPost("/logout", async (AccountHandler handler, HttpContext context, CancellationToken ct) =>
         {
             var bearerToken = ExtractBearerToken(context.Request);

@@ -210,6 +210,27 @@ public sealed class AccountStore(
         return await DescribeAsync(user);
     }
 
+    public async Task<AccountIdentity> UpdateProfileAsync(Guid userId, UpdateProfile input, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var user = await users.FindByIdAsync(userId.ToString());
+        if (user is not { Status: "ACTIVE" } || await users.IsLockedOutAsync(user))
+        {
+            throw new ApplicationProblemException(
+                ProblemKind.Unauthenticated,
+                "SESSION_REVOKED",
+                "Sign in again.");
+        }
+
+        user.FullName = input.DisplayName.Trim();
+        user.PhoneNumber = string.IsNullOrWhiteSpace(input.Phone) ? null : input.Phone.Trim();
+        user.AvatarUrl = string.IsNullOrWhiteSpace(input.AvatarUrl) ? null : input.AvatarUrl.Trim();
+        EnsureSuccess(await users.UpdateAsync(user));
+
+        return await DescribeAsync(user);
+    }
+
     public async Task RevokeSessionsAsync(Guid id, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
@@ -485,7 +506,9 @@ public sealed class AccountStore(
             user.Email!,
             role,
             user.SecurityStamp!,
-            user.EmailConfirmed);
+            user.EmailConfirmed,
+            user.PhoneNumber,
+            user.AvatarUrl);
     }
 
     private static ApplicationProblemException InvalidLogin()

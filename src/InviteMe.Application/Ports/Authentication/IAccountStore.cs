@@ -6,7 +6,9 @@ public sealed record AccountIdentity(
     string Email,
     string Role,
     string SessionStamp,
-    bool EmailConfirmed = false);
+    bool EmailConfirmed = false,
+    string? Phone = null,
+    string? AvatarUrl = null);
 
 public sealed record RegisterAccount(
     string Email,
@@ -36,6 +38,11 @@ public sealed record ResendConfirmation(
 public sealed record ChangePassword(
     string CurrentPassword,
     string NewPassword);
+
+public sealed record UpdateProfile(
+    string DisplayName,
+    string? Phone = null,
+    string? AvatarUrl = null);
 
 public sealed record DeleteAccount(
     string? Password = null,
@@ -85,6 +92,7 @@ public interface IAccountStore
     Task<AccountIdentity> LoginAsync(LoginAccount input, CancellationToken ct);
     Task<AccountIdentity> LoginWithGoogleAsync(GoogleUserPayload payload, CancellationToken ct);
     Task<AccountIdentity?> GetAsync(Guid id, CancellationToken ct);
+    Task<AccountIdentity> UpdateProfileAsync(Guid userId, UpdateProfile input, CancellationToken ct);
     Task RevokeSessionsAsync(Guid id, CancellationToken ct);
     Task<PasswordResetRequest?> CreatePasswordResetAsync(string email, CancellationToken ct);
     Task<Guid> ResetPasswordAsync(ResetPassword input, CancellationToken ct);
