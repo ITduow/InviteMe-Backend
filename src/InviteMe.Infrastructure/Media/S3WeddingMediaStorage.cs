@@ -71,7 +71,7 @@ public sealed class S3WeddingMediaStorage(HttpClient httpClient, IOptions<Weddin
         if (string.IsNullOrWhiteSpace(reference) || weddingId == Guid.Empty) return false;
         var path = RelativeUrl(weddingId, "");
         var baseUrl = _options.PublicBaseUrl.TrimEnd('/');
-        var expectedPrefix = baseUrl + path;
+        var expectedPrefix = reference.StartsWith(path, StringComparison.Ordinal) ? path : baseUrl + path;
         if (!reference.StartsWith(expectedPrefix, StringComparison.Ordinal) ||
             reference.Length <= expectedPrefix.Length) return false;
         var candidate = reference[expectedPrefix.Length..];
