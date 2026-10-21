@@ -28,7 +28,7 @@ internal static class GuestAccessEndpoints
                 return Results.File(qr.Content, qr.ContentType, qr.DownloadName);
             })
             .WithName("GetGuestInvitationQr")
-            .WithSummary("Personal QR of the invitation link (svg by default, ?format=png, ?download=true to save or print).")
+            .WithSummary("Personal QR of the invitation link (svg by default, ?format=png, ?download=true to save or print). 404 until the invitation is published.")
             .Produces(StatusCodes.Status200OK, contentType: "image/svg+xml").ProducesValidationProblem().ProducesProblem(StatusCodes.Status404NotFound);
         guest.MapGet("/seats", async (string token, GuestAccessHandler h, HttpContext http, CancellationToken ct) =>
             {
@@ -36,7 +36,7 @@ internal static class GuestAccessEndpoints
                 return await h.PublicSeatsAsync(token, ct);
             })
             .WithName("GetGuestInvitationSeats")
-            .WithSummary("Tables of this invitation's places with their RSVP status (PENDING, USED, UNUSED). published=false and no seats until the couple publishes the seating plan; an UNUSED place shows no table.")
+            .WithSummary("Tables of this invitation's places with their RSVP status (PENDING, USED, UNUSED). published=false and no seats until the couple publishes the seating plan; an UNUSED place shows no table. 404 until the invitation is published.")
             .Produces<GuestSeatsDto>().ProducesProblem(StatusCodes.Status404NotFound);
 
         var host = endpoints.MapGroup("/api/weddings/{weddingId:guid}/guest-planning").RequireAuthorization().WithTags("Guest Planning v2");

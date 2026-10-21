@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using InviteMe.Application.Features.Guests.Access;
 using InviteMe.Application.Features.Guests.Planning;
+using InviteMe.Application.Features.Invitations;
 using InviteMe.Application.Features.Rsvps;
 using InviteMe.Application.Features.Seating.Planning;
 using InviteMe.Domain.Guests;
@@ -28,6 +29,15 @@ public sealed class GuestAccessApiTests
         var guest = await db.Set<PlanningGuest>().AsNoTracking().SingleAsync();
         var token = guest.InvitationToken!;
         using var anonymous = factory.CreateHttpsClient();
+
+        // Same rule as the invitation page: nothing for guests until the invitation is published. The reception
+        // lookup does not depend on it.
+        await Problem(HttpStatusCode.NotFound, "INVITATION_UNAVAILABLE", await anonymous.GetAsync($"/api/guest-invitations/{token}/qr"));
+        await Problem(HttpStatusCode.NotFound, "INVITATION_UNAVAILABLE", await anonymous.GetAsync($"/api/guest-invitations/{token}/seats"));
+        Assert.Equal(guest.Id, (await Read<SeatLookupDto>(await owner.GetAsync(path + $"/seat-lookup?code={token}"))).GuestId);
+        var design = $"/api/weddings/{wedding.Id}/invitation-design";
+        await Read<InvitationDesignDto>(await owner.PutAsJsonAsync(design, new SaveInvitationDesign(0, PublicationLifecycleTests.Design("Thiệp"))));
+        await Read<InvitationDesignDto>(await owner.PostAsJsonAsync(design + "/publish", new PublishInvitationDesign(1, 0)));
 
         // Guest06: QR of the invitation link.
         var svg = await anonymous.GetAsync($"/api/guest-invitations/{token}/qr");

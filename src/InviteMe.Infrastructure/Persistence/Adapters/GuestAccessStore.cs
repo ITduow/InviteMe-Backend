@@ -3,6 +3,7 @@ using InviteMe.Application.Features.Rsvps;
 using InviteMe.Domain.Guests;
 using InviteMe.Domain.Rsvps;
 using InviteMe.Domain.Seating;
+using InviteMe.Domain.Weddings;
 using Microsoft.EntityFrameworkCore;
 using static InviteMe.Infrastructure.Persistence.Adapters.PlanningPersistence;
 
@@ -10,12 +11,17 @@ namespace InviteMe.Infrastructure.Persistence.Adapters;
 
 public sealed class GuestAccessStore(InviteMeDbContext db, TimeProvider clock) : IGuestAccessStore
 {
+    // Guest routes (no weddingId) also need the published invitation, like InvitationDesignStore.FindPublicAsync;
+    // the reception lookup does not depend on the invitation being published.
     public Task<GuestAccessTarget?> FindAsync(string token, Guid? weddingId, CancellationToken ct) =>
         (from g in db.Set<PlanningGuest>().AsNoTracking()
          join w in db.Weddings on g.WeddingId equals w.Id
          join owner in db.Users on w.OwnerUserId equals owner.Id
          where g.InvitationToken == token && owner.Status == "ACTIVE" && (w.Status == "DRAFT" || w.Status == "PUBLISHED")
-               && (weddingId == null || g.WeddingId == weddingId)
+               && (weddingId == null
+                   ? db.WeddingSettings.Any(s => s.WeddingId == w.Id && s.InvitationDesignStatus == InvitationPublicationStatus.PUBLISHED
+                                                 && s.InvitationPublishedSnapshotJson != null)
+                   : g.WeddingId == weddingId)
          select new GuestAccessTarget(g.Id, g.WeddingId, g.RecipientName, g.Honorific)).SingleOrDefaultAsync(ct);
 
     // Place status follows RsvpStore: PENDING until the party answers, then USED when the place's person attends.
