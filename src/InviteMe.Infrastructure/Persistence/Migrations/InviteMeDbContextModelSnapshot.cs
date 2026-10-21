@@ -3567,6 +3567,27 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasDefaultValue((short)10)
                         .HasColumnName("default_table_capacity");
 
+                    b.Property<string>("InvitationDesignStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("DRAFT")
+                        .HasColumnName("invitation_design_status");
+
+                    b.Property<int>("InvitationDesignVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("invitation_design_version");
+
+                    b.Property<string>("InvitationDraftDocumentJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("invitation_draft_document_json");
+
+                    b.Property<string>("InvitationPublishedSnapshotJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("invitation_published_snapshot_json");
+
                     b.Property<DateTimeOffset?>("RsvpDeadline")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("rsvp_deadline");
@@ -3603,11 +3624,38 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasDefaultValue("PRIVATE")
                         .HasColumnName("visibility");
 
+                    b.Property<string>("WebsiteDraftJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("website_draft_json");
+
+                    b.Property<string>("WebsitePublishedJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("website_published_json");
+
+                    b.Property<string>("WebsiteStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("DRAFT")
+                        .HasColumnName("website_status");
+
+                    b.Property<int>("WebsiteVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("website_version");
+
                     b.HasKey("WeddingId")
                         .HasName("wedding_settings_pkey");
 
                     b.ToTable("wedding_settings", "inviteme", t =>
                         {
+                            t.HasCheckConstraint("ck_invitation_design_publication", "(invitation_design_status = 'DRAFT' AND invitation_published_snapshot_json IS NULL) OR (invitation_design_status = 'PUBLISHED' AND invitation_published_snapshot_json IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_publication_versions", "website_version >= 0 AND invitation_design_version >= 0");
+
+                            t.HasCheckConstraint("ck_website_publication", "(website_status = 'DRAFT' AND website_published_json IS NULL) OR (website_status IN ('PUBLISHED', 'UNPUBLISHED') AND website_published_json IS NOT NULL)");
+
                             t.HasCheckConstraint("ck_wedding_settings_backup_table_limit", "backup_table_limit >= 0");
 
                             t.HasCheckConstraint("ck_wedding_settings_booked_table_count", "booked_table_count IS NULL OR booked_table_count > 0");
