@@ -48,8 +48,12 @@ public sealed class WeddingCoverUploadHandlerTests
 
     private static WeddingSetupHandler Handler(FakeStore store, FakeMedia media) => new(store, media,
         new FakePermissions(), new FakeAccess(), new FakeCurrentUser(),
-        new RequestValidation<CreateWeddingInput>([]), new RequestValidation<UpdateWeddingInput>([]), new RequestValidation<string>([]));
+        new RequestValidation<CreateWeddingInput>([]), new RequestValidation<UpdateWeddingInput>([]), new RequestValidation<string>([]), new Changes());
 
+    private sealed class Changes : InviteMe.Application.Features.Guests.Planning.IPlanningChangePublisher
+    {
+        public Task PublishAsync(Guid id, InviteMe.Application.Features.Guests.Planning.PlanningChange change, CancellationToken ct) => Task.CompletedTask;
+    }
     private sealed class FakeCurrentUser : ICurrentUser { public Guid? UserId => OwnerId; }
     private sealed class FakeAccess : IWeddingAccessReader
     {

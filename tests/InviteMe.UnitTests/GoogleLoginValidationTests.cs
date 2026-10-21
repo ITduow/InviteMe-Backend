@@ -127,7 +127,8 @@ public sealed class GoogleLoginValidationTests
             new RequestValidation<ChangePassword>([]),
             validator,
             googleValidation,
-            new RequestValidation<DeleteAccount>([]));
+            new RequestValidation<DeleteAccount>([]),
+            new RequestValidation<UpdateProfile>([new UpdateProfileValidator()]));
 
         return (handler, store);
     }
@@ -150,6 +151,8 @@ public sealed class GoogleLoginValidationTests
         public Task<AccountIdentity> RegisterAsync(RegisterAccount input, CancellationToken ct) => throw new NotImplementedException();
         public Task<AccountIdentity> LoginAsync(LoginAccount input, CancellationToken ct) => throw new NotImplementedException();
         public Task<AccountIdentity?> GetAsync(Guid id, CancellationToken ct) => throw new NotImplementedException();
+        public Task<AccountIdentity> UpdateProfileAsync(Guid userId, UpdateProfile input, CancellationToken ct) =>
+            Task.FromResult(new AccountIdentity(userId, input.DisplayName.Trim(), "user@example.test", "USER", "stamp"));
         public Task RevokeSessionsAsync(Guid id, CancellationToken ct) => throw new NotImplementedException();
         public Task<PasswordResetRequest?> CreatePasswordResetAsync(string email, CancellationToken ct) => throw new NotImplementedException();
         public Task<Guid> ResetPasswordAsync(ResetPassword input, CancellationToken ct) => throw new NotImplementedException();

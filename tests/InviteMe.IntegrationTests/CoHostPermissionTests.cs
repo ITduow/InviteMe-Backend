@@ -65,14 +65,18 @@ public sealed class CoHostPermissionTests
 
         await owner.DeleteAsync($"/api/weddings/{wedding.Id}/co-hosts/{cohostAccount.Id}");
 
-        var reactivate = await owner.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts", new AddCoHostInput(cohostAccount.Email, ["WEDDING_VIEW", "ANALYTICS_VIEW"]));
+        var reactivate = await owner.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts", new AddCoHostInput(cohostAccount.Email, ["RSVP_VIEW", "CHECKIN_MANAGE"]));
         Assert.Equal(HttpStatusCode.Created, reactivate.StatusCode);
         var reactivated = (await reactivate.Content.ReadFromJsonAsync<CoHostDto>())!;
         Assert.Equal("ACTIVE", reactivated.Status);
         Assert.Equal(2, reactivated.Permissions.Count);
-        Assert.Contains("WEDDING_VIEW", reactivated.Permissions);
-        Assert.Contains("ANALYTICS_VIEW", reactivated.Permissions);
+        Assert.Contains("RSVP_VIEW", reactivated.Permissions);
+        Assert.Contains("CHECKIN_MANAGE", reactivated.Permissions);
     });
+
+    // Permissions an owner can delegate to a co-host (CoHostPermissionCodes): WEDDING_VIEW comes with the membership,
+    // wedding editing, invitations, gifts and analytics stay with the owner.
+    internal static readonly string[] Delegable = ["GUEST_VIEW", "GUEST_EDIT", "RSVP_VIEW", "SEATING_VIEW", "SEATING_EDIT", "CHECKIN_MANAGE"];
 
     internal static Task WithApi(Func<InviteMeDbContext, DatabaseApiFactory, Task> action) =>
         SchemaV2MigrationTests.InDatabase(async db =>

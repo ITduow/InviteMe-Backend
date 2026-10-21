@@ -7,6 +7,7 @@ using InviteMe.Application.Features.Weddings.CoHosts;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Application.Features.Identity.Accounts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace InviteMe.IntegrationTests;
 
@@ -30,7 +31,7 @@ public sealed class PlanningSeatingApiTests
         var wedding = await CoHostPermissionTests.CreateWedding(db, a, "seating-test");
         foreach (var name in new[] { "seat-editor", "seat-viewer" })
             Assert.Equal(HttpStatusCode.Created, (await a.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts", new AddCoHostInput(name + "@example.test",
-                name == "seat-editor" ? ["WEDDING_VIEW", "SEATING_VIEW", "SEATING_EDIT"] : ["WEDDING_VIEW", "SEATING_VIEW"]))).StatusCode);
+                name == "seat-editor" ? ["SEATING_VIEW", "SEATING_EDIT"] : ["SEATING_VIEW"]))).StatusCode);
         var root = $"/api/weddings/{wedding.Id}/guest-planning";
         using var import = new HttpRequestMessage(HttpMethod.Post, root + "/imports") { Content = JsonContent.Create(new PlanningImport([new(2, "Bác An", ExpectedPeople: 4), new(3, "Hoa", ExpectedPeople: 2)])) };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
@@ -68,7 +69,19 @@ public sealed class PlanningSeatingApiTests
         Assert.Equal(HttpStatusCode.NotFound, (await a.PatchAsJsonAsync(otherUrl, new ChangePlanningSeating(0, "MOVE_PLACES", table1, PlaceIds: [group[0]]))).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await a.PatchAsJsonAsync(url, new ChangePlanningSeating(plan.Version, "MOVE_PLACES", table1, PlaceIds: [group[0], group[0]]))).StatusCode);
         var all = plan.Assignments.Select(x => x.PlaceId).ToArray();
-        plan = await Change(new(plan.Version, "MOVE_PLACES", PlaceIds: all));
+        var leases = factory.Services.GetRequiredService<ISeatingDragLeaseService>();
+        var ownerId = (await a.GetFromJsonAsync<AccountDto>("/api/auth/me"))!.Id;
+        var lease = leases.Acquire(wedding.Id, ownerId, "owner-tab", "Owner", all);
+        Assert.Equal(HttpStatusCode.Conflict, (await b.PatchAsJsonAsync(url,
+            new ChangePlanningSeating(plan.Version, "MOVE_PLACES", PlaceIds: all))).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await b.PatchAsJsonAsync(url,
+            new ChangePlanningSeating(plan.Version, "MOVE_PLACES", PlaceIds: all, DragToken: lease.Token))).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await a.PatchAsJsonAsync(url,
+            new ChangePlanningSeating(plan.Version, "UPDATE_TABLE", table1, Name: "Bàn 1", Capacity: 4))).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await a.PatchAsJsonAsync(url,
+            new ChangePlanningSeating(plan.Version, "APPLY_SUGGESTION", Strategy: "COMPACT", SourceFingerprint: SeatingSuggestions.Fingerprint(plan)))).StatusCode);
+        plan = await Change(new(plan.Version, "MOVE_PLACES", PlaceIds: all, DragToken: lease.Token));
+        leases.Release(wedding.Id, lease.Token, ownerId, "owner-tab");
         Assert.Empty(plan.Assignments);
         plan = await Change(new(plan.Version, "DELETE_TABLE", table2));
         Assert.Single(plan.Tables);

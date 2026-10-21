@@ -29,6 +29,10 @@ internal static class GuestPlanningEndpoints
             return Results.Ok(new { x.Id, x.Version, x.RecipientName, x.Honorific, x.InvitationKind,
                 x.ExpectedPeople, x.Side, x.Group, x.Phone, x.Note, x.Email, detail.Places });
         });
+        g.MapPut("/guests/{guestId:guid}", async (Guid weddingId, Guid guestId, UpdatePlanningGuest input, GuestPlanningHandler handler, CancellationToken ct) =>
+            Results.Ok(await handler.UpdateAsync(weddingId, guestId, input, ct)))
+            .WithName("UpdatePlanningGuest")
+            .Produces<PlanningGuestDto>().ProducesValidationProblem().ProducesProblem(403).ProducesProblem(404).ProducesProblem(409);
         g.MapGet("/seating-plan", (Guid weddingId, PlanningSeatingHandler handler, CancellationToken ct) => handler.GetAsync(weddingId, ct));
         g.MapPatch("/seating-plan", (Guid weddingId, ChangePlanningSeating input, PlanningSeatingHandler handler, CancellationToken ct) => handler.ChangeAsync(weddingId, input, ct));
         g.MapPost("/seating-suggestions", (Guid weddingId, SuggestPlanningSeating input, PlanningSeatingHandler handler, CancellationToken ct) => handler.SuggestAsync(weddingId, input, ct));

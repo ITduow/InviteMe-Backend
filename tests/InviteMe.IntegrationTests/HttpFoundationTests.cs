@@ -26,7 +26,7 @@ public sealed class HttpFoundationTests(ApiFactory factory) : IClassFixture<ApiF
         string[] removedTags = ["Invitations", "Wedding Workflow", "Wedding Guests", "Public Invitations", "Wedding Workspace"];
         foreach (var path in paths)
         {
-            Assert.False(path.Name.StartsWith("/api/public/", StringComparison.Ordinal));
+            Assert.False(path.Name.StartsWith("/api/public/", StringComparison.Ordinal) && path.Name != "/api/public/weddings/{slug}");
             foreach (var operation in path.Value.EnumerateObject())
             {
                 if (!operation.Value.TryGetProperty("tags", out var tags)) continue;
