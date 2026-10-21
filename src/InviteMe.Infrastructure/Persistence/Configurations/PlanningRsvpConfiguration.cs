@@ -144,6 +144,8 @@ public sealed class PlanningRsvpRuleConfiguration : IEntityTypeConfiguration<Pla
         b.Property(x => x.WeddingId).HasColumnName("wedding_id");
         b.Property(x => x.PlusOneLimit).HasColumnName("plus_one_limit");
         b.Property(x => x.Version).HasColumnName("version").IsConcurrencyToken();
+        // Sentinel true: a new row keeps the DB default (true) while an explicit false is still written.
+        b.Property(x => x.AutoRemindersEnabled).HasColumnName("auto_reminders_enabled").HasDefaultValue(true).HasSentinel(true);
         b.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_planning_rsvp_settings_wedding");
     }
 }

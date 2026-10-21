@@ -2363,6 +2363,104 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.ToTable("planning_rsvp_locks", "inviteme");
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningRsvpReminder", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempt_count");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("channel");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("GuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("guest_id");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("LastErrorCode")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("last_error_code");
+
+                    b.Property<Guid?>("LeaseId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("lease_id");
+
+                    b.Property<DateTimeOffset?>("LeaseUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("lease_until");
+
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_attempt_at");
+
+                    b.Property<string>("Recipient")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)")
+                        .HasColumnName("recipient");
+
+                    b.Property<Guid?>("RequestedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("requested_by");
+
+                    b.Property<DateTimeOffset?>("SentAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("sent_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GuestId", "Kind")
+                        .IsUnique()
+                        .HasDatabaseName("uq_planning_rsvp_reminders_guest_kind");
+
+                    b.HasIndex("Status", "NextAttemptAt")
+                        .HasDatabaseName("ix_planning_rsvp_reminders_due");
+
+                    b.HasIndex("WeddingId", "CreatedAt")
+                        .HasDatabaseName("ix_planning_rsvp_reminders_wedding");
+
+                    b.ToTable("planning_rsvp_reminders", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_planning_rsvp_reminders_attempts", "attempt_count BETWEEN 0 AND 3");
+
+                            t.HasCheckConstraint("ck_planning_rsvp_reminders_channel", "channel = 'EMAIL'");
+
+                            t.HasCheckConstraint("ck_planning_rsvp_reminders_kind", "kind IN ('AUTO_3D','AUTO_1D','MANUAL')");
+
+                            t.HasCheckConstraint("ck_planning_rsvp_reminders_requested_by", "(kind = 'MANUAL') = (requested_by IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_planning_rsvp_reminders_status", "status IN ('PENDING','SENDING','SENT','FAILED','CANCELLED')");
+                        });
+                });
+
             modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningRsvpRequest", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2430,6 +2528,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("WeddingId")
                         .HasColumnType("uuid")
                         .HasColumnName("wedding_id");
+
+                    b.Property<bool>("AutoRemindersEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("auto_reminders_enabled");
 
                     b.Property<int>("PlusOneLimit")
                         .HasColumnType("integer")
@@ -4857,6 +4961,29 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_planning_rsvp_locks_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningRsvpReminder", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Guests.PlanningGuest", null)
+                        .WithMany()
+                        .HasForeignKey("GuestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_rsvp_reminders_guest");
+
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("RequestedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_planning_rsvp_reminders_user");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_rsvp_reminders_wedding");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningRsvpRequest", b =>

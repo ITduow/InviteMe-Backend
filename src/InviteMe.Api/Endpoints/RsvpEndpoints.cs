@@ -98,6 +98,8 @@ internal static class RsvpEndpoints
         host.MapPost("/rsvps/waitlist/{entryId:guid}/decline", (Guid weddingId, Guid entryId, RsvpHandler h, CancellationToken ct) => h.DeclineWaitlistAsync(weddingId, entryId, ct))
             .WithName("DeclineRsvpWaitlistEntry")
             .Produces<RsvpDto>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+        // Guest05 reminders (RsvpReminderEndpoints).
+        host.MapRsvpReminders(endpoints.ServiceProvider.GetRequiredService<IWebHostEnvironment>().IsDevelopment());
         return endpoints;
     }
 

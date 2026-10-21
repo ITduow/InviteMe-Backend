@@ -137,7 +137,10 @@ public sealed class PlanningRsvpSettings
     public Guid WeddingId { get; private set; }
     public int PlusOneLimit { get; private set; }
     public int Version { get; private set; }
+    /// <summary>Guest05: send the automatic reminders 3 days and 1 day before the RSVP deadline (on by default).</summary>
+    public bool AutoRemindersEnabled { get; private set; } = true;
     public static PlanningRsvpSettings Create(Guid weddingId) => new() { WeddingId = weddingId };
+    public void SetAutoReminders(bool enabled) => AutoRemindersEnabled = enabled;
     public void Update(int plusOneLimit)
     {
         if (plusOneLimit is < 0 or > MaxPlusOneLimit) throw new ArgumentOutOfRangeException(nameof(plusOneLimit));

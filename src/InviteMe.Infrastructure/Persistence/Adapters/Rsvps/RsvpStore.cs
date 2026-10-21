@@ -107,6 +107,8 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
         var locked = (await db.Set<PlanningRsvpLock>().AsNoTracking().Where(x => x.WeddingId == weddingId).Select(x => x.GuestId).ToListAsync(ct)).ToHashSet();
         var pending = (await db.Set<PlanningRsvpRequest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Status == PlanningRsvpRequest.Pending)
             .Select(x => x.GuestId).ToListAsync(ct)).ToHashSet();
+        var reminders = (await db.Set<PlanningRsvpReminder>().AsNoTracking().Where(x => x.WeddingId == weddingId)
+            .Select(x => new { x.GuestId, x.Status, x.SentAt, x.CreatedAt }).ToListAsync(ct)).ToLookup(x => x.GuestId);
         var deadline = await Deadline(weddingId, ct);
         var lateForAll = deadline <= clock.GetUtcNow();
         var occupied = scopedIds is null ? await Occupied(weddingId, ct) : await (from p in db.Set<PlanningParticipant>().AsNoTracking()
@@ -123,7 +125,9 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
                 places[g.Id].OrderBy(x => x.Position).Select(x => RsvpPlaceStatus.Of(rsvp is not null,
                     x.ParticipantId is { } pid && people[g.Id].Any(p => p.Id == pid && p.AttendanceStatus == Attending))).ToList(),
                 people[g.Id].Select(p => new RsvpDashboardPerson(p.Id, p.FullName, p.Role, p.AttendanceStatus, p.Dietary,
-                    position.TryGetValue(p.Id, out var pos) ? pos : null)).ToList());
+                    position.TryGetValue(p.Id, out var pos) ? pos : null)).ToList(),
+                reminders[g.Id].Count(r => r.Status == PlanningRsvpReminder.Sent), reminders[g.Id].Max(r => r.SentAt),
+                reminders[g.Id].OrderByDescending(r => r.CreatedAt).Select(r => r.Status).FirstOrDefault());
         }).ToList());
     }
 
