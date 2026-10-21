@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using InviteMe.Application.Features.Guests.Access;
+using InviteMe.Application.Features.Identity.Accounts;
+using InviteMe.Application.Features.Weddings.CoHosts;
 using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Application.Features.Invitations;
 using InviteMe.Application.Features.Rsvps;
@@ -23,7 +25,7 @@ public sealed class GuestAccessApiTests
         var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "guest-access");
         var path = $"/api/weddings/{wedding.Id}/guest-planning";
         var import = new HttpRequestMessage(HttpMethod.Post, path + "/imports")
-        { Content = JsonContent.Create(new PlanningImport([new(2, "Nguyễn Văn An", "Bác", "FAMILY", 4, "BRIDE")])) };
+        { Content = JsonContent.Create(new PlanningImport([new(2, "Nguyễn Văn An", "Bác", "FAMILY", 4, "BRIDE", new PlanningGroupInput(NewName: "Họ nhà gái", Confirmed: true))])) };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
         Assert.Equal(HttpStatusCode.Created, (await owner.SendAsync(import)).StatusCode);
         var guest = await db.Set<PlanningGuest>().AsNoTracking().SingleAsync();
@@ -94,6 +96,29 @@ public sealed class GuestAccessApiTests
         using var outsider = await CoHostPermissionTests.SignIn(factory, "guest-access-outsider");
         Assert.Equal(HttpStatusCode.Forbidden, (await outsider.GetAsync(path + $"/seat-lookup?code={token}")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await outsider.PostAsync(path + "/seating-plan/publish", null)).StatusCode);
+
+        // A co-host who seats one guest group only can read the publication state but cannot show or hide the whole plan.
+        using var groupSeater = await CoHostPermissionTests.SignIn(factory, "guest-access-group-seater");
+        var seater = (await groupSeater.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
+        var coHosts = $"/api/weddings/{wedding.Id}/co-hosts";
+        Assert.True((await owner.PostAsJsonAsync(coHosts, new AddCoHostInput(seater.Email, []))).IsSuccessStatusCode);
+        Assert.True((await owner.PutAsJsonAsync($"{coHosts}/{seater.Id}/scopes", new UpdateCoHostScopesInput(
+            [new("SEATING_VIEW", [guest.GroupId!.Value]), new("SEATING_EDIT", [guest.GroupId!.Value])]))).IsSuccessStatusCode);
+        Assert.False((await Read<SeatingPublicationDto>(await groupSeater.GetAsync(path + "/seating-plan/publication"))).Published);
+        await Problem(HttpStatusCode.Forbidden, "WEDDING_SCOPE_REQUIRED", await groupSeater.PostAsync(path + "/seating-plan/publish", null));
+        await Problem(HttpStatusCode.Forbidden, "WEDDING_SCOPE_REQUIRED", await groupSeater.DeleteAsync(path + "/seating-plan/publish"));
+
+        // Cohost01: the co-host sees what each permission covers (named groups); the owner sees the whole wedding everywhere.
+        var scopes = (await Read<JsonElement>(await groupSeater.GetAsync($"/api/weddings/{wedding.Id}/access"))).GetProperty("scopes")
+            .EnumerateArray().ToDictionary(x => x.GetProperty("permission").GetString()!);
+        Assert.Equal(new[] { "WEDDING_VIEW", "SEATING_VIEW", "SEATING_EDIT" }, scopes.Keys);
+        Assert.True(scopes["WEDDING_VIEW"].GetProperty("weddingWide").GetBoolean());
+        Assert.False(scopes["SEATING_EDIT"].GetProperty("weddingWide").GetBoolean());
+        var group = Assert.Single(scopes["SEATING_EDIT"].GetProperty("groups").EnumerateArray());
+        Assert.Equal((guest.GroupId!.Value, "Họ nhà gái"), (group.GetProperty("id").GetGuid(), group.GetProperty("name").GetString()));
+        var ownerScopes = (await Read<JsonElement>(await owner.GetAsync($"/api/weddings/{wedding.Id}/access"))).GetProperty("scopes").EnumerateArray().ToList();
+        Assert.Equal(12, ownerScopes.Count);
+        Assert.All(ownerScopes, x => Assert.True(x.GetProperty("weddingWide").GetBoolean()));
     });
 
     private static async Task<PlanningSeatingDto> Change(HttpClient client, string path, ChangePlanningSeating input) =>

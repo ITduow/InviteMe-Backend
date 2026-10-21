@@ -50,6 +50,15 @@ public sealed class WeddingAccessReader(InviteMeDbContext db) : IWeddingAccessRe
             groupPermissions);
     }
 
+    public async Task<IReadOnlyDictionary<Guid, string>> FindGroupNamesAsync(Guid weddingId, IReadOnlyCollection<Guid> groupIds,
+        CancellationToken cancellationToken)
+    {
+        var ids = groupIds.ToArray();
+        return await db.Set<InviteMe.Domain.Guests.PlanningGroup>().AsNoTracking()
+            .Where(x => x.WeddingId == weddingId && ids.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, x => x.Name, cancellationToken);
+    }
+
     public Task<Guid?> FindGuestGroupIdAsync(Guid weddingId, Guid guestId, CancellationToken cancellationToken) =>
         db.Set<InviteMe.Domain.Guests.PlanningGuest>().AsNoTracking()
             .Where(x => x.WeddingId == weddingId && x.Id == guestId)
