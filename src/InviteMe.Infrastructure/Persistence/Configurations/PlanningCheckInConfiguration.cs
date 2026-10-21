@@ -12,7 +12,8 @@ public sealed class PlanningCheckInConfiguration : IEntityTypeConfiguration<Plan
 {
     public void Configure(EntityTypeBuilder<PlanningCheckIn> b)
     {
-        b.ToTable("planning_check_ins");
+        b.ToTable("planning_check_ins", t => t.HasCheckConstraint("ck_planning_check_ins_kind", "\"Kind\" IN ('INVITED','WALK_IN')"));
+        b.Property(x => x.Kind).HasMaxLength(10).HasDefaultValue(PlanningCheckInKind.Invited);
         b.HasKey(x => x.Id);
         b.HasIndex(x => x.PlaceId).IsUnique().HasDatabaseName("uq_planning_check_ins_place");
         b.HasIndex(x => x.WeddingId).HasDatabaseName("ix_planning_check_ins_wedding");

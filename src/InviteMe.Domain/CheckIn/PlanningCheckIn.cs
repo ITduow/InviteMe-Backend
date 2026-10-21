@@ -12,6 +12,14 @@ public sealed class PlanningCheckIn
     public Guid? ParticipantId { get; set; }
     public DateTimeOffset CheckedInAt { get; set; }
     public Guid CheckedInBy { get; set; }
-    // Required when the place was UNUSED in RSVP (the guest said they would not come but came anyway).
+    // Required when the place was UNUSED in RSVP (the guest said they would not come but came anyway),
+    // or when a walk-in went over the wedding capacity.
     public string? ExceptionReason { get; set; }
+    // INVITED: a reserved place of the invitation. WALK_IN: a place added at the counter for someone not on the list.
+    public string Kind { get; set; } = PlanningCheckInKind.Invited;
+}
+
+public static class PlanningCheckInKind
+{
+    public const string Invited = "INVITED", WalkIn = "WALK_IN";
 }

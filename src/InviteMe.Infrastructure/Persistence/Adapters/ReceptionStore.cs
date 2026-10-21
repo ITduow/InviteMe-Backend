@@ -1,4 +1,8 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using InviteMe.Application.Common.Errors;
+using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Application.Features.Guests.Reception;
 using InviteMe.Application.Features.Rsvps;
 using InviteMe.Domain.Audit;
@@ -6,13 +10,16 @@ using InviteMe.Domain.CheckIn;
 using InviteMe.Domain.Guests;
 using InviteMe.Domain.Rsvps;
 using InviteMe.Domain.Seating;
+using InviteMe.Infrastructure.Authentication;
 using Microsoft.EntityFrameworkCore;
+using static InviteMe.Infrastructure.Persistence.Adapters.PlanningPersistence;
 
 namespace InviteMe.Infrastructure.Persistence.Adapters;
 
 public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : IReceptionStore
 {
     private static readonly JsonSerializerOptions AuditJson = new(JsonSerializerDefaults.Web);
+    private const string Attending = "ATTENDING";
 
     public Task<ReceptionGuest?> FindGuestAsync(Guid weddingId, Guid guestId, CancellationToken ct) =>
         (from g in db.Set<PlanningGuest>().AsNoTracking()
@@ -86,9 +93,114 @@ public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : I
                           {
                               g.Side,
                               Answered = db.Set<PlanningRsvp>().Any(r => r.GuestId == g.Id),
-                              Attending = person != null && person.AttendanceStatus == "ATTENDING",
-                              CheckedIn = db.Set<PlanningCheckIn>().Any(c => c.PlaceId == place.Id)
+                              Attending = person != null && person.AttendanceStatus == Attending,
+                              Kind = db.Set<PlanningCheckIn>().Where(c => c.PlaceId == place.Id).Select(c => c.Kind).FirstOrDefault()
                           }).ToListAsync(ct);
-        return rows.Select(x => new CheckInPlaceStats(x.Side, RsvpPlaceStatus.Of(x.Answered, x.Attending), x.CheckedIn)).ToList();
+        return rows.Select(x => new CheckInPlaceStats(x.Side, RsvpPlaceStatus.Of(x.Answered, x.Attending), x.Kind is not null,
+            x.Kind == PlanningCheckInKind.WalkIn)).ToList();
+    }
+
+    // Lock order as RsvpStore: wedding row, then the planning guest row. The key is stored as a planning import batch, which
+    // also owns a new walk-in guest (every planning guest belongs to a batch), so a retried request replays its first outcome.
+    // Capacity follows RsvpStore: ATTENDING people consume it; walk-in people are added as ATTENDING.
+    public async Task<WalkInOutcome> AddWalkInAsync(Guid weddingId, Guid key, AddWalkIn input, Guid actor, CancellationToken ct)
+    {
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("WALK_IN:" + JsonSerializer.Serialize(input))));
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await LockWedding(db, weddingId, ct);
+        var prior = await db.Set<PlanningImportBatch>().SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.Key == key, ct);
+        if (prior is not null)
+        {
+            if (prior.RequestHash != hash)
+                throw new ApplicationProblemException(ProblemKind.Conflict, "IDEMPOTENCY_KEY_REUSED", "Idempotency-Key was used for another request.");
+            return JsonSerializer.Deserialize<WalkInOutcome>(prior.ResultJson)! with { Replayed = true };
+        }
+        PlanningGuest? guest = null;
+        if (input.GuestId is { } guestId)
+            guest = await db.Set<PlanningGuest>()
+                .FromSqlInterpolated($"SELECT * FROM inviteme.planning_guests WHERE \"Id\"={guestId} AND \"WeddingId\"={weddingId} FOR UPDATE")
+                .SingleOrDefaultAsync(ct) ?? throw new ApplicationProblemException(ProblemKind.NotFound, "GUEST_NOT_FOUND", "Guest is not in this wedding.");
+
+        var capacity = await db.Weddings.Where(x => x.Id == weddingId).Select(x => x.MaxCapacity).SingleAsync(ct);
+        var occupied = await (from p in db.Set<PlanningParticipant>() join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
+                              where g.WeddingId == weddingId && p.AttendanceStatus == Attending select p).CountAsync(ct);
+        var overCapacity = capacity is { } max && occupied + input.People > max;
+        var reason = string.IsNullOrWhiteSpace(input.OverrideReason) ? null : PlanningText.Clean(input.OverrideReason);
+        if (overCapacity && reason is null)
+            throw new ApplicationProblemException(ProblemKind.BusinessRule, "WALK_IN_OVER_CAPACITY",
+                $"Vượt sức chứa, slot còn lại {Math.Max(0, capacity!.Value - occupied)} người. Nhập lý do để vẫn nhận khách.");
+
+        var batch = new PlanningImportBatch { Id = Guid.NewGuid(), WeddingId = weddingId, Key = key, RequestHash = hash };
+        db.Add(batch);
+        var newGuest = guest is null;
+        var people = new List<PlanningParticipant>();
+        if (guest is null)
+        {
+            guest = new PlanningGuest
+            {
+                Id = Guid.NewGuid(), WeddingId = weddingId, ImportId = batch.Id, RowNumber = 1, RecipientName = PlanningText.Clean(input.RecipientName),
+                Honorific = string.IsNullOrWhiteSpace(input.Honorific) ? null : PlanningText.Clean(input.Honorific),
+                InvitationKind = input.People > 1 ? "GROUP" : "INDIVIDUAL", ExpectedPeople = input.People,
+                Side = string.IsNullOrEmpty(input.Side) ? "UNSPECIFIED" : input.Side, Note = "Khách vãng lai, thêm tại quầy lễ tân.",
+                InvitationToken = InvitationToken.Generate()
+            };
+            db.Add(guest);
+            people.Add(new PlanningParticipant { Id = Guid.NewGuid(), GuestId = guest.Id, FullName = guest.RecipientName, AttendanceStatus = Attending });
+        }
+        else guest.Version++;
+        var position = await db.Set<PlanningPlace>().Where(x => x.GuestId == guest.Id).Select(x => (int?)x.Position).MaxAsync(ct) ?? 0;
+        var names = input.Names ?? [];
+        for (var i = 0; people.Count < input.People; i++)
+            people.Add(new PlanningParticipant
+            {
+                Id = Guid.NewGuid(), GuestId = guest.Id, Role = "COMPANION", AttendanceStatus = Attending,
+                FullName = i < names.Count ? PlanningText.Clean(names[i]) : $"Người đi cùng {position + people.Count + 1}"
+            });
+        var now = clock.GetUtcNow();
+        var placeIds = new List<Guid>();
+        foreach (var person in people)
+        {
+            var place = new PlanningPlace { Id = Guid.NewGuid(), GuestId = guest.Id, Position = ++position, ParticipantId = person.Id };
+            db.Add(person); db.Add(place); placeIds.Add(place.Id);
+            db.Add(new PlanningCheckIn
+            {
+                Id = Guid.NewGuid(), WeddingId = weddingId, GuestId = guest.Id, PlaceId = place.Id, ParticipantId = person.Id, CheckedInAt = now,
+                CheckedInBy = actor, ExceptionReason = overCapacity ? reason : null, Kind = PlanningCheckInKind.WalkIn
+            });
+        }
+        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_guests", guest.Id, "GUEST_WALK_IN", actor, null, JsonSerializer.Serialize(new
+        {
+            guestId = guest.Id, newGuest, people = input.People, placeIds, capacity, occupiedBefore = occupied, overCapacity,
+            overrideReason = overCapacity ? reason : null
+        }, AuditJson)));
+        var outcome = new WalkInOutcome(guest.Id, guest.RecipientName, guest.Honorific, placeIds, newGuest, overCapacity);
+        batch.ResultJson = JsonSerializer.Serialize(outcome);
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return outcome;
+    }
+
+    // A walk-in person who did not really come stops attending, so they no longer use the wedding capacity;
+    // RSVP answers of invited places stay as they were.
+    public async Task<VoidedCheckIn?> VoidAsync(Guid weddingId, Guid placeId, Guid actor, string reason, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var row = await db.Set<PlanningCheckIn>()
+            .FromSqlInterpolated($"SELECT * FROM inviteme.planning_check_ins WHERE \"PlaceId\"={placeId} AND \"WeddingId\"={weddingId} FOR UPDATE")
+            .SingleOrDefaultAsync(ct);
+        if (row is null) return null;
+        db.Remove(row);
+        if (row.Kind == PlanningCheckInKind.WalkIn && row.ParticipantId is { } personId &&
+            await db.Set<PlanningParticipant>().SingleOrDefaultAsync(x => x.Id == personId, ct) is { } person)
+            person.AttendanceStatus = "DECLINED";
+        var now = clock.GetUtcNow();
+        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_check_ins", placeId, "GUEST_CHECK_IN_VOIDED", actor, null, JsonSerializer.Serialize(new
+        {
+            guestId = row.GuestId, placeId, participantId = row.ParticipantId, kind = row.Kind, row.CheckedInAt, row.CheckedInBy,
+            row.ExceptionReason, reason
+        }, AuditJson)));
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return new(row.GuestId, now);
     }
 }
