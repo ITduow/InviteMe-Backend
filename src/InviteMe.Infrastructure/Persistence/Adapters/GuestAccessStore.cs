@@ -45,10 +45,11 @@ public sealed class GuestAccessStore(InviteMeDbContext db, TimeProvider clock) :
                               place.Id, place.Position, place.ParticipantId, PersonName = person == null ? null : person.FullName,
                               Attending = person != null && person.AttendanceStatus == "ATTENDING",
                               Table = table == null ? null : table.Name, SeatNumber = assignment == null ? null : (int?)assignment.SeatNumber,
-                              CheckedInAt = checkIn == null ? null : (DateTimeOffset?)checkIn.CheckedInAt
+                              CheckedInAt = checkIn == null ? null : (DateTimeOffset?)checkIn.CheckedInAt,
+                              CheckInKind = checkIn == null ? null : checkIn.Kind
                           }).ToListAsync(ct);
         return rows.Select(x => new ReceptionSeatDto(x.Id, x.Position, x.ParticipantId, x.PersonName, RsvpPlaceStatus.Of(answered, x.Attending),
-            x.Table, x.SeatNumber, x.CheckedInAt)).ToList();
+            x.Table, x.SeatNumber, x.CheckedInAt, x.CheckInKind)).ToList();
     }
 
     public async Task<SeatingPublicationDto> PublicationAsync(Guid weddingId, CancellationToken ct) =>

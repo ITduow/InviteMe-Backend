@@ -71,6 +71,23 @@ internal static class GuestAccessEndpoints
                          "An UNUSED place (guest said no) needs exceptionReason.")
             .Produces<CheckInResultDto>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+        reception.MapPost("/walk-ins", async (Guid weddingId, AddWalkIn input,
+                [Microsoft.AspNetCore.Mvc.FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, ReceptionHandler h, CancellationToken ct) =>
+            {
+                var result = await h.WalkInAsync(weddingId, idempotencyKey, input, ct);
+                return Results.Ok(result);
+            })
+            .WithName("AddWalkIn")
+            .WithSummary("Add people at the counter and check them in: guestId adds extra people to that invitation, recipientName creates a " +
+                         "walk-in invitation. Over capacity needs overrideReason. Requires an Idempotency-Key header (a retry replays the result).")
+            .Produces<WalkInResultDto>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+        reception.MapPost("/check-ins/{placeId:guid}/void", (Guid weddingId, Guid placeId, VoidCheckIn input, ReceptionHandler h, CancellationToken ct) =>
+                h.VoidAsync(weddingId, placeId, input, ct))
+            .WithName("VoidCheckIn")
+            .WithSummary("Undo a check-in made by mistake (reason required, audited). A walk-in person stops attending and frees the capacity.")
+            .Produces<VoidCheckInResultDto>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
         reception.MapGet("/check-ins/summary", (Guid weddingId, ReceptionHandler h, CancellationToken ct) => h.SummaryAsync(weddingId, ct))
             .WithName("GetCheckInSummary")
             .WithSummary("Actual attendance vs confirmed places, overall and by side (CHECKIN_MANAGE or RSVP_VIEW). Refetch on GuestCheckedIn.")

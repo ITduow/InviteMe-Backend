@@ -539,6 +539,13 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("GuestId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasDefaultValue("INVITED");
+
                     b.Property<Guid?>("ParticipantId")
                         .HasColumnType("uuid");
 
@@ -560,7 +567,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.HasIndex("WeddingId")
                         .HasDatabaseName("ix_planning_check_ins_wedding");
 
-                    b.ToTable("planning_check_ins", "inviteme");
+                    b.ToTable("planning_check_ins", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_planning_check_ins_kind", "\"Kind\" IN ('INVITED','WALK_IN')");
+                        });
                 });
 
             modelBuilder.Entity("InviteMe.Domain.CheckIn.WalkIn", b =>

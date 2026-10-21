@@ -21,9 +21,10 @@ public sealed record GuestAccessTarget(Guid GuestId, Guid WeddingId, string Reci
 // Status is the RSVP place status (PENDING, USED, UNUSED), the same value the RSVP API shows for the place.
 public sealed record GuestSeatDto(int Position, string? PersonName, string Status, string? Table, int? SeatNumber);
 public sealed record GuestSeatsDto(string RecipientName, string? Honorific, bool Published, IReadOnlyList<GuestSeatDto> Seats);
-// Reception view of a place: the place id to confirm check-in (Cohost04) and when it was checked in.
+// Reception view of a place: the place id to confirm check-in (Cohost04), when it was checked in and how
+// (CheckInKind INVITED, or WALK_IN for a place added at the counter).
 public sealed record ReceptionSeatDto(Guid PlaceId, int Position, Guid? ParticipantId, string? PersonName, string Status, string? Table,
-    int? SeatNumber, DateTimeOffset? CheckedInAt);
+    int? SeatNumber, DateTimeOffset? CheckedInAt, string? CheckInKind = null);
 public sealed record SeatLookupDto(Guid GuestId, string RecipientName, string? Honorific, bool Published, IReadOnlyList<ReceptionSeatDto> Seats);
 public sealed record SeatingPublicationDto(bool Published, DateTimeOffset? PublishedAt, Guid? PublishedBy);
 public sealed record SeatLookupQuery(string Code);
