@@ -23,4 +23,5 @@ public interface IRsvpStore
     Task<RsvpSettingsDto> SaveSettingsAsync(Guid weddingId, SaveRsvpSettings input, CancellationToken ct);
     /// <summary>Read model for the Couple06 dashboard: every planning guest of the wedding with its RSVP, people and places.</summary>
     Task<RsvpDashboardData> DashboardAsync(Guid weddingId, CancellationToken ct);
+    Task<RsvpDashboardData> DashboardScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<Guid>? groupScope) => DashboardAsync(weddingId, ct);
 }

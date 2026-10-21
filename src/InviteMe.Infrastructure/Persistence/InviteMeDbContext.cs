@@ -24,6 +24,9 @@ public sealed class InviteMeDbContext(DbContextOptions<InviteMeDbContext> option
     public DbSet<Wedding> Weddings => Set<Wedding>();
     public DbSet<WeddingMember> WeddingMembers => Set<WeddingMember>();
     public DbSet<WeddingMemberPermission> WeddingMemberPermissions => Set<WeddingMemberPermission>();
+    public DbSet<WeddingMemberGroupPermission> WeddingMemberGroupPermissions => Set<WeddingMemberGroupPermission>();
+    public DbSet<CoHostInvitation> CoHostInvitations => Set<CoHostInvitation>();
+    public DbSet<CoHostInvitationGrant> CoHostInvitationGrants => Set<CoHostInvitationGrant>();
     public DbSet<Permission> Permissions => Set<Permission>();
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
     public DbSet<WeddingHeadcount> WeddingHeadcounts => Set<WeddingHeadcount>();

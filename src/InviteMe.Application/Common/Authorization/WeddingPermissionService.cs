@@ -48,4 +48,29 @@ public sealed class WeddingPermissionService(
         var access = await reader.FindAsync(weddingId, userId.Value, cancellationToken);
         return access is not null && access.Allows(userId.Value, permission);
     }
+
+    public async Task<WeddingPermissionScope> RequireScopeAsync(Guid weddingId, WeddingPermission permission, CancellationToken cancellationToken)
+    {
+        var userId = currentUser.UserId;
+        if (userId is null || userId == Guid.Empty)
+            throw new ApplicationProblemException(ProblemKind.Unauthenticated, "AUTHENTICATION_REQUIRED", "Authentication is required.");
+        var access = await reader.FindAsync(weddingId, userId.Value, cancellationToken);
+        if (access is null || !access.Allows(userId.Value, permission))
+            throw new ApplicationProblemException(ProblemKind.Forbidden, "WEDDING_ACCESS_DENIED", "Wedding permission is required.");
+        return new(access.IsWeddingWide(userId.Value, permission), access.GroupsFor(permission));
+    }
+
+    public async Task RequireGuestAsync(Guid weddingId, WeddingPermission permission, Guid guestId, CancellationToken cancellationToken)
+    {
+        var userId = currentUser.UserId;
+        if (userId is null || userId == Guid.Empty)
+            throw new ApplicationProblemException(ProblemKind.Unauthenticated, "AUTHENTICATION_REQUIRED", "Authentication is required.");
+        var access = await reader.FindAsync(weddingId, userId.Value, cancellationToken);
+        if (access is null || !access.Allows(userId.Value, permission))
+            throw new ApplicationProblemException(ProblemKind.Forbidden, "WEDDING_ACCESS_DENIED", "Wedding permission is required.");
+        if (access.IsWeddingWide(userId.Value, permission)) return;
+        var groupId = await reader.FindGuestGroupIdAsync(weddingId, guestId, cancellationToken);
+        if (groupId is null || !access.GroupsFor(permission).Contains(groupId.Value))
+            throw new ApplicationProblemException(ProblemKind.NotFound, "GUEST_NOT_FOUND", "Guest is not available in this wedding.");
+    }
 }

@@ -75,9 +75,12 @@ public interface IReceptionStore
     // Same open-wedding rule as the token lookup: active owner, DRAFT or PUBLISHED wedding.
     Task<ReceptionGuest?> FindGuestAsync(Guid weddingId, Guid guestId, CancellationToken ct);
     Task<IReadOnlyList<ReceptionCandidate>> CandidatesAsync(Guid weddingId, CancellationToken ct);
+    Task<IReadOnlyList<ReceptionCandidate>> CandidatesScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<Guid>? groupScope) => CandidatesAsync(weddingId, ct);
     // Inserts the missing check-ins (existing ones are kept) with one audit row each; returns the places checked in now.
     Task<IReadOnlyCollection<Guid>> CheckInAsync(Guid weddingId, Guid guestId, IReadOnlyList<CheckInPlace> places, Guid actor, CancellationToken ct);
     Task<IReadOnlyList<CheckInPlaceStats>> PlaceStatsAsync(Guid weddingId, CancellationToken ct);
+    Task<IReadOnlyList<CheckInPlaceStats>> PlaceStatsScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<Guid>? groupScope) => PlaceStatsAsync(weddingId, ct);
+    Task<Guid?> FindGuestIdByPlaceAsync(Guid weddingId, Guid placeId, CancellationToken ct) => Task.FromResult<Guid?>(null);
     // Idempotent by key: the same key and body replays the first outcome. Adds ATTENDING people with WALK_IN check-ins.
     Task<WalkInOutcome> AddWalkInAsync(Guid weddingId, Guid key, AddWalkIn input, Guid actor, CancellationToken ct);
     // Removes the check-in (a walk-in person stops attending); null when the place is not checked in.
@@ -199,6 +202,8 @@ public sealed partial class ReceptionHandler(IReceptionStore store, IGuestAccess
     {
         await permissions.RequireAsync(weddingId, WeddingPermission.CHECKIN_MANAGE, ct);
         await voidValidation.ValidateAsync(input, ct);
+        var guestId = await store.FindGuestIdByPlaceAsync(weddingId, placeId, ct);
+        if (guestId is null) throw new ApplicationProblemException(ProblemKind.NotFound, "CHECK_IN_NOT_FOUND", "This place is not checked in.");
         var voided = await store.VoidAsync(weddingId, placeId, Actor(), PlanningText.Clean(input.Reason), ct)
             ?? throw new ApplicationProblemException(ProblemKind.NotFound, "CHECK_IN_NOT_FOUND", "This place is not checked in.");
         await changes.PublishAsync(weddingId, new("GuestCheckInVoided", voided.GuestId), ct);
@@ -208,9 +213,10 @@ public sealed partial class ReceptionHandler(IReceptionStore store, IGuestAccess
     // Reception and the couple's dashboard (RSVP_VIEW) both read the actual attendance.
     public async Task<CheckInSummaryDto> SummaryAsync(Guid weddingId, CancellationToken ct)
     {
-        if (!await permissions.HasPermissionAsync(weddingId, WeddingPermission.CHECKIN_MANAGE, ct))
-            await permissions.RequireAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
-        var places = await store.PlaceStatsAsync(weddingId, ct);
+        var permission = await permissions.HasPermissionAsync(weddingId, WeddingPermission.CHECKIN_MANAGE, ct)
+            ? WeddingPermission.CHECKIN_MANAGE : WeddingPermission.RSVP_VIEW;
+        var scope = await permissions.RequireScopeAsync(weddingId, permission, ct);
+        var places = await store.PlaceStatsScopedAsync(weddingId, ct, scope.IsWeddingWide ? null : scope.GroupIds);
         int Expected(IEnumerable<CheckInPlaceStats> x) => x.Count(p => !p.WalkIn && p.Status == RsvpPlaceStatus.Used);
         int Arrived(IEnumerable<CheckInPlaceStats> x) => x.Count(p => p.CheckedIn);
         int Invited(string status) => places.Count(p => p.CheckedIn && !p.WalkIn && p.Status == status);

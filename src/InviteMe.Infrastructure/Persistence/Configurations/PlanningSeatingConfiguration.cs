@@ -20,7 +20,9 @@ public sealed class PlanningSeatingConfiguration : IEntityTypeConfiguration<Plan
         b.ToTable("planning_tables", t => t.HasCheckConstraint("ck_planning_table_capacity", "\"Capacity\" BETWEEN 1 AND 20"));
         b.HasKey(x => x.Id); b.Property(x => x.Name).HasMaxLength(100);
         b.HasIndex(x => x.WeddingId);
+        b.HasIndex(x => new { x.WeddingId, x.GroupId });
         b.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade);
+        b.HasOne<PlanningGroup>().WithMany().HasForeignKey(x => x.GroupId).OnDelete(DeleteBehavior.Restrict);
     }
     public void Configure(EntityTypeBuilder<PlanningSeatAssignment> b)
     {

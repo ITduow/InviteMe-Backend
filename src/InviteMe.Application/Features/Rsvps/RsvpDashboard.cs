@@ -84,27 +84,42 @@ public sealed class RsvpDashboardHandler(IRsvpStore store, IWeddingPermissionSer
 {
     public async Task<RsvpDashboardDto> SummaryAsync(Guid weddingId, RsvpDashboardFilter filter, CancellationToken ct)
     {
-        await permissions.RequireAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
+        var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
         await filters.ValidateAsync(filter, ct);
-        return RsvpDashboardMath.Summarize(await store.DashboardAsync(weddingId, ct), filter, clock.GetUtcNow());
+        var scopedFilter = ScopedFilter(filter, scope);
+        return RsvpDashboardMath.Summarize(await store.DashboardScopedAsync(weddingId, ct, scope.IsWeddingWide ? null : scope.GroupIds), scopedFilter, clock.GetUtcNow());
     }
 
     public async Task<PagedResult<RsvpGuestRowDto>> GuestsAsync(Guid weddingId, RsvpDashboardFilter filter, PageRequest page, CancellationToken ct)
     {
-        await permissions.RequireAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
+        var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
         await filters.ValidateAsync(filter, ct); await pages.ValidateAsync(page, ct);
-        var contacts = await permissions.HasPermissionAsync(weddingId, WeddingPermission.GUEST_VIEW, ct);
-        var rows = RsvpDashboardMath.Filter(await store.DashboardAsync(weddingId, ct), filter).Select(g => RsvpDashboardMath.Row(g, contacts)).ToList();
+        var contacts = await CanViewContactsAsync(weddingId, scope, ct);
+        var rows = RsvpDashboardMath.Filter(await store.DashboardScopedAsync(weddingId, ct, scope.IsWeddingWide ? null : scope.GroupIds), ScopedFilter(filter, scope)).Select(g => RsvpDashboardMath.Row(g, contacts)).ToList();
         return new(rows.Skip((page.Page - 1) * page.PageSize).Take(page.PageSize).ToList(), page.Page, page.PageSize, rows.Count);
     }
 
     public async Task<RsvpExportFile> ExportAsync(Guid weddingId, RsvpDashboardFilter filter, CancellationToken ct)
     {
-        await permissions.RequireAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
+        var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
         await filters.ValidateAsync(filter, ct);
-        var contacts = await permissions.HasPermissionAsync(weddingId, WeddingPermission.GUEST_VIEW, ct);
-        var guests = RsvpDashboardMath.Filter(await store.DashboardAsync(weddingId, ct), filter);
+        var contacts = await CanViewContactsAsync(weddingId, scope, ct);
+        var guests = RsvpDashboardMath.Filter(await store.DashboardScopedAsync(weddingId, ct, scope.IsWeddingWide ? null : scope.GroupIds), ScopedFilter(filter, scope));
         return new(RsvpDashboardMath.Csv(guests, contacts), $"rsvp-{clock.GetUtcNow():yyyyMMdd-HHmm}.csv");
+    }
+
+    private static RsvpDashboardFilter ScopedFilter(RsvpDashboardFilter filter, WeddingPermissionScope scope)
+    {
+        if (scope.IsWeddingWide) return filter;
+        if (filter.GroupId is { } id && !scope.GroupIds.Contains(id)) return filter with { GroupId = Guid.Empty };
+        return filter;
+    }
+
+    private async Task<bool> CanViewContactsAsync(Guid weddingId, WeddingPermissionScope rsvpScope, CancellationToken ct)
+    {
+        if (!await permissions.HasPermissionAsync(weddingId, WeddingPermission.GUEST_VIEW, ct)) return false;
+        var guestScope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.GUEST_VIEW, ct);
+        return guestScope.IsWeddingWide || (!rsvpScope.IsWeddingWide && rsvpScope.GroupIds.IsSubsetOf(guestScope.GroupIds));
     }
 }
 
