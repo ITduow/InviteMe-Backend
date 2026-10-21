@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Application.Features.Identity.Accounts;
 using InviteMe.Application.Features.Invitations.Messaging;
+using InviteMe.Application.Features.Invitations;
 using InviteMe.Application.Ports.AI;
 using InviteMe.Application.Ports.Authentication;
 using Microsoft.AspNetCore.Hosting;
@@ -89,6 +90,12 @@ public sealed class InvitationMessagingApiTests
         Assert.DoesNotContain("/qr?", previewBody.SmsContent);
         Assert.Contains("/invite/", previewBody.RsvpLink);
         Assert.Contains("/qr?format=png", previewBody.QrLink);
+
+        var designPath = $"/api/weddings/{wedding.Id}/invitation-design";
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await owner.PostAsync(path + "/test-send/" + guestId, null)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await owner.PutAsJsonAsync(designPath,
+            new SaveInvitationDesign(0, PublicationLifecycleTests.Design("Messaging")))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await owner.PostAsJsonAsync(designPath + "/publish", new PublishInvitationDesign(1, 0))).StatusCode);
 
         var idempotencyKey = Guid.NewGuid().ToString("N");
         using var send = new HttpRequestMessage(HttpMethod.Post, path + "/send")

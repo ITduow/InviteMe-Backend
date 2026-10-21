@@ -3,7 +3,10 @@ using FluentValidation;
 using InviteMe.Application.Common.Errors;
 using InviteMe.Application.Features.Invitations;
 using InviteMe.Application.Ports.Authorization;
+using InviteMe.Application.Ports.Authentication;
 using InviteMe.Domain.Weddings;
+using InviteMe.Application.Features.Guests.Planning;
+using InviteMe.Application.Features.Weddings.Setup;
 
 namespace InviteMe.UnitTests;
 
@@ -12,7 +15,9 @@ public sealed class InvitationDesignTests
     private static JsonElement Valid() => JsonSerializer.SerializeToElement(new
     {
         schemaVersion = 1,
-        nodes = new { ROOT = new { type = new { resolvedName = "StudioFrame" }, props = new { }, nodes = Array.Empty<string>() } }
+        nodes = new { ROOT = new { type = new { resolvedName = "StudioFrame" }, isCanvas = true,
+            props = new { }, displayName = "Frame", custom = new { }, hidden = false,
+            nodes = Array.Empty<string>(), linkedNodes = new { } } }
     });
     [Theory]
     [InlineData("null")]
@@ -22,10 +27,15 @@ public sealed class InvitationDesignTests
         Assert.False(InvitationDesignHandler.ValidDocument(JsonSerializer.Deserialize<JsonElement>(json)));
 
     [Fact]
+    public void IncompleteCraftNodeCannotBePublished() =>
+        Assert.False(InvitationDesignHandler.ValidDocument(JsonSerializer.Deserialize<JsonElement>(
+            "{\"schemaVersion\":1,\"nodes\":{\"ROOT\":{\"type\":{\"resolvedName\":\"StudioFrame\"},\"props\":{},\"nodes\":[]}}}")));
+
+    [Fact]
     public async Task SavingRequiresBothEditingAndSendingPermissions()
     {
         var store = new Store();
-        var handler = new InvitationDesignHandler(store, new Permissions(false));
+        var handler = Create(store, false);
         await Assert.ThrowsAsync<ApplicationProblemException>(() => handler.SaveAsync(Guid.NewGuid(), new(0, Valid()), default));
         Assert.Equal(0, store.Saves);
     }
@@ -33,7 +43,7 @@ public sealed class InvitationDesignTests
     public async Task InvalidVersionDoesNotReachStore()
     {
         var store = new Store();
-        var handler = new InvitationDesignHandler(store, new Permissions(true));
+        var handler = Create(store, true);
         await Assert.ThrowsAsync<ValidationException>(() => handler.SaveAsync(Guid.NewGuid(), new(-1, Valid()), default));
         Assert.Equal(0, store.Saves);
     }
@@ -41,9 +51,25 @@ public sealed class InvitationDesignTests
     public async Task ValidDesignCanBeSaved()
     {
         var store = new Store();
-        var result = await new InvitationDesignHandler(store, new Permissions(true)).SaveAsync(Guid.NewGuid(), new(0, Valid()), default);
+        var result = await Create(store, true).SaveAsync(Guid.NewGuid(), new(0, Valid()), default);
         Assert.Equal(1, result.Version);
         Assert.Equal(1, store.Saves);
+    }
+    [Fact]
+    public async Task InvitationCannotReferenceAnotherWeddingMedia()
+    {
+        var store = new Store();
+        var document = JsonSerializer.SerializeToElement(new
+        {
+            schemaVersion = 1,
+            nodes = new { ROOT = new { type = new { resolvedName = "StudioFrame" }, isCanvas = true,
+                props = new { src = $"/media/wedding-covers/{new string('a', 32)}/{new string('b', 48)}.png" },
+                displayName = "Frame", custom = new { }, hidden = false,
+                nodes = Array.Empty<string>(), linkedNodes = new { } } }
+        });
+        await Assert.ThrowsAsync<ApplicationProblemException>(() =>
+            Create(store, true).SaveAsync(Guid.NewGuid(), new(0, document), default));
+        Assert.Equal(0, store.Saves);
     }
     [Theory]
     [InlineData("guessable-id")]
@@ -51,9 +77,28 @@ public sealed class InvitationDesignTests
     public async Task InvalidTokensDoNotQueryStore(string token)
     {
         var store = new Store();
-        var handler = new InvitationDesignHandler(store, new Permissions(false));
+        var handler = Create(store, false);
         await Assert.ThrowsAsync<ApplicationProblemException>(() => handler.PublicAsync(token, default));
         Assert.Equal(0, store.Reads);
+    }
+    private static InvitationDesignHandler Create(Store store, bool canSend) =>
+        new(store, new Permissions(canSend), new Access(), new User(), new Changes(), new Media());
+    private sealed class Media : IWeddingMediaStorage
+    {
+        public Task<StoredWeddingImage> SaveAsync(Guid id, Stream content, string extension, CancellationToken ct) => throw new NotSupportedException();
+        public Task<Stream?> OpenReadAsync(Guid id, string fileName, CancellationToken ct) => Task.FromResult<Stream?>(null);
+        public Task DeleteAsync(Guid id, string fileName, CancellationToken ct) => Task.CompletedTask;
+        public bool TryGetOwnedFileName(Guid id, string? reference, out string fileName) { fileName = ""; return false; }
+    }
+    private sealed class Changes : IPlanningChangePublisher
+    {
+        public Task PublishAsync(Guid id, PlanningChange change, CancellationToken ct) => Task.CompletedTask;
+    }
+    private sealed class User : ICurrentUser { public Guid? UserId => Guid.Parse("11111111-1111-1111-1111-111111111111"); }
+    private sealed class Access : IWeddingAccessReader
+    {
+        public Task<WeddingAccess?> FindAsync(Guid weddingId, Guid userId, CancellationToken ct) =>
+            Task.FromResult<WeddingAccess?>(new(userId, false, new HashSet<WeddingPermission>()));
     }
     private sealed class Permissions(bool canSend) : IWeddingPermissionService
     {
@@ -72,6 +117,8 @@ public sealed class InvitationDesignTests
         public Task<InvitationDesignDto> GetAsync(Guid id, CancellationToken ct) => Task.FromResult(new InvitationDesignDto(0, null));
         public Task<InvitationDesignDto> SaveAsync(Guid id, SaveInvitationDesign input, CancellationToken ct)
         { Saves++; return Task.FromResult(new InvitationDesignDto(input.ExpectedVersion + 1, input.Document)); }
+        public Task<InvitationDesignDto> PublishAsync(Guid id, PublishInvitationDesign input, Guid actor, CancellationToken ct) => GetAsync(id, ct);
+        public Task<bool> IsPublishedAsync(Guid id, CancellationToken ct) => Task.FromResult(false);
         public Task<PublicInvitationDto?> FindPublicAsync(string token, CancellationToken ct)
         { Reads++; return Task.FromResult<PublicInvitationDto?>(null); }
     }

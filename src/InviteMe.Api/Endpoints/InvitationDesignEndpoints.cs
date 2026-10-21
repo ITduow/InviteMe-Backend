@@ -10,6 +10,7 @@ internal static class InvitationDesignEndpoints
             .RequireAuthorization().WithTags("Invitation Design");
         group.MapGet("", (Guid weddingId, InvitationDesignHandler handler, CancellationToken ct) => handler.GetAsync(weddingId, ct));
         group.MapPut("", (Guid weddingId, SaveInvitationDesign input, InvitationDesignHandler handler, CancellationToken ct) => handler.SaveAsync(weddingId, input, ct));
+        group.MapPost("/publish", (Guid weddingId, PublishInvitationDesign input, InvitationDesignHandler handler, CancellationToken ct) => handler.PublishAsync(weddingId, input, ct));
         endpoints.MapGet("/api/guest-invitations/{token}", async (string token, InvitationDesignHandler handler, HttpContext http, CancellationToken ct) =>
         {
             http.Response.Headers.CacheControl = "no-store";

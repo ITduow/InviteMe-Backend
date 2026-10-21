@@ -12,6 +12,9 @@ public sealed class WeddingSettingsConfiguration : IEntityTypeConfiguration<Wedd
         builder.ToTable("wedding_settings", table =>
         {
             table.HasCheckConstraint("ck_wedding_settings_visibility", "visibility IN ('PRIVATE', 'UNLISTED', 'PUBLIC')");
+            table.HasCheckConstraint("ck_website_publication", "(website_status = 'DRAFT' AND website_published_json IS NULL) OR (website_status IN ('PUBLISHED', 'UNPUBLISHED') AND website_published_json IS NOT NULL)");
+            table.HasCheckConstraint("ck_invitation_design_publication", "(invitation_design_status = 'DRAFT' AND invitation_published_snapshot_json IS NULL) OR (invitation_design_status = 'PUBLISHED' AND invitation_published_snapshot_json IS NOT NULL)");
+            table.HasCheckConstraint("ck_publication_versions", "website_version >= 0 AND invitation_design_version >= 0");
             table.HasCheckConstraint("ck_wedding_settings_reminder_days", "rsvp_reminder_days_before >= 0");
             table.HasCheckConstraint("ck_wedding_settings_booked_table_count", "booked_table_count IS NULL OR booked_table_count > 0");
             table.HasCheckConstraint("ck_wedding_settings_backup_table_limit", "backup_table_limit >= 0");
@@ -25,6 +28,14 @@ public sealed class WeddingSettingsConfiguration : IEntityTypeConfiguration<Wedd
         builder.Property(x => x.RsvpDeadline).HasColumnName("rsvp_deadline").HasColumnType("timestamp with time zone");
         builder.Property(x => x.RsvpReminderDaysBefore).HasColumnName("rsvp_reminder_days_before").HasColumnType("smallint").IsRequired().HasDefaultValue((short)2);
         builder.Property(x => x.SettingsJson).HasColumnName("settings_json").HasColumnType("jsonb");
+        builder.Property(x => x.WebsiteDraftJson).HasColumnName("website_draft_json").HasColumnType("jsonb");
+        builder.Property(x => x.WebsitePublishedJson).HasColumnName("website_published_json").HasColumnType("jsonb");
+        builder.Property(x => x.WebsiteStatus).HasColumnName("website_status").HasConversion<string>().HasColumnType("varchar(20)").HasDefaultValue(WebsitePublicationStatus.DRAFT);
+        builder.Property(x => x.WebsiteVersion).HasColumnName("website_version").HasDefaultValue(0);
+        builder.Property(x => x.InvitationDraftDocumentJson).HasColumnName("invitation_draft_document_json").HasColumnType("jsonb");
+        builder.Property(x => x.InvitationPublishedSnapshotJson).HasColumnName("invitation_published_snapshot_json").HasColumnType("jsonb");
+        builder.Property(x => x.InvitationDesignStatus).HasColumnName("invitation_design_status").HasConversion<string>().HasColumnType("varchar(20)").HasDefaultValue(InvitationPublicationStatus.DRAFT);
+        builder.Property(x => x.InvitationDesignVersion).HasColumnName("invitation_design_version").HasDefaultValue(0);
         builder.Property(x => x.BookedTableCount).HasColumnName("booked_table_count").HasColumnType("integer");
         builder.Property(x => x.BackupTableLimit).HasColumnName("backup_table_limit").HasColumnType("integer").IsRequired().HasDefaultValue(0);
         builder.Property(x => x.DefaultTableCapacity).HasColumnName("default_table_capacity").HasColumnType("smallint").IsRequired().HasDefaultValue((short)10);

@@ -132,7 +132,8 @@ public sealed class PreviewWordingValidator : AbstractValidator<PreviewWording>
 }
 
 public sealed class InvitationWordingHandler(IInvitationWordingStore store, IWeddingPermissionService permissions,
-    RequestValidation<SaveWordingSettings> saveValidation, RequestValidation<PreviewWording> previewValidation)
+    RequestValidation<SaveWordingSettings> saveValidation, RequestValidation<PreviewWording> previewValidation,
+    InviteMe.Application.Features.Guests.Planning.IPlanningChangePublisher changes)
 {
     public async Task<WordingSettingsDto> GetAsync(Guid weddingId, CancellationToken ct)
     {
@@ -143,7 +144,9 @@ public sealed class InvitationWordingHandler(IInvitationWordingStore store, IWed
     {
         await permissions.RequireAsync(weddingId, WeddingPermission.WEDDING_EDIT, ct);
         await saveValidation.ValidateAsync(input, ct);
-        return await store.SaveAsync(weddingId, input, ct);
+        var result = await store.SaveAsync(weddingId, input, ct);
+        await changes.PublishAsync(weddingId, new("InvitationWordingChanged", weddingId, result.Version), ct);
+        return result;
     }
     public async Task<WordingPreviewDto> PreviewAsync(Guid weddingId, PreviewWording input, CancellationToken ct)
     {
