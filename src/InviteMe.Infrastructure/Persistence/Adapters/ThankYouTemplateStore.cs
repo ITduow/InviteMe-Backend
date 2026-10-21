@@ -4,16 +4,18 @@ using InviteMe.Application.Common.Models;
 using InviteMe.Application.Ports.AI;
 using InviteMe.Domain.AI;
 using InviteMe.Domain.Audit;
+using InviteMe.Domain.Guests;
 using InviteMe.Domain.Weddings;
 using Microsoft.EntityFrameworkCore;
 
 namespace InviteMe.Infrastructure.Persistence.Adapters;
 
+// Guests are Guest Planning v2 invitations (planning_guests); the legacy guests table is no longer written.
 public sealed class ThankYouGuestReader(InviteMeDbContext db) : IThankYouGuestReader
 {
     public Task<string?> NameAsync(Guid weddingId, Guid weddingGuestId, CancellationToken ct) =>
-        db.WeddingGuests.AsNoTracking().Where(x => x.Id == weddingGuestId && x.WeddingId == weddingId && x.RecordStatus == "ACTIVE")
-            .Select(x => x.FullName).SingleOrDefaultAsync(ct);
+        db.Set<PlanningGuest>().AsNoTracking().Where(x => x.Id == weddingGuestId && x.WeddingId == weddingId)
+            .Select(x => x.RecipientName).SingleOrDefaultAsync(ct);
 }
 
 public sealed class ThankYouTemplateStore(InviteMeDbContext db, TimeProvider clock) : IThankYouTemplateStore

@@ -1,6 +1,7 @@
 using InviteMe.Application.Common.Errors;
 using InviteMe.Application.Common.Models;
 using InviteMe.Application.Features.Weddings.Setup;
+using InviteMe.Domain.Guests;
 using InviteMe.Domain.Weddings;
 using Microsoft.EntityFrameworkCore;
 
@@ -36,8 +37,9 @@ public sealed class WeddingListReader(InviteMeDbContext db) : IWeddingListReader
                        Wedding = wedding,
                        EventStart = weddingEvent == null ? (DateTimeOffset?)null : weddingEvent.StartAt,
                        TimeZone = settings == null ? "Asia/Ho_Chi_Minh" : settings.Timezone,
-                       ParticipantCount = db.GuestParticipants.LongCount(participant => participant.AttendanceStatus == "ATTENDING" &&
-                           db.WeddingGuests.Any(guest => guest.Id == participant.GuestId && guest.WeddingId == wedding.Id))
+                       // Confirmed people of Guest Planning v2 (walk-ins included), the same count RSVP uses for capacity.
+                       ParticipantCount = db.Set<PlanningParticipant>().LongCount(participant => participant.AttendanceStatus == "ATTENDING" &&
+                           db.Set<PlanningGuest>().Any(guest => guest.Id == participant.GuestId && guest.WeddingId == wedding.Id))
                    };
 
         var ordered = query.Sort switch
