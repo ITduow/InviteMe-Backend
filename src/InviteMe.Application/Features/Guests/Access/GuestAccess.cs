@@ -27,7 +27,8 @@ public sealed record SeatLookupQuery(string Code);
 
 public interface IGuestAccessStore
 {
-    // Same rules as the public invitation page: active owner, DRAFT or PUBLISHED wedding.
+    // Same rules as the public invitation page: active owner, DRAFT or PUBLISHED wedding. Without weddingId (guest
+    // routes) the invitation must also be published; with it (reception lookup) the token must belong to that wedding.
     Task<GuestAccessTarget?> FindAsync(string token, Guid? weddingId, CancellationToken ct);
     Task<IReadOnlyList<GuestSeatDto>> SeatsAsync(Guid guestId, CancellationToken ct);
     Task<SeatingPublicationDto> PublicationAsync(Guid weddingId, CancellationToken ct);
