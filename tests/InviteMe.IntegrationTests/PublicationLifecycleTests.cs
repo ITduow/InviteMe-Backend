@@ -139,7 +139,9 @@ public sealed class PublicationLifecycleTests
     public Task MigrationPreservesPreviouslyLiveDesignsEvenWithoutSendingLogs() =>
         SchemaV2MigrationTests.InDatabase(async db =>
         {
-            var previous = db.Database.GetMigrations().Last(x => !x.EndsWith("AddWeddingPublicationSnapshots", StringComparison.Ordinal));
+            // The migration right before AddWeddingPublicationSnapshots, also when later migrations exist.
+            var migrations = db.Database.GetMigrations().ToList();
+            var previous = migrations[migrations.FindIndex(x => x.EndsWith("AddWeddingPublicationSnapshots", StringComparison.Ordinal)) - 1];
             await db.GetService<IMigrator>().MigrateAsync(previous);
             var owner = new ApplicationUser { Id = Guid.NewGuid(), Email = "legacy@example.test", UserName = "legacy@example.test", FullName = "Legacy" };
             db.Users.Add(owner);
