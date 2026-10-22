@@ -149,12 +149,69 @@ public sealed class ThankYouMessageStore(InviteMeDbContext db, TimeProvider cloc
         return new(batch.Id, false);
     }
 
+    public async Task<ThankYouBatchQueued> QueueTemplateAsync(Guid weddingId, Guid actor, string key, Guid templateId,
+        IReadOnlyList<Guid> guestIds, IReadOnlyList<string> channels, string frontendUrl, CancellationToken ct)
+    {
+        var ids = guestIds.Order().ToArray();
+        var canonical = JsonSerializer.Serialize(new { templateId, guestIds = ids, channels = channels.Order(StringComparer.Ordinal).ToArray() });
+        var requestHash = Hash(canonical); var idempotencyHash = Hash(key);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await LockWedding(weddingId, actor, ct);
+        var prior = await db.ThankYouSendBatches.SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.IdempotencyHash == idempotencyHash, ct);
+        if (prior is not null)
+        {
+            if (prior.RequestHash != requestHash) throw Conflict("IDEMPOTENCY_KEY_REUSED", "This Idempotency-Key was already used for another request.");
+            await tx.CommitAsync(ct); return new(prior.Id, true);
+        }
+
+        var template = await db.Set<ThankYouTemplate>().SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.Id == templateId, ct)
+            ?? throw new ApplicationProblemException(ProblemKind.NotFound, "THANK_YOU_TEMPLATE_NOT_FOUND", "Template is unavailable in this wedding.");
+        if (template.Status != "APPROVED")
+            throw new ApplicationProblemException(ProblemKind.BusinessRule, "THANK_YOU_APPROVAL_REQUIRED", "Approve the shared template before sending.");
+        var guests = await db.Set<PlanningGuest>().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null && ids.Contains(x.Id))
+            .Select(x => new { x.Id, x.RecipientName, x.Email, x.Phone, x.InvitationToken }).ToListAsync(ct);
+        if (guests.Count != ids.Length)
+            throw new ApplicationProblemException(ProblemKind.NotFound, "GUEST_NOT_FOUND", "One or more selected guests are unavailable in this wedding.");
+        if (guests.Any(x => x.InvitationToken is not { Length: 64 }))
+            throw new ApplicationProblemException(ProblemKind.BusinessRule, "GUEST_INVITATION_TOKEN_REQUIRED", "Every guest must have an active personal link before sending.");
+        if (channels.Contains("EMAIL") && guests.Any(x => string.IsNullOrWhiteSpace(x.Email)) ||
+            channels.Contains("SMS") && guests.Any(x => string.IsNullOrWhiteSpace(x.Phone)))
+            throw new ApplicationProblemException(ProblemKind.BusinessRule, "THANK_YOU_CONTACT_REQUIRED", "Every selected guest needs contact details for the chosen channels.");
+
+        var paidAmounts = await db.Set<PlanningGift>().AsNoTracking()
+            .Where(x => x.WeddingId == weddingId && x.GuestId != null && ids.Contains(x.GuestId.Value) && x.Status == PlanningGift.Paid)
+            .GroupBy(x => x.GuestId!.Value)
+            .Select(x => new { GuestId = x.Key, Amount = x.Sum(g => g.AmountReceived ?? 0) })
+            .ToDictionaryAsync(x => x.GuestId, x => x.Amount, ct);
+        var batch = ThankYouSendBatch.Create(weddingId, idempotencyHash, requestHash, clock.GetUtcNow());
+        db.ThankYouSendBatches.Add(batch);
+        foreach (var guest in guests)
+        {
+            var paidAmount = paidAmounts.GetValueOrDefault(guest.Id);
+            var letter = ThankYouContent.Render(template.Content, guest.RecipientName,
+                template.IncludesGiftAmount && paidAmount > 0 ? paidAmount : null);
+            var publicLink = $"{frontendUrl.TrimEnd('/')}/thank-you/{guest.InvitationToken}";
+            foreach (var channel in channels)
+            {
+                var content = channel == "EMAIL" ? letter : $"Cảm ơn {Short(guest.RecipientName, 32)}! Xem thư cảm ơn: {publicLink}";
+                if (channel == "SMS" && content.Length > 201)
+                    throw new ApplicationProblemException(ProblemKind.BusinessRule, "THANK_YOU_SMS_TOO_LONG", "The thank-you SMS and personal link exceed 201 characters.");
+                db.ThankYouSendJobs.Add(ThankYouSendJob.CreateForTemplate(batch.Id, weddingId, template.Id, guest.Id,
+                    channel, channel == "EMAIL" ? guest.Email!.Trim() : guest.Phone!.Trim(), content, letter, clock.GetUtcNow()));
+            }
+        }
+        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "thank_you_send_batches", batch.Id, "THANK_YOU_MESSAGES_QUEUED", actor,
+            metadata: JsonSerializer.Serialize(new { templateId, guestCount = guests.Count, channels, includeGiftAmount = template.IncludesGiftAmount })));
+        await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
+        return new(batch.Id, false);
+    }
+
     public async Task<ThankYouSendBatchDto> BatchAsync(Guid weddingId, Guid batchId, CancellationToken ct)
     {
         var batch = await db.ThankYouSendBatches.AsNoTracking().SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.Id == batchId, ct)
             ?? throw new ApplicationProblemException(ProblemKind.NotFound, "THANK_YOU_BATCH_NOT_FOUND", "Send batch is unavailable in this wedding.");
         var jobs = await db.ThankYouSendJobs.AsNoTracking().Where(x => x.BatchId == batchId)
-            .OrderBy(x => x.Id).Select(x => new ThankYouSendJobDto(x.Id, x.MessageId, x.GuestId, x.Channel, x.Recipient, x.Status, x.AttemptCount, x.SentAt, x.ErrorCode)).ToListAsync(ct);
+            .OrderBy(x => x.Id).Select(x => new ThankYouSendJobDto(x.Id, x.MessageId, x.TemplateId, x.GuestId, x.Channel, x.Recipient, x.Status, x.AttemptCount, x.SentAt, x.ErrorCode)).ToListAsync(ct);
         var sent = jobs.Count(x => x.Status == "SENT"); var failed = jobs.Count(x => x.Status == "FAILED");
         var status = sent == jobs.Count ? "SENT" : failed == jobs.Count ? "FAILED" : sent + failed == jobs.Count ? "PARTIAL_FAILED" : "PENDING";
         return new(batch.Id, status, jobs.Count, sent, failed, jobs.Count - sent - failed, batch.CreatedAt, jobs);
@@ -180,6 +237,17 @@ public sealed class ThankYouMessageStore(InviteMeDbContext db, TimeProvider cloc
     public async Task<ThankYouPublicLetterDto?> PublicLetterAsync(string token, CancellationToken ct)
     {
         if (token.Length != 64 || !token.All(Uri.IsHexDigit)) return null;
+        var shared = await (from guest in db.Set<PlanningGuest>().AsNoTracking()
+                            join wedding in db.Weddings.AsNoTracking() on guest.WeddingId equals wedding.Id
+                            join owner in db.Users.AsNoTracking() on wedding.OwnerUserId equals owner.Id
+                            join job in db.ThankYouSendJobs.AsNoTracking() on guest.Id equals job.GuestId
+                            join template in db.Set<ThankYouTemplate>().AsNoTracking() on job.TemplateId equals template.Id
+                            where guest.InvitationToken == token && guest.ArchivedAt == null && owner.Status == "ACTIVE" &&
+                                  template.Status == "APPROVED" && job.Status == ThankYouSendJob.Sent && job.LetterSnapshot != null
+                            orderby job.SentAt descending, job.Channel
+                            select new ThankYouPublicLetterDto(guest.RecipientName, wedding.Title, job.LetterSnapshot!, job.SentAt!.Value))
+            .FirstOrDefaultAsync(ct);
+        if (shared is not null) return shared;
         return await (from guest in db.Set<PlanningGuest>().AsNoTracking()
                       join wedding in db.Weddings.AsNoTracking() on guest.WeddingId equals wedding.Id
                       join owner in db.Users.AsNoTracking() on wedding.OwnerUserId equals owner.Id
@@ -211,7 +279,7 @@ public sealed class ThankYouMessageStore(InviteMeDbContext db, TimeProvider cloc
                           where jobs.Select(x => x.Id).Contains(job.Id)
                           select new { job, guest.InvitationToken, wedding.Title }).ToListAsync(ct);
         await tx.CommitAsync(ct);
-        return rows.Select(x => new ThankYouDeliveryMessage(x.job.Id, x.job.WeddingId, x.job.MessageId, x.job.GuestId,
+        return rows.Select(x => new ThankYouDeliveryMessage(x.job.Id, x.job.WeddingId, x.job.MessageId, x.job.TemplateId, x.job.GuestId,
             x.job.Channel, x.job.Recipient, x.job.ContentSnapshot,
             $"Lời cảm ơn từ {Short(x.Title, 120)}", $"{frontendUrl.TrimEnd('/')}/thank-you/{x.InvitationToken}" )).ToArray();
     }

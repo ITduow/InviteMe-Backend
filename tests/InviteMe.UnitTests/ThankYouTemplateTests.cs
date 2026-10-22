@@ -29,6 +29,17 @@ public sealed class ThankYouTemplateTests
         Assert.False((await validator.ValidateAsync(new GenerateThankYouTemplate(AdditionalInstructions: new string('x', 501)))).IsValid);
     }
 
+    [Fact]
+    public async Task OptionsRequireUniqueRecipientsAndBoundVariantCount()
+    {
+        var validator = new GenerateThankYouTemplateOptionsValidator();
+        Assert.True((await validator.ValidateAsync(new GenerateThankYouTemplateOptions([Guid.NewGuid()], 3))).IsValid);
+        var repeated = Guid.NewGuid();
+        Assert.False((await validator.ValidateAsync(new GenerateThankYouTemplateOptions([repeated, repeated]))).IsValid);
+        Assert.False((await validator.ValidateAsync(new GenerateThankYouTemplateOptions([Guid.NewGuid()], 4))).IsValid);
+        Assert.False((await validator.ValidateAsync(new GenerateThankYouTemplateOptions([]))).IsValid);
+    }
+
     [Theory]
     [InlineData("Nguyễn Văn Minh")]
     [InlineData("Cô Mai & Chú Nam")]
@@ -68,6 +79,31 @@ public sealed class ThankYouTemplateTests
     [InlineData("FRIENDLY")]
     public void DeterministicFallbackIsValidAndPreservesPlaceholder(string tone) =>
         Assert.True(ThankYouGenerationPolicy.IsUsable(ThankYouGenerationPolicy.Fallback(tone)));
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SharedFallbackOptionsAreUsableAndParsedAsOneBatch(bool includeGiftAmount)
+    {
+        var options = Enumerable.Range(0, 3).Select(i => ThankYouGenerationPolicy.Fallback("WARM", includeGiftAmount, i)).ToArray();
+        Assert.All(options, content => Assert.True(ThankYouGenerationPolicy.IsUsable(content, includeGiftAmount)));
+        var parsed = ThankYouGenerationPolicy.ParseOptions(JsonSerializer.Serialize(new { templates = options }), 3, includeGiftAmount);
+        Assert.NotNull(parsed);
+        Assert.Equal(3, parsed.Count);
+        Assert.Null(ThankYouGenerationPolicy.ParseOptions(JsonSerializer.Serialize(new { templates = options.Take(2) }), 3, includeGiftAmount));
+    }
+
+    [Fact]
+    public void GiftThanksPlaceholderRendersOnlyForConfirmedAmountsAndIsRemovedOtherwise()
+    {
+        const string template = "Gửi {{GuestName}},\n\n{{GiftThanks}}\n\nCảm ơn bạn.";
+        Assert.True(ThankYouContent.IsValid(template, includeGiftAmount: true));
+        var renderer = new ThankYouTemplateRenderer();
+        Assert.Equal("Gửi Lan,\nChúng mình rất trân trọng món quà 750.000đ bạn dành tặng.\nCảm ơn bạn.",
+            renderer.Render(template, "Lan", 750_000));
+        Assert.Equal("Gửi Lan,\nCảm ơn bạn.", renderer.Render(template, "Lan"));
+        Assert.False(ThankYouContent.IsValid("{{GuestName}} {{GiftThanks}}"));
+    }
 
     [Fact]
     public void ApprovedContentCannotBeEditedOrApprovedAgain()
@@ -124,6 +160,25 @@ public sealed class ThankYouTemplateTests
         Assert.Contains("smsContent", instructions);
         Assert.Contains("never include QR", instructions);
         Assert.Contains("\"smsContent\":", result.Text);
+    }
+
+    [Fact]
+    public async Task SharedTemplateOptionsAskForSeveralVariantsInOneProviderRequest()
+    {
+        string? instructions = null;
+        var transport = new FakeTransport(async (request, ct) =>
+        {
+            using var payload = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+            instructions = payload.RootElement.GetProperty("instructions").GetString();
+            return Response(200, GoodResponse);
+        });
+
+        await Generator(transport).GenerateAsync(new("WARM", "vi", null, "THANK_YOU_TEMPLATE_OPTIONS", "variantCount=3"), default);
+
+        Assert.Equal(1, transport.Calls);
+        Assert.Contains("templates", instructions);
+        Assert.Contains("variantCount", instructions);
+        Assert.Contains("guest names", instructions);
     }
 
     [Theory]

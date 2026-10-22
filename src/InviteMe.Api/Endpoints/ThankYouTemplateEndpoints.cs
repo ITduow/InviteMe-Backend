@@ -17,6 +17,14 @@ internal static class ThankYouTemplateEndpoints
             .WithSummary("Owner generates one reusable draft; guest names are rendered locally, never sent to AI.")
             .Produces<ThankYouTemplateDto>(201).ProducesValidationProblem().ProducesProblem(403)
             .ProducesProblem(429).ProducesProblem(502).ProducesProblem(503).ProducesProblem(504);
+        group.MapPost("/generate-options", async (Guid weddingId, GenerateThankYouTemplateOptions input, ThankYouTemplateHandler handler, CancellationToken ct) =>
+        {
+            var options = await handler.GenerateOptionsAsync(weddingId, input, ct);
+            return Results.Json(options, statusCode: StatusCodes.Status201Created);
+        }).WithName("GenerateAiThankYouTemplateOptions").RequireRateLimiting("AiThankYouGeneration")
+            .WithSummary("One AI request returns 1–3 reusable thank-you options for the selected audience; no recipient names or raw wishes are sent to AI.")
+            .Produces<IReadOnlyList<ThankYouTemplateDto>>(201).ProducesValidationProblem().ProducesProblem(403)
+            .ProducesProblem(429).ProducesProblem(502).ProducesProblem(503).ProducesProblem(504);
         group.MapGet("", (Guid weddingId, ThankYouTemplateHandler handler, CancellationToken ct, int page = 1, int pageSize = 25) =>
             handler.ListAsync(weddingId, new PageRequest(page, pageSize), ct))
             .WithName("GetAiThankYouTemplates").Produces<PagedResult<ThankYouTemplateDto>>();

@@ -4,7 +4,9 @@ using InviteMe.Application.Common.Models;
 using InviteMe.Application.Ports.AI;
 using InviteMe.Domain.AI;
 using InviteMe.Domain.Audit;
+using InviteMe.Domain.Gifts;
 using InviteMe.Domain.Guests;
+using InviteMe.Domain.Rsvps;
 using InviteMe.Domain.Weddings;
 using Microsoft.EntityFrameworkCore;
 
@@ -16,6 +18,39 @@ public sealed class ThankYouGuestReader(InviteMeDbContext db) : IThankYouGuestRe
     public Task<string?> NameAsync(Guid weddingId, Guid weddingGuestId, CancellationToken ct) =>
         db.Set<PlanningGuest>().AsNoTracking().Where(x => x.Id == weddingGuestId && x.WeddingId == weddingId)
             .Select(x => x.RecipientName).SingleOrDefaultAsync(ct);
+
+    public async Task<ThankYouGuestPreview?> PreviewAsync(Guid weddingId, Guid weddingGuestId, CancellationToken ct)
+    {
+        var guest = await db.Set<PlanningGuest>().AsNoTracking()
+            .Where(x => x.Id == weddingGuestId && x.WeddingId == weddingId && x.ArchivedAt == null)
+            .Select(x => new { x.RecipientName }).SingleOrDefaultAsync(ct);
+        if (guest is null) return null;
+        var paid = await db.Set<PlanningGift>().AsNoTracking()
+            .Where(x => x.WeddingId == weddingId && x.GuestId == weddingGuestId && x.Status == PlanningGift.Paid)
+            .SumAsync(x => (long?)(x.AmountReceived ?? 0), ct);
+        return new ThankYouGuestPreview(guest.RecipientName, paid is > 0 ? paid : null);
+    }
+
+    public async Task<ThankYouAudienceSummary?> AudienceAsync(Guid weddingId, IReadOnlyList<Guid> guestIds, CancellationToken ct)
+    {
+        var guests = await db.Set<PlanningGuest>().AsNoTracking()
+            .Where(x => x.WeddingId == weddingId && x.ArchivedAt == null && guestIds.Contains(x.Id))
+            .Select(x => new { x.Id, x.GroupId, x.Side }).ToListAsync(ct);
+        if (guests.Count != guestIds.Count) return null;
+        var groupIds = guests.Where(x => x.GroupId != null).Select(x => x.GroupId!.Value).Distinct().ToArray();
+        var groupNames = await db.Set<PlanningGroup>().AsNoTracking().Where(x => groupIds.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, x => x.Name, ct);
+        var rsvps = await db.Set<PlanningRsvp>().AsNoTracking().Where(x => x.WeddingId == weddingId && guestIds.Contains(x.GuestId))
+            .ToDictionaryAsync(x => x.GuestId, x => x.Status, ct);
+        var wishes = await db.Set<PlanningGift>().AsNoTracking()
+            .Where(x => x.WeddingId == weddingId && x.GuestId != null && guestIds.Contains(x.GuestId.Value) && x.MessagePublic && x.Message != null && x.Message != "")
+            .Select(x => x.GuestId!.Value).Distinct().CountAsync(ct);
+        var attendance = guests.GroupBy(x => rsvps.GetValueOrDefault(x.Id) ?? "PENDING")
+            .ToDictionary(x => x.Key, x => x.Count());
+        var groups = guests.GroupBy(x => x.GroupId is { } id && groupNames.TryGetValue(id, out var name) ? name : x.Side)
+            .ToDictionary(x => x.Key, x => x.Count());
+        return new ThankYouAudienceSummary(guests.Count, wishes, attendance, groups);
+    }
 }
 
 public sealed class ThankYouTemplateStore(InviteMeDbContext db, TimeProvider clock) : IThankYouTemplateStore
@@ -41,6 +76,16 @@ public sealed class ThankYouTemplateStore(InviteMeDbContext db, TimeProvider clo
         db.Add(template); Audit(template, template.CreatedBy, "THANK_YOU_TEMPLATE_GENERATED");
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return template;
     }
+    public async Task<IReadOnlyList<ThankYouTemplate>> CreateManyAsync(IReadOnlyList<ThankYouTemplate> templates, CancellationToken ct)
+    {
+        if (templates.Count is < 1 or > 3 || templates.Any(x => x.WeddingId != templates[0].WeddingId || x.CreatedBy != templates[0].CreatedBy))
+            throw new ArgumentException("A template option batch must contain 1–3 drafts from one wedding and owner.", nameof(templates));
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await LockWedding(templates[0].WeddingId, templates[0].CreatedBy, ct);
+        db.AddRange(templates);
+        foreach (var template in templates) Audit(template, template.CreatedBy, "THANK_YOU_TEMPLATE_GENERATED");
+        await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return templates;
+    }
     public async Task<PagedResult<ThankYouTemplate>> ListAsync(Guid weddingId, PageRequest page, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct);
@@ -59,11 +104,11 @@ public sealed class ThankYouTemplateStore(InviteMeDbContext db, TimeProvider clo
         if (template.Version != version) throw new ApplicationProblemException(ProblemKind.Conflict, "CONCURRENCY_CONFLICT", "Template changed. Refresh and retry.");
         return template;
     }
-    public async Task<ThankYouTemplate> EditAsync(Guid weddingId, Guid id, Guid actor, string content, int version, CancellationToken ct)
+    public async Task<ThankYouTemplate> EditAsync(Guid weddingId, Guid id, Guid actor, string content, bool includesGiftAmount, int version, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct); await LockWedding(weddingId, actor, ct);
         var template = await Draft(weddingId, id, version, ct);
-        template.Edit(content, clock.GetUtcNow()); Audit(template, actor, "THANK_YOU_TEMPLATE_EDITED");
+        template.Edit(content, clock.GetUtcNow(), includesGiftAmount); Audit(template, actor, "THANK_YOU_TEMPLATE_EDITED");
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return template;
     }
     public async Task<ThankYouTemplate> ApproveAsync(Guid weddingId, Guid id, Guid actor, int version, CancellationToken ct)
