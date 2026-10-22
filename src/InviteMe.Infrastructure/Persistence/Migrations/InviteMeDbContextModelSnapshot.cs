@@ -276,7 +276,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("lease_id");
 
-                    b.Property<Guid>("MessageId")
+                    b.Property<string>("LetterSnapshot")
+                        .HasMaxLength(3000)
+                        .HasColumnType("character varying(3000)")
+                        .HasColumnName("letter_snapshot");
+
+                    b.Property<Guid?>("MessageId")
                         .HasColumnType("uuid")
                         .HasColumnName("message_id");
 
@@ -305,12 +310,19 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(20)")
                         .HasColumnName("status");
 
+                    b.Property<Guid?>("TemplateId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("template_id");
+
                     b.Property<Guid>("WeddingId")
                         .HasColumnType("uuid")
                         .HasColumnName("wedding_id");
 
                     b.HasKey("Id")
                         .HasName("thank_you_send_jobs_pkey");
+
+                    b.HasIndex("TemplateId")
+                        .HasDatabaseName("ix_thank_you_send_jobs_template");
 
                     b.HasIndex("BatchId", "Id")
                         .HasDatabaseName("ix_thank_you_send_jobs_batch");
@@ -325,6 +337,8 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("ck_thank_you_send_jobs_channel", "channel IN ('EMAIL','SMS')");
 
                             t.HasCheckConstraint("ck_thank_you_send_jobs_lease", "(status = 'SENDING' AND lease_id IS NOT NULL AND lease_expires_at IS NOT NULL) OR (status <> 'SENDING' AND lease_id IS NULL AND lease_expires_at IS NULL)");
+
+                            t.HasCheckConstraint("ck_thank_you_send_jobs_source", "(message_id IS NOT NULL AND template_id IS NULL) OR (message_id IS NULL AND template_id IS NOT NULL)");
 
                             t.HasCheckConstraint("ck_thank_you_send_jobs_status", "status IN ('PENDING','SENDING','SENT','FAILED')");
                         });
@@ -358,6 +372,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("CreatedBy")
                         .HasColumnType("uuid")
                         .HasColumnName("created_by");
+
+                    b.Property<bool>("IncludesGiftAmount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("includes_gift_amount");
 
                     b.Property<long?>("InputTokens")
                         .HasColumnType("bigint")
@@ -419,6 +439,8 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("ck_thank_you_approval", "(status = 'DRAFT' AND approved_by IS NULL AND approved_at IS NULL) OR (status = 'APPROVED' AND approved_by IS NOT NULL AND approved_at IS NOT NULL)");
 
                             t.HasCheckConstraint("ck_thank_you_content", "length(btrim(content)) > 0 AND length(content) <= 3000 AND strpos(content, '{{GuestName}}') > 0");
+
+                            t.HasCheckConstraint("ck_thank_you_gift_placeholder", "(includes_gift_amount = true AND strpos(content, '{{GiftThanks}}') > 0) OR (includes_gift_amount = false AND strpos(content, '{{GiftThanks}}') = 0)");
 
                             t.HasCheckConstraint("ck_thank_you_language", "language = 'vi'");
 
@@ -5005,8 +5027,13 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("MessageId")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
                         .HasConstraintName("fk_thank_you_send_jobs_message");
+
+                    b.HasOne("InviteMe.Domain.AI.ThankYouTemplate", null)
+                        .WithMany()
+                        .HasForeignKey("TemplateId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_thank_you_send_jobs_template");
 
                     b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
                         .WithMany()

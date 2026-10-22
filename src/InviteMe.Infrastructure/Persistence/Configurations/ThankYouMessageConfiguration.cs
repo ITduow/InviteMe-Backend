@@ -59,6 +59,7 @@ public sealed class ThankYouMessageConfiguration : IEntityTypeConfiguration<Than
         b.ToTable("thank_you_send_jobs", t =>
         {
             t.HasCheckConstraint("ck_thank_you_send_jobs_status", "status IN ('PENDING','SENDING','SENT','FAILED')");
+            t.HasCheckConstraint("ck_thank_you_send_jobs_source", "(message_id IS NOT NULL AND template_id IS NULL) OR (message_id IS NULL AND template_id IS NOT NULL)");
             t.HasCheckConstraint("ck_thank_you_send_jobs_channel", "channel IN ('EMAIL','SMS')");
             t.HasCheckConstraint("ck_thank_you_send_jobs_attempt", "attempt_count >= 0");
             t.HasCheckConstraint("ck_thank_you_send_jobs_lease", "(status = 'SENDING' AND lease_id IS NOT NULL AND lease_expires_at IS NOT NULL) OR (status <> 'SENDING' AND lease_id IS NULL AND lease_expires_at IS NULL)");
@@ -66,8 +67,10 @@ public sealed class ThankYouMessageConfiguration : IEntityTypeConfiguration<Than
         b.HasKey(x => x.Id).HasName("thank_you_send_jobs_pkey");
         b.Property(x => x.Id).HasColumnName("id"); b.Property(x => x.BatchId).HasColumnName("batch_id");
         b.Property(x => x.WeddingId).HasColumnName("wedding_id"); b.Property(x => x.MessageId).HasColumnName("message_id");
+        b.Property(x => x.TemplateId).HasColumnName("template_id");
         b.Property(x => x.GuestId).HasColumnName("guest_id"); b.Property(x => x.Channel).HasColumnName("channel").HasMaxLength(10);
         b.Property(x => x.Recipient).HasColumnName("recipient").HasMaxLength(254); b.Property(x => x.ContentSnapshot).HasColumnName("content_snapshot").HasMaxLength(3000);
+        b.Property(x => x.LetterSnapshot).HasColumnName("letter_snapshot").HasMaxLength(3000);
         b.Property(x => x.Status).HasColumnName("status").HasMaxLength(20); b.Property(x => x.AttemptCount).HasColumnName("attempt_count");
         b.Property(x => x.NextAttemptAt).HasColumnName("next_attempt_at"); b.Property(x => x.LeaseId).HasColumnName("lease_id");
         b.Property(x => x.LeaseExpiresAt).HasColumnName("lease_expires_at"); b.Property(x => x.SentAt).HasColumnName("sent_at");
@@ -75,9 +78,11 @@ public sealed class ThankYouMessageConfiguration : IEntityTypeConfiguration<Than
         b.Property(x => x.ErrorCode).HasColumnName("error_code").HasMaxLength(100);
         b.HasIndex(x => new { x.Status, x.NextAttemptAt, x.Id }).HasDatabaseName("ix_thank_you_send_jobs_due");
         b.HasIndex(x => new { x.BatchId, x.Id }).HasDatabaseName("ix_thank_you_send_jobs_batch");
+        b.HasIndex(x => x.TemplateId).HasDatabaseName("ix_thank_you_send_jobs_template");
         b.HasOne<ThankYouSendBatch>().WithMany().HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_thank_you_send_jobs_batch");
         b.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_thank_you_send_jobs_wedding");
         b.HasOne<ThankYouMessage>().WithMany().HasForeignKey(x => x.MessageId).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_thank_you_send_jobs_message");
+        b.HasOne<ThankYouTemplate>().WithMany().HasForeignKey(x => x.TemplateId).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_thank_you_send_jobs_template");
         b.HasOne<PlanningGuest>().WithMany().HasForeignKey(x => x.GuestId).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_thank_you_send_jobs_guest");
     }
 }

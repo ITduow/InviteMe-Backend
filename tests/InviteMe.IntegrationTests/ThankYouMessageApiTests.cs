@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using InviteMe.Application.Features.AI.ThankYouMessages;
 using InviteMe.Application.Features.AI.ThankYouTemplates;
 using InviteMe.Application.Features.Gifts;
@@ -24,61 +25,82 @@ namespace InviteMe.IntegrationTests;
 public sealed class ThankYouMessageApiTests
 {
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
-    public Task CreatesPersonalizedDrafts_Approves_QueuesWithIdempotency_AndHidesUnsentPublicLetter() => WithApi(async (db, f, guestId, token) =>
+    public Task GeneratesOptionsInOneAiCall_ApprovesOneSharedTemplate_AndQueuesPerGuestJobs() => WithApi(async (db, f) =>
     {
-        db.Set<PlanningGift>().Add(PlanningGift.Recorded(f.WeddingId, guestId, "Personalized Guest", PlanningGift.Cash,
-            750_000, null, f.OwnerId, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow));
+        db.Set<PlanningGift>().Add(PlanningGift.Recorded(f.WeddingId, f.GuestId, "Personalized Guest",
+            PlanningGift.Cash, 750_000, null, f.OwnerId, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow));
         await db.SaveChangesAsync();
 
-        var generated = await Read<IReadOnlyList<ThankYouMessageDto>>(await f.Owner.PostAsJsonAsync(f.Root + "/generate",
-            new GenerateThankYouMessages([guestId], "WARM", IncludeGiftAmounts: true)));
-        var draft = Assert.Single(generated);
-        Assert.Equal("DRAFT", draft.Status);
-        Assert.True(draft.IncludesGiftAmount);
-        Assert.Equal(750_000, draft.GiftAmount);
-        Assert.Contains("{{GiftAmount}}", draft.Content);
-        Assert.Equal("THANK_YOU_PERSONALIZED", f.Ai.LastRequest?.Purpose);
-        Assert.Contains("750000 VND", f.Ai.LastRequest?.Context);
+        var templateRoot = $"/api/weddings/{f.WeddingId}/ai/thank-you-templates";
+        var options = await Read<IReadOnlyList<ThankYouTemplateDto>>(await f.Owner.PostAsJsonAsync(templateRoot + "/generate-options",
+            new GenerateThankYouTemplateOptions([f.GuestId, f.OtherGuestId], VariantCount: 3, Tone: "WARM", IncludeGiftAmount: true)));
+        Assert.Equal(3, options.Count);
+        Assert.Equal(1, f.Ai.Calls);
+        Assert.All(options, option =>
+        {
+            Assert.Equal("DRAFT", option.Status);
+            Assert.True(option.IncludesGiftAmount);
+            Assert.Contains("{{GiftThanks}}", option.Content);
+        });
+        Assert.Equal("THANK_YOU_TEMPLATE_OPTIONS", f.Ai.LastRequest?.Purpose);
+        Assert.Contains("GuestCount", f.Ai.LastRequest?.Context);
+        Assert.DoesNotContain("Personalized Guest", f.Ai.LastRequest?.Context);
+        Assert.DoesNotContain("guest@example.test", f.Ai.LastRequest?.Context);
 
-        var edited = await Read<ThankYouMessageDto>(await f.Owner.PutAsJsonAsync(f.Root + "/" + draft.Id,
-            new EditThankYouMessage(draft.Content.Replace("{{GuestName}}", "Gửi {{GuestName}}", StringComparison.Ordinal), draft.Version, true)));
-        var approved = await Read<ThankYouMessageDto>(await f.Owner.PostAsJsonAsync(f.Root + "/" + draft.Id + "/approve",
-            new ApproveThankYouMessage(edited.Version)));
+        var template = options[0];
+        var edited = await Read<ThankYouTemplateDto>(await f.Owner.PutAsJsonAsync(templateRoot + "/" + template.Id,
+            new UpdateThankYouTemplate(template.Content.Replace("{{GuestName}}", "Gửi {{GuestName}}", StringComparison.Ordinal), template.Version, true)));
+        var approved = await Read<ThankYouTemplateDto>(await f.Owner.PostAsJsonAsync(templateRoot + "/" + template.Id + "/approve",
+            new ApproveThankYouTemplate(edited.Version)));
         Assert.Equal("APPROVED", approved.Status);
 
-        using var send = new HttpRequestMessage(HttpMethod.Post, f.Root + "/send")
-        { Content = JsonContent.Create(new QueueThankYouMessages([draft.Id], ["EMAIL"])) };
-        send.Headers.Add("Idempotency-Key", "thank-you-test-one");
+        using var send = new HttpRequestMessage(HttpMethod.Post, $"/api/weddings/{f.WeddingId}/ai/thank-you-messages/send")
+        { Content = JsonContent.Create(new QueueThankYouTemplateMessages(template.Id, [f.GuestId, f.OtherGuestId], ["EMAIL"])) };
+        send.Headers.Add("Idempotency-Key", "thank-you-shared-test-one");
         var queuedResponse = await f.Owner.SendAsync(send);
         Assert.Equal(HttpStatusCode.Accepted, queuedResponse.StatusCode);
         var queued = (await queuedResponse.Content.ReadFromJsonAsync<ThankYouBatchQueued>())!;
         Assert.False(queued.Replayed);
 
-        using var replay = new HttpRequestMessage(HttpMethod.Post, f.Root + "/send")
-        { Content = JsonContent.Create(new QueueThankYouMessages([draft.Id], ["EMAIL"])) };
-        replay.Headers.Add("Idempotency-Key", "thank-you-test-one");
+        using var replay = new HttpRequestMessage(HttpMethod.Post, $"/api/weddings/{f.WeddingId}/ai/thank-you-messages/send")
+        { Content = JsonContent.Create(new QueueThankYouTemplateMessages(template.Id, [f.GuestId, f.OtherGuestId], ["EMAIL"])) };
+        replay.Headers.Add("Idempotency-Key", "thank-you-shared-test-one");
         var replayedResponse = await f.Owner.SendAsync(replay);
         Assert.Equal(HttpStatusCode.OK, replayedResponse.StatusCode);
         var replayed = (await replayedResponse.Content.ReadFromJsonAsync<ThankYouBatchQueued>())!;
         Assert.Equal(queued.Id, replayed.Id);
         Assert.True(replayed.Replayed);
 
-        var batch = await Read<ThankYouSendBatchDto>(await f.Owner.GetAsync(f.Root + "/batches/" + queued.Id));
-        Assert.Equal(1, batch.PendingCount);
-        Assert.Equal(HttpStatusCode.NotFound, (await f.Client().GetAsync("/api/guest-thank-you/" + token)).StatusCode);
+        var batch = await Read<ThankYouSendBatchDto>(await f.Owner.GetAsync($"/api/weddings/{f.WeddingId}/ai/thank-you-messages/batches/{queued.Id}"));
+        Assert.Equal(2, batch.PendingCount);
+        Assert.All(batch.Jobs, job => Assert.Equal(template.Id, job.TemplateId));
+        Assert.All(batch.Jobs, job => Assert.Null(job.MessageId));
+
+        var queuedJobs = await db.ThankYouSendJobs.AsNoTracking().Where(x => x.BatchId == queued.Id).ToListAsync();
+        Assert.Equal(2, queuedJobs.Count);
+        Assert.Contains("750.000đ", queuedJobs.Single(x => x.GuestId == f.GuestId).LetterSnapshot);
+        Assert.DoesNotContain("GiftThanks", queuedJobs.Single(x => x.GuestId == f.OtherGuestId).LetterSnapshot);
+        Assert.Equal(HttpStatusCode.NotFound, (await f.Client().GetAsync("/api/guest-thank-you/" + f.Token)).StatusCode);
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
-    public Task AIProviderFailureCreatesLabelledDeterministicFallbackDraft() => WithApi(async (_, f, guestId, _) =>
+    public Task AIProviderFailureCreatesLabelledFallbackTemplateOptions() => WithApi(async (_, f) =>
     {
         f.Ai.Fail = true;
-        var generated = await Read<IReadOnlyList<ThankYouMessageDto>>(await f.Owner.PostAsJsonAsync(f.Root + "/generate",
-            new GenerateThankYouMessages([guestId])));
-        Assert.True(Assert.Single(generated).UsedFallback);
-        Assert.Equal("deterministic-fallback", generated[0].Model);
+        var templates = await Read<IReadOnlyList<ThankYouTemplateDto>>(await f.Owner.PostAsJsonAsync(
+            $"/api/weddings/{f.WeddingId}/ai/thank-you-templates/generate-options",
+            new GenerateThankYouTemplateOptions([f.GuestId], VariantCount: 3)));
+        Assert.Equal(3, templates.Count);
+        Assert.All(templates, template =>
+        {
+            Assert.True(template.UsedFallback);
+            Assert.Equal("deterministic-fallback", template.Model);
+            Assert.Equal("DRAFT", template.Status);
+        });
+        Assert.Equal(1, f.Ai.Calls);
     });
 
-    private static Task WithApi(Func<InviteMeDbContext, Fixture, Guid, string, Task> test) => SchemaV2MigrationTests.InDatabase(async db =>
+    private static Task WithApi(Func<InviteMeDbContext, Fixture, Task> test) => SchemaV2MigrationTests.InDatabase(async db =>
     {
         await db.Database.MigrateAsync();
         var ai = new TestAi(); var sender = new TestSender();
@@ -92,15 +114,20 @@ public sealed class ThankYouMessageApiTests
             services.RemoveAll<IInvitationChannelSender>(); services.AddSingleton<IInvitationChannelSender>(sender);
         }));
         using var owner = factory.CreateClient(new() { BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false, HandleCookies = false });
-        await SignIn(owner, "thank-you-message-owner");
-        var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "thank-you-message-test");
+        await SignIn(owner, "thank-you-shared-owner");
+        var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "thank-you-shared-test");
         using var import = new HttpRequestMessage(HttpMethod.Post, $"/api/weddings/{wedding.Id}/guest-planning/imports")
-        { Content = JsonContent.Create(new PlanningImport([new PlanningRow(2, "Personalized Guest", InvitationKind: "INDIVIDUAL", ExpectedPeople: 1, Side: "BRIDE", Email: "guest@example.test", Phone: "+84912345678")])) };
+        {
+            Content = JsonContent.Create(new PlanningImport([
+                new PlanningRow(2, "Personalized Guest", InvitationKind: "INDIVIDUAL", ExpectedPeople: 1, Side: "BRIDE", Email: "guest@example.test", Phone: "+84912345678"),
+                new PlanningRow(3, "Second Guest", InvitationKind: "INDIVIDUAL", ExpectedPeople: 1, Side: "GROOM", Email: "second@example.test", Phone: "+84912345679")
+            ]))
+        };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
         var imported = await import.Content.ReadFromJsonAsync<PlanningImportResult>();
-        var guestId = Assert.Single(imported!.Items).GuestId;
-        var guest = await db.Set<PlanningGuest>().AsNoTracking().SingleAsync(x => x.Id == guestId);
-        await test(db, new Fixture(factory, owner, guestId, wedding.Id, wedding.OwnerUserId, guest.InvitationToken!, ai), guestId, guest.InvitationToken!);
+        var ids = imported!.Items.Select(x => x.GuestId).ToArray();
+        var guest = await db.Set<PlanningGuest>().AsNoTracking().SingleAsync(x => x.Id == ids[0]);
+        await test(db, new Fixture(factory, owner, ids[0], ids[1], wedding.Id, wedding.OwnerUserId, guest.InvitationToken!, ai));
     });
 
     private static async Task SignIn(HttpClient client, string name)
@@ -118,10 +145,9 @@ public sealed class ThankYouMessageApiTests
         return (await response.Content.ReadFromJsonAsync<T>())!;
     }
 
-    private sealed record Fixture(WebApplicationFactory<Program> Factory, HttpClient Owner, Guid GuestId, Guid WeddingId,
-        Guid OwnerId, string Token, TestAi Ai)
+    private sealed record Fixture(WebApplicationFactory<Program> Factory, HttpClient Owner, Guid GuestId, Guid OtherGuestId,
+        Guid WeddingId, Guid OwnerId, string Token, TestAi Ai)
     {
-        public string Root => $"/api/weddings/{WeddingId}/ai/thank-you-messages";
         public HttpClient Client() => Factory.CreateClient(new() { BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false, HandleCookies = false });
     }
 
@@ -129,11 +155,14 @@ public sealed class ThankYouMessageApiTests
     {
         public AiTextRequest? LastRequest { get; private set; }
         public bool Fail { get; set; }
+        public int Calls { get; private set; }
         public Task<AiTextResult> GenerateAsync(AiTextRequest request, CancellationToken ct)
         {
-            LastRequest = request;
+            Calls++; LastRequest = request;
             if (Fail) throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.Unavailable, "AI_PROVIDER_UNAVAILABLE", "unavailable");
-            return Task.FromResult(new AiTextResult(ThankYouGenerationPolicy.Fallback(request.Tone), "test-model"));
+            var includeGift = request.Context?.Contains("includeGiftThanks=true", StringComparison.Ordinal) == true;
+            var options = Enumerable.Range(0, 3).Select(i => ThankYouGenerationPolicy.Fallback(request.Tone, includeGift, i));
+            return Task.FromResult(new AiTextResult(JsonSerializer.Serialize(new { templates = options }), "test-model", 100, 60));
         }
     }
 

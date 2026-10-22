@@ -69,18 +69,20 @@ public sealed class ThankYouSendBatch
     { Id = Guid.NewGuid(), WeddingId = weddingId, IdempotencyHash = idempotencyHash, RequestHash = requestHash, CreatedAt = now };
 }
 
-/// <summary>A durable EMAIL/SMS attempt for an approved personalized message.</summary>
+/// <summary>A durable EMAIL/SMS attempt for a legacy message or a shared thank-you template.</summary>
 public sealed class ThankYouSendJob
 {
     public const string Pending = "PENDING", Sending = "SENDING", Sent = "SENT", Failed = "FAILED";
     public Guid Id { get; private set; }
     public Guid BatchId { get; private set; }
     public Guid WeddingId { get; private set; }
-    public Guid MessageId { get; private set; }
+    public Guid? MessageId { get; private set; }
+    public Guid? TemplateId { get; private set; }
     public Guid GuestId { get; private set; }
     public string Channel { get; private set; } = "EMAIL";
     public string Recipient { get; private set; } = "";
     public string ContentSnapshot { get; private set; } = "";
+    public string? LetterSnapshot { get; private set; }
     public string Status { get; private set; } = Pending;
     public int AttemptCount { get; private set; }
     public DateTimeOffset NextAttemptAt { get; private set; }
@@ -94,7 +96,14 @@ public sealed class ThankYouSendJob
         string recipient, string content, DateTimeOffset now) => new()
     {
         Id = Guid.NewGuid(), BatchId = batchId, WeddingId = weddingId, MessageId = messageId, GuestId = guestId,
-        Channel = channel, Recipient = recipient, ContentSnapshot = content, NextAttemptAt = now
+        Channel = channel, Recipient = recipient, ContentSnapshot = content, LetterSnapshot = content, NextAttemptAt = now
+    };
+
+    public static ThankYouSendJob CreateForTemplate(Guid batchId, Guid weddingId, Guid templateId, Guid guestId,
+        string channel, string recipient, string deliveryContent, string letterSnapshot, DateTimeOffset now) => new()
+    {
+        Id = Guid.NewGuid(), BatchId = batchId, WeddingId = weddingId, TemplateId = templateId, GuestId = guestId,
+        Channel = channel, Recipient = recipient, ContentSnapshot = deliveryContent, LetterSnapshot = letterSnapshot, NextAttemptAt = now
     };
 
     public bool Claim(Guid leaseId, DateTimeOffset now, TimeSpan lease)
