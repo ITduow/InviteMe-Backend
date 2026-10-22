@@ -44,7 +44,7 @@ public sealed class CreateCoHostInvitationValidator : AbstractValidator<CreateCo
         RuleFor(x => x.Grants).NotNull().NotEmpty();
         RuleForEach(x => x.Grants).ChildRules(g =>
         {
-            g.RuleFor(x => x.Permission).Must(x => Enum.TryParse<WeddingPermission>(x, false, out var p) && Assignable.Contains(p));
+            g.RuleFor(x => x.Permission).Must(CoHostPermissionCodes.IsAssignable);
             g.RuleFor(x => x.GroupIds).NotNull();
             g.RuleFor(x => x.GroupIds).Must(x => x is not null && x.Distinct().Count() == x.Count && x.All(id => id != Guid.Empty));
             g.RuleFor(x => x).Must(x => x.GroupIds is not null && (x.WeddingWide ? x.GroupIds.Count == 0 : x.GroupIds.Count > 0))
@@ -53,7 +53,7 @@ public sealed class CreateCoHostInvitationValidator : AbstractValidator<CreateCo
                                         (x.WeddingWide && x.GroupIds is { Count: 0 }))
                 .WithMessage("CHECKIN_MANAGE must be granted for the whole wedding, without guest-group scope.");
         });
-        RuleFor(x => x.Grants).Must(x => x.Select(g => g.Permission).Distinct(StringComparer.Ordinal).Count() == x.Count)
+        RuleFor(x => x.Grants).Must(x => x is null || x.Select(g => g.Permission).Distinct(StringComparer.OrdinalIgnoreCase).Count() == x.Count)
             .WithMessage("Permission grants must not be duplicated.");
     }
 }

@@ -83,8 +83,8 @@ public sealed class ThankYouTemplateApiTests
         var foreign = await CoHostPermissionTests.CreateWedding(db, outsider, "thank-you-foreign");
         var otherGuest = (await PlanningTestData.Guests(db, foreign.Id, "PENDING", "Khách riêng"))[0];
         // Even a co-host with every existing permission is not a template owner.
-        var add = await f.Owner.PostAsJsonAsync($"/api/weddings/{f.WeddingId}/co-hosts", new AddCoHostInput(outsiderAccount.Email, CoHostPermissionTests.Delegable));
-        Assert.Equal(HttpStatusCode.Created, add.StatusCode);
+        await CoHostPermissionTests.AddCoHostAsync(f.Owner, outsider, f.WeddingId, CoHostPermissionTests.Delegable);
+
         using var anonymous = f.Client();
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync(f.Root)).StatusCode);
         var path = f.Root + "/" + draft.Id;

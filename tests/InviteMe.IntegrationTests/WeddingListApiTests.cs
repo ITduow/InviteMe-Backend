@@ -54,12 +54,12 @@ public sealed class WeddingListApiTests(ApiFactory apiFactory) : IClassFixture<A
             var guestAccount = (await guestOnly.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
             var revokedAccount = (await revoked.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
 
-            Assert.Equal(HttpStatusCode.Created, (await owner.PostAsJsonAsync($"/api/weddings/{aprilTen.Id}/co-hosts",
-                new AddCoHostInput(coHostAccount.Email, ["CHECKIN_MANAGE"]))).StatusCode);
-            Assert.Equal(HttpStatusCode.Created, (await owner.PostAsJsonAsync($"/api/weddings/{aprilTwelve.Id}/co-hosts",
-                new AddCoHostInput(guestAccount.Email, ["GUEST_VIEW"]))).StatusCode);
-            Assert.Equal(HttpStatusCode.Created, (await owner.PostAsJsonAsync($"/api/weddings/{aprilThirteen.Id}/co-hosts",
-                new AddCoHostInput(revokedAccount.Email, ["CHECKIN_MANAGE"]))).StatusCode);
+            await CoHostPermissionTests.AddCoHostAsync(owner, coHost, aprilTen.Id, "CHECKIN_MANAGE");
+
+            await CoHostPermissionTests.AddCoHostAsync(owner, guestOnly, aprilTwelve.Id, "GUEST_VIEW");
+
+            await CoHostPermissionTests.AddCoHostAsync(owner, revoked, aprilThirteen.Id, "CHECKIN_MANAGE");
+
             Assert.Equal(HttpStatusCode.NoContent, (await owner.DeleteAsync($"/api/weddings/{aprilThirteen.Id}/co-hosts/{revokedAccount.Id}")).StatusCode);
 
             // ParticipantCount counts confirmed planning participants only.

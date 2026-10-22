@@ -20,9 +20,6 @@ public sealed record CoHostDto(
 
 public sealed record CoHostPermissionScopeDto(string Permission, bool WeddingWide, IReadOnlyList<Guid> GroupIds);
 
-public sealed record AddCoHostInput(string Email, IReadOnlyList<string> Permissions);
-
-public sealed record UpdateCoHostPermissionsInput(IReadOnlyList<string> Permissions);
 public sealed record UpdateCoHostScopesInput(IReadOnlyList<CoHostPermissionScopeInput> Grants);
 
 internal static class CoHostPermissionCodes
@@ -45,27 +42,6 @@ internal static class CoHostPermissionCodes
         codes is null || codes.Distinct(StringComparer.OrdinalIgnoreCase).Count() == codes.Count;
 }
 
-public sealed class AddCoHostInputValidator : AbstractValidator<AddCoHostInput>
-{
-    public AddCoHostInputValidator()
-    {
-        RuleFor(x => x.Email).NotEmpty().EmailAddress().MaximumLength(256);
-        RuleFor(x => x.Permissions).NotNull();
-        RuleForEach(x => x.Permissions).Must(CoHostPermissionCodes.IsAssignable).WithMessage("Invalid or non-delegable permission code.");
-        RuleFor(x => x.Permissions).Must(CoHostPermissionCodes.HasNoDuplicates).WithMessage("Permissions list cannot have duplicates.");
-    }
-}
-
-public sealed class UpdateCoHostPermissionsInputValidator : AbstractValidator<UpdateCoHostPermissionsInput>
-{
-    public UpdateCoHostPermissionsInputValidator()
-    {
-        RuleFor(x => x.Permissions).NotNull();
-        RuleForEach(x => x.Permissions).Must(CoHostPermissionCodes.IsAssignable).WithMessage("Invalid or non-delegable permission code.");
-        RuleFor(x => x.Permissions).Must(CoHostPermissionCodes.HasNoDuplicates).WithMessage("Permissions list cannot have duplicates.");
-    }
-}
-
 public sealed class UpdateCoHostScopesInputValidator : AbstractValidator<UpdateCoHostScopesInput>
 {
     public UpdateCoHostScopesInputValidator()
@@ -80,15 +56,13 @@ public sealed class UpdateCoHostScopesInputValidator : AbstractValidator<UpdateC
                                         (x.WeddingWide && x.GroupIds.Count == 0))
                 .WithMessage("CHECKIN_MANAGE must be granted for the whole wedding, without guest-group scope.");
         });
-        RuleFor(x => x.Grants).Must(x => x.Select(g => g.Permission).Distinct(StringComparer.Ordinal).Count() == x.Count);
+        RuleFor(x => x.Grants).Must(x => x is null || x.Select(g => g.Permission).Distinct(StringComparer.OrdinalIgnoreCase).Count() == x.Count);
     }
 }
 
 public sealed class CoHostHandler(
     ICoHostStore store,
     ICurrentUser current,
-    RequestValidation<AddCoHostInput> addValidation,
-    RequestValidation<UpdateCoHostPermissionsInput> updateValidation,
     RequestValidation<UpdateCoHostScopesInput> scopesValidation)
 {
     public async Task<IReadOnlyList<CoHostDto>> ListAsync(Guid weddingId, CancellationToken ct)
@@ -104,32 +78,6 @@ public sealed class CoHostHandler(
         await EnsureOwnerAsync(weddingId, callerId, ct);
         return await store.GetByIdAsync(weddingId, coHostUserId, ct)
             ?? throw new ApplicationProblemException(ProblemKind.NotFound, "COHOST_NOT_FOUND", "Co-host not found.");
-    }
-
-    public async Task<CoHostDto> AddAsync(Guid weddingId, AddCoHostInput input, CancellationToken ct)
-    {
-        var callerId = RequireCallerId();
-        var ownerId = await EnsureOwnerAsync(weddingId, callerId, ct);
-        await addValidation.ValidateAsync(input, ct);
-
-        var targetUserId = await store.FindUserIdByEmailAsync(input.Email.Trim(), ct)
-            ?? throw new ApplicationProblemException(ProblemKind.NotFound, "USER_NOT_FOUND", "No user found with the provided email.");
-
-        if (targetUserId == ownerId)
-            throw new ApplicationProblemException(ProblemKind.Conflict, "OWNER_CANNOT_BE_COHOST", "The wedding owner cannot be added as a co-host.");
-
-        var permissions = ParsePermissions(input.Permissions);
-        return await store.AddOrReactivateAsync(weddingId, targetUserId, permissions, callerId, ct);
-    }
-
-    public async Task<CoHostDto> UpdatePermissionsAsync(Guid weddingId, Guid coHostUserId, UpdateCoHostPermissionsInput input, CancellationToken ct)
-    {
-        var callerId = RequireCallerId();
-        await EnsureOwnerAsync(weddingId, callerId, ct);
-        await updateValidation.ValidateAsync(input, ct);
-
-        var permissions = ParsePermissions(input.Permissions);
-        return await store.UpdatePermissionsAsync(weddingId, coHostUserId, permissions, callerId, ct);
     }
 
     public async Task<CoHostDto> UpdateScopesAsync(Guid weddingId, Guid coHostUserId, UpdateCoHostScopesInput input, CancellationToken ct)
@@ -158,16 +106,5 @@ public sealed class CoHostHandler(
             throw new ApplicationProblemException(ProblemKind.Forbidden, "OWNER_ONLY", "Only the wedding owner can manage co-hosts.");
 
         return callerId;
-    }
-
-    private static IReadOnlyList<WeddingPermission> ParsePermissions(IReadOnlyList<string> permissionCodes)
-    {
-        var list = new List<WeddingPermission>(permissionCodes.Count);
-        foreach (var code in permissionCodes)
-        {
-            if (CoHostPermissionCodes.TryParse(code, out var permission))
-                list.Add(permission);
-        }
-        return list;
     }
 }

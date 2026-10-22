@@ -101,7 +101,7 @@ public sealed class GuestAccessApiTests
         using var groupSeater = await CoHostPermissionTests.SignIn(factory, "guest-access-group-seater");
         var seater = (await groupSeater.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
         var coHosts = $"/api/weddings/{wedding.Id}/co-hosts";
-        Assert.True((await owner.PostAsJsonAsync(coHosts, new AddCoHostInput(seater.Email, []))).IsSuccessStatusCode);
+        await CoHostPermissionTests.AddCoHostAsync(owner, groupSeater, wedding.Id);
         Assert.True((await owner.PutAsJsonAsync($"{coHosts}/{seater.Id}/scopes", new UpdateCoHostScopesInput(
             [new("SEATING_VIEW", [guest.GroupId!.Value]), new("SEATING_EDIT", [guest.GroupId!.Value])]))).IsSuccessStatusCode);
         Assert.False((await Read<SeatingPublicationDto>(await groupSeater.GetAsync(path + "/seating-plan/publication"))).Published);

@@ -22,17 +22,6 @@ internal static class CoHostEndpoints
             return Results.Ok(result);
         });
 
-        group.MapPost("", async (Guid id, AddCoHostInput input, CoHostHandler handler, CancellationToken ct) =>
-        {
-            var result = await handler.AddAsync(id, input, ct);
-            return Results.Created($"/api/weddings/{id}/co-hosts/{result.UserId}", result);
-        });
-
-        group.MapPut("/{coHostUserId:guid}/permissions", async (Guid id, Guid coHostUserId, UpdateCoHostPermissionsInput input, CoHostHandler handler, CancellationToken ct) =>
-        {
-            var result = await handler.UpdatePermissionsAsync(id, coHostUserId, input, ct);
-            return Results.Ok(result);
-        });
         group.MapPut("/{coHostUserId:guid}/scopes", async (Guid id, Guid coHostUserId, UpdateCoHostScopesInput input, CoHostHandler handler, CancellationToken ct) =>
             Results.Ok(await handler.UpdateScopesAsync(id, coHostUserId, input, ct)));
 

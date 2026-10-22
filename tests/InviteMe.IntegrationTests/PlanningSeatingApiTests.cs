@@ -29,9 +29,9 @@ public sealed class PlanningSeatingApiTests
         }
         using var a = await Account("seat-owner"); using var b = await Account("seat-editor"); using var viewer = await Account("seat-viewer");
         var wedding = await CoHostPermissionTests.CreateWedding(db, a, "seating-test");
-        foreach (var name in new[] { "seat-editor", "seat-viewer" })
-            Assert.Equal(HttpStatusCode.Created, (await a.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts", new AddCoHostInput(name + "@example.test",
-                name == "seat-editor" ? ["SEATING_VIEW", "SEATING_EDIT"] : ["SEATING_VIEW"]))).StatusCode);
+        await CoHostPermissionTests.AddCoHostAsync(a, b, wedding.Id, "SEATING_VIEW", "SEATING_EDIT");
+        await CoHostPermissionTests.AddCoHostAsync(a, viewer, wedding.Id, "SEATING_VIEW");
+
         var root = $"/api/weddings/{wedding.Id}/guest-planning";
         using var import = new HttpRequestMessage(HttpMethod.Post, root + "/imports") { Content = JsonContent.Create(new PlanningImport([new(2, "Bác An", ExpectedPeople: 4), new(3, "Hoa", ExpectedPeople: 2)])) };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
