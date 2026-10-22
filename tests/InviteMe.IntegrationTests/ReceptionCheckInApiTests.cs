@@ -89,6 +89,8 @@ public sealed class ReceptionCheckInApiTests
         // Guest without QR: search by name without accents or by phone, then check in by guest id (no RSVP yet).
         var byName = await Read<List<ReceptionGuestDto>>(await owner.GetAsync(path + "/reception/search?q=nguyen van duc"));
         Assert.Equal((duc.Id, 3, 3, "Bàn 1"), (Assert.Single(byName).GuestId, byName[0].Places, byName[0].CheckedIn, Assert.Single(byName[0].Tables)));
+        Assert.Equal(ducPlaces, byName[0].Seats.Select(x => x.PlaceId));
+        Assert.All(byName[0].Seats, x => Assert.NotNull(x.CheckedInAt));
         var byPhone = await owner.GetAsync(path + "/reception/search?q=234567");
         Assert.Equal(duc.Id, Assert.Single((await Read<List<ReceptionGuestDto>>(byPhone))).GuestId);
         Assert.DoesNotContain("0901", await byPhone.Content.ReadAsStringAsync());
@@ -115,6 +117,8 @@ public sealed class ReceptionCheckInApiTests
         await CoHostPermissionTests.AddCoHostAsync(owner, staff, wedding.Id, "CHECKIN_MANAGE");
         await CoHostPermissionTests.AddCoHostAsync(owner, planner, wedding.Id, "GUEST_VIEW", "GUEST_EDIT");
 
+        var staffSearch = await Read<List<ReceptionGuestDto>>(await staff.GetAsync(path + "/reception/search?q=binh"));
+        Assert.Equal(binhPlace, Assert.Single(staffSearch).Seats.Single().PlaceId);
 
         Assert.Equal(CheckInOutcome.AlreadyCheckedIn, Assert.Single((await Read<CheckInResultDto>(await staff.PostAsJsonAsync(path + "/check-ins",
             new CheckInGuests(null, binh.Id, [binhPlace])))).Places).Result);

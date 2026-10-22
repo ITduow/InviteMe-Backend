@@ -20,7 +20,7 @@ namespace InviteMe.Application.Features.Guests.Reception;
 public sealed record ReceptionSearchQuery(string Q);
 /// <summary>One invitation found at the counter. Contact details are never returned, only what reception needs.</summary>
 public sealed record ReceptionGuestDto(Guid GuestId, string RecipientName, string? Honorific, string Side, int Places, int CheckedIn,
-    IReadOnlyList<string> Tables);
+    IReadOnlyList<string> Tables, IReadOnlyList<ReceptionSeatDto> Seats);
 
 /// <summary>
 /// Confirm arrival of places of one invitation: Code (scanned QR link or token) or GuestId (found by search), not both.
@@ -142,14 +142,22 @@ public sealed partial class ReceptionHandler(IReceptionStore store, IGuestAccess
         await searchValidation.ValidateAsync(query, ct);
         var text = Fold(query.Q);
         var digits = NonDigits().Replace(query.Q, "");
-        return (await store.CandidatesAsync(weddingId, ct))
+        var candidates = (await store.CandidatesAsync(weddingId, ct))
             .Where(x => Fold(x.RecipientName).Contains(text, StringComparison.Ordinal)
                         || x.PeopleNames.Any(n => Fold(n).Contains(text, StringComparison.Ordinal))
                         || (digits.Length >= 4 && x.Phone is not null && NonDigits().Replace(x.Phone, "").Contains(digits, StringComparison.Ordinal)))
             .OrderBy(x => x.RecipientName, StringComparer.Create(CultureInfo.GetCultureInfo("vi-VN"), true))
             .Take(SearchLimit)
-            .Select(x => new ReceptionGuestDto(x.GuestId, x.RecipientName, x.Honorific, x.Side, x.Places, x.CheckedIn, x.Tables))
             .ToList();
+        var result = new List<ReceptionGuestDto>(candidates.Count);
+        foreach (var candidate in candidates)
+        {
+            ct.ThrowIfCancellationRequested();
+            result.Add(new ReceptionGuestDto(candidate.GuestId, candidate.RecipientName, candidate.Honorific,
+                candidate.Side, candidate.Places, candidate.CheckedIn, candidate.Tables,
+                await access.SeatsAsync(candidate.GuestId, ct)));
+        }
+        return result;
     }
 
     public async Task<CheckInResultDto> CheckInAsync(Guid weddingId, CheckInGuests input, CancellationToken ct)
