@@ -29,18 +29,20 @@ internal static class GuestPlanningEndpoints
             return outcome.Replayed ? Results.Ok(outcome.Result) : Results.Created($"/api/weddings/{weddingId}/guest-planning/guests", outcome.Result);
         }).Produces<PlanningImportResult>(201).Produces<PlanningImportResult>(200).Produces(422);
         g.MapGet("/guests", async (Guid weddingId, GuestPlanningHandler handler,
-            CancellationToken ct, int page = 1, int pageSize = 20, string? search = null, string? side = null, Guid? groupId = null) =>
+            CancellationToken ct, int page = 1, int pageSize = 20, string? search = null, string? side = null,
+            Guid? groupId = null, bool archivedOnly = false) =>
         {
-            return await handler.ListAsync(weddingId, new(page, pageSize, search, side, groupId), ct);
+            return await handler.ListAsync(weddingId, new(page, pageSize, search, side, groupId, archivedOnly), ct);
         });
         g.MapGet("/groups", (Guid weddingId, GuestPlanningHandler handler, CancellationToken ct) =>
             handler.ListGroupsAsync(weddingId, ct));
-        g.MapGet("/guests/{guestId:guid}", async (Guid weddingId, Guid guestId, GuestPlanningHandler handler, CancellationToken ct) =>
+        g.MapGet("/guests/{guestId:guid}", async (Guid weddingId, Guid guestId,
+            GuestPlanningHandler handler, CancellationToken ct, bool includeArchived = false) =>
         {
-            var detail = await handler.DetailAsync(weddingId, guestId, ct);
+            var detail = await handler.DetailAsync(weddingId, guestId, ct, includeArchived);
             var x = detail.Guest;
             return Results.Ok(new { x.Id, x.Version, x.RecipientName, x.Honorific, x.InvitationKind,
-                x.ExpectedPeople, x.Side, x.Group, x.Phone, x.Note, x.Email, detail.Places });
+                x.ExpectedPeople, x.Side, x.Group, x.Phone, x.Note, x.Email, x.ArchivedAt, x.PossibleDuplicate, detail.Places });
         });
         g.MapPut("/guests/{guestId:guid}", async (Guid weddingId, Guid guestId, UpdatePlanningGuest input, GuestPlanningHandler handler, CancellationToken ct) =>
             Results.Ok(await handler.UpdateAsync(weddingId, guestId, input, ct)))
@@ -51,6 +53,11 @@ internal static class GuestPlanningEndpoints
             Results.Ok(await handler.ArchiveAsync(weddingId, guestId, expectedVersion, ct)))
             .WithName("ArchivePlanningGuest")
             .Produces<ArchivePlanningGuestResult>().ProducesValidationProblem().ProducesProblem(403).ProducesProblem(404).ProducesProblem(409);
+        g.MapPost("/guests/{guestId:guid}/restore", async (Guid weddingId, Guid guestId, int expectedVersion,
+            GuestPlanningHandler handler, CancellationToken ct) =>
+            Results.Ok(await handler.RestoreAsync(weddingId, guestId, expectedVersion, ct)))
+            .WithName("RestorePlanningGuest")
+            .Produces<PlanningGuestDto>().ProducesValidationProblem().ProducesProblem(403).ProducesProblem(404).ProducesProblem(409);
         g.MapGet("/seating-plan", (Guid weddingId, PlanningSeatingHandler handler, CancellationToken ct) => handler.GetAsync(weddingId, ct));
         g.MapPatch("/seating-plan", (Guid weddingId, ChangePlanningSeating input, PlanningSeatingHandler handler, CancellationToken ct) => handler.ChangeAsync(weddingId, input, ct));
         g.MapPost("/seating-suggestions", (Guid weddingId, SuggestPlanningSeating input, PlanningSeatingHandler handler, CancellationToken ct) => handler.SuggestAsync(weddingId, input, ct));
