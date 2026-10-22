@@ -24,6 +24,8 @@ public static class PlanningText
         return text.Length <= 30 && Regex.IsMatch(text, @"\A\+?[0-9][0-9 ().-]*\z") &&
             digits.Length is >= 7 and <= 15;
     }
+
+    public static string PhoneKey(string? value) => Regex.Replace(value ?? "", "[^0-9]", "");
 }
 
 public sealed class PlanningRowValidator : AbstractValidator<PlanningRow>
@@ -86,7 +88,6 @@ public sealed class PlanningImportValidator : AbstractValidator<PlanningImport>
         }).ToArray();
 }
 
-public sealed record PlanningGuestQuery(int Page = 1, int PageSize = 20, string? Search = null, string? Side = null, Guid? GroupId = null);
 public sealed class PlanningGuestQueryValidator : AbstractValidator<PlanningGuestQuery>
 {
     public PlanningGuestQueryValidator()

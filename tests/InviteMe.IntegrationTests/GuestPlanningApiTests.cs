@@ -6,6 +6,7 @@ using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Application.Features.Identity.Accounts;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Application.Features.Seating.Planning;
+using InviteMe.Application.Features.Weddings.CoHosts;
 using InviteMe.Domain.Guests;
 using Microsoft.EntityFrameworkCore;
 
@@ -21,6 +22,8 @@ public sealed class GuestPlanningApiTests
         using var owner = await CoHostPermissionTests.SignIn(factory, "manual-guest-owner");
         var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "manual-guest-test");
         var path = $"/api/weddings/{wedding.Id}/guest-planning";
+        var groupScope = await owner.GetFromJsonAsync<PlanningGroupList>(path + "/groups");
+        Assert.True(groupScope!.IsWeddingWide);
         var key = Guid.NewGuid();
         var input = new CreatePlanningGuest("Nguyễn Thị Mai", "Cô", "FAMILY", 3, "BRIDE", null,
             "0900123456", "Dị ứng đậu phộng", "mai@example.test");
@@ -82,6 +85,106 @@ public sealed class GuestPlanningApiTests
         Assert.Equal(plan.Version + 1, (await owner.GetFromJsonAsync<PlanningSeatingDto>(planPath))!.Version);
         Assert.Equal(HttpStatusCode.NotFound, (await guestClient.GetAsync($"/api/guest-invitations/{tokenBeforeArchive}/qr")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await guestClient.GetAsync($"/api/rsvp/{tokenBeforeArchive}")).StatusCode);
+
+        var archivedPage = await owner.GetFromJsonAsync<PlanningGuestPage>(path + "/guests?archivedOnly=true");
+        var archivedGuest = Assert.Single(archivedPage!.Items);
+        Assert.Equal(guest.Id, archivedGuest.Id);
+        Assert.NotNull(archivedGuest.ArchivedAt);
+        var archivedDetail = await owner.GetFromJsonAsync<JsonElement>(path + $"/guests/{guest.Id}?includeArchived=true");
+        Assert.Equal(guest.Id, archivedDetail.GetProperty("id").GetGuid());
+        Assert.NotEqual(JsonValueKind.Null, archivedDetail.GetProperty("archivedAt").ValueKind);
+
+        var restorePath = path + $"/guests/{guest.Id}/restore?expectedVersion={archivedGuest.Version}";
+        var restoredResponse = await owner.PostAsync(restorePath, content: null);
+        Assert.Equal(HttpStatusCode.OK, restoredResponse.StatusCode);
+        var restored = (await restoredResponse.Content.ReadFromJsonAsync<PlanningGuestDto>())!;
+        Assert.Equal(archivedGuest.Version + 1, restored.Version);
+        Assert.NotNull(restored.InvitationPath);
+        Assert.NotEqual($"/invite/{tokenBeforeArchive}", restored.InvitationPath);
+        var newToken = await db.Set<PlanningGuest>().Where(x => x.Id == guest.Id).Select(x => x.InvitationToken).SingleAsync();
+        Assert.NotNull(newToken);
+        Assert.Equal(HttpStatusCode.OK, (await guestClient.GetAsync($"/api/rsvp/{newToken}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await guestClient.GetAsync($"/api/rsvp/{tokenBeforeArchive}")).StatusCode);
+        var restoreReplay = await owner.PostAsync(restorePath, content: null);
+        Assert.Equal(HttpStatusCode.OK, restoreReplay.StatusCode);
+        Assert.Equal(restored.InvitationPath, (await restoreReplay.Content.ReadFromJsonAsync<PlanningGuestDto>())!.InvitationPath);
+        Assert.Single((await owner.GetFromJsonAsync<PlanningGuestPage>(path + "/guests"))!.Items);
+        Assert.Empty((await owner.GetFromJsonAsync<PlanningGuestPage>(path + "/guests?archivedOnly=true"))!.Items);
+        Assert.Empty((await owner.GetFromJsonAsync<PlanningSeatingDto>(planPath))!.Assignments);
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task ManualCreateReturnsWarningForNormalizedDuplicatePhone() => SchemaV2MigrationTests.InDatabase(async db =>
+    {
+        await db.Database.MigrateAsync();
+        await using var factory = new DatabaseApiFactory(db.Database.GetConnectionString()!);
+        using var owner = await CoHostPermissionTests.SignIn(factory, "manual-guest-duplicate-owner");
+        var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "manual-guest-duplicate-test");
+        var path = $"/api/weddings/{wedding.Id}/guest-planning/guests";
+
+        async Task<PlanningGuestDto> Create(CreatePlanningGuest input)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = JsonContent.Create(input) };
+            request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+            var response = await owner.SendAsync(request);
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            return (await response.Content.ReadFromJsonAsync<PlanningGuestDto>())!;
+        }
+
+        var first = await Create(new("An Nguyễn", Phone: "+84 (900) 123-456"));
+        var second = await Create(new("Khách khác", Phone: "84900123456"));
+        Assert.False(first.PossibleDuplicate);
+        Assert.True(second.PossibleDuplicate);
+        Assert.Equal(2, await db.Set<PlanningGuest>().CountAsync(x => x.WeddingId == wedding.Id));
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task ScopedCoHostCanOnlyCreateManualGuestsInsideAssignedGroup() => CoHostPermissionTests.WithApi(async (db, factory) =>
+    {
+        using var owner = await CoHostPermissionTests.SignIn(factory, "manual-guest-scoped-owner");
+        using var cohost = await CoHostPermissionTests.SignIn(factory, "manual-guest-scoped-cohost");
+        var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "manual-guest-scoped-test");
+        var assigned = new PlanningGroup { Id = Guid.NewGuid(), WeddingId = wedding.Id, Name = "Nhà gái", NormalizedName = "NHÀ GÁI" };
+        var other = new PlanningGroup { Id = Guid.NewGuid(), WeddingId = wedding.Id, Name = "Nhà trai", NormalizedName = "NHÀ TRAI" };
+        db.Set<PlanningGroup>().AddRange(assigned, other);
+        await db.SaveChangesAsync();
+        await CoHostPermissionTests.AddCoHostAsync(owner, cohost, wedding.Id, "GUEST_VIEW", "GUEST_EDIT");
+        var cohostAccount = (await cohost.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
+        var scope = new UpdateCoHostScopesInput([
+            new("GUEST_VIEW", [assigned.Id]),
+            new("GUEST_EDIT", [assigned.Id])
+        ]);
+        Assert.Equal(HttpStatusCode.OK, (await owner.PutAsJsonAsync(
+            $"/api/weddings/{wedding.Id}/co-hosts/{cohostAccount.Id}/scopes", scope)).StatusCode);
+
+        var path = $"/api/weddings/{wedding.Id}/guest-planning";
+        var ownerCreate = new HttpRequestMessage(HttpMethod.Post, path + "/guests")
+        {
+            Content = JsonContent.Create(new CreatePlanningGuest("Thông tin riêng", GroupId: other.Id, Phone: "0900123456"))
+        };
+        ownerCreate.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        Assert.Equal(HttpStatusCode.Created, (await owner.SendAsync(ownerCreate)).StatusCode);
+        var groups = await cohost.GetFromJsonAsync<PlanningGroupList>(path + "/groups");
+        Assert.False(groups!.IsWeddingWide);
+        Assert.Equal(assigned.Id, Assert.Single(groups.Items).Id);
+
+        async Task<HttpResponseMessage> Create(CreatePlanningGuest input)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, path + "/guests") { Content = JsonContent.Create(input) };
+            request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+            return await cohost.SendAsync(request);
+        }
+
+        var missingGroup = await Create(new("Thiếu nhóm"));
+        Assert.Equal(HttpStatusCode.BadRequest, missingGroup.StatusCode);
+        var error = await missingGroup.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(error.GetProperty("errors").TryGetProperty("GroupId", out _));
+        Assert.Equal(HttpStatusCode.NotFound, (await Create(new("Ngoài scope", GroupId: other.Id))).StatusCode);
+        var valid = await Create(new("Trong scope", GroupId: assigned.Id, Phone: "0900123456"));
+        Assert.Equal(HttpStatusCode.Created, valid.StatusCode);
+        var guest = (await valid.Content.ReadFromJsonAsync<PlanningGuestDto>())!;
+        Assert.Equal(assigned.Id, guest.Group!.Id);
+        Assert.False(guest.PossibleDuplicate); // A duplicate in another, hidden group must not leak to the co-host.
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]

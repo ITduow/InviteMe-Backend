@@ -25,11 +25,11 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
         if (prior is not null)
         {
             if (prior.RequestHash != hash) throw Conflict("IDEMPOTENCY_KEY_REUSED");
-            var priorGuestId = JsonSerializer.Deserialize<Guid>(prior.ResultJson);
+            var priorResult = ReadCreateResult(prior.ResultJson);
             var priorGuest = await Guests(db.Set<PlanningGuest>().AsNoTracking()
-                .Where(x => x.WeddingId == weddingId && x.Id == priorGuestId && x.ArchivedAt == null)).SingleOrDefaultAsync(ct)
+                .Where(x => x.WeddingId == weddingId && x.Id == priorResult.GuestId && x.ArchivedAt == null)).SingleOrDefaultAsync(ct)
                 ?? throw Missing("GUEST_NOT_FOUND");
-            return new(priorGuest, true);
+            return new(priorGuest with { PossibleDuplicate = priorResult.PossibleDuplicate }, true);
         }
 
         if (input.GroupId is { } groupId && !await db.Set<PlanningGroup>().AnyAsync(x => x.Id == groupId && x.WeddingId == weddingId, ct))
@@ -37,6 +37,8 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
         if (groupScope is not null && (groupScope.Count == 0 || input.GroupId is not { } scopedGroup || !groupScope.Contains(scopedGroup)))
             throw Missing("GROUP_NOT_FOUND");
 
+        var possibleDuplicate = await HasPossibleDuplicateAsync(weddingId, input.RecipientName, input.Phone,
+            null, groupScope, ct);
         var batch = new PlanningImportBatch { Id = Guid.NewGuid(), WeddingId = weddingId, Key = key, RequestHash = hash };
         var guest = new PlanningGuest
         {
@@ -60,10 +62,10 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
             metadata: JsonSerializer.Serialize(new { guest.ExpectedPeople, guest.InvitationKind, guest.Side, guest.GroupId })));
         await db.SaveChangesAsync(ct);
         var result = await Guests(db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Id == guest.Id)).SingleAsync(ct);
-        batch.ResultJson = JsonSerializer.Serialize(guest.Id);
+        batch.ResultJson = JsonSerializer.Serialize(new { guestId = guest.Id, possibleDuplicate });
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
-        return new(result);
+        return new(result with { PossibleDuplicate = possibleDuplicate });
     }
 
     public async Task<ArchivePlanningGuestResult> ArchiveAsync(Guid weddingId, Guid guestId, int expectedVersion,
@@ -144,6 +146,37 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
         return result;
     }
 
+    public async Task<PlanningGuestDto> RestoreAsync(Guid weddingId, Guid guestId, int expectedVersion, Guid actorId,
+        CancellationToken ct, IReadOnlySet<Guid>? groupScope = null)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var guest = await db.Set<PlanningGuest>().FromSqlInterpolated($"SELECT * FROM inviteme.planning_guests WHERE \"Id\"={guestId} AND \"WeddingId\"={weddingId} FOR UPDATE").SingleOrDefaultAsync(ct)
+            ?? throw Missing("GUEST_NOT_FOUND");
+        var scopeIds = groupScope?.ToArray();
+        if (scopeIds is not null && (guest.GroupId is null || !scopeIds.Contains(guest.GroupId.Value))) throw Missing("GUEST_NOT_FOUND");
+
+        if (guest.ArchivedAt is null)
+        {
+            if (guest.Version != expectedVersion + 1) throw Conflict("GUEST_NOT_ARCHIVED");
+            var replay = await Guests(db.Set<PlanningGuest>().AsNoTracking()
+                .Where(x => x.WeddingId == weddingId && x.Id == guestId)).SingleAsync(ct);
+            return replay;
+        }
+        if (guest.Version != expectedVersion) throw Conflict("GUEST_VERSION_CONFLICT");
+
+        guest.ArchivedAt = null;
+        // Archival revokes the old public link. Restoring creates a fresh token; callers must share the returned link.
+        guest.InvitationToken = InvitationToken.Generate();
+        guest.Version++;
+        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_guests", guestId, "GUEST_RESTORED", actorId,
+            metadata: JsonSerializer.Serialize(new { previousVersion = expectedVersion, version = guest.Version })));
+        await db.SaveChangesAsync(ct);
+        var result = await Guests(db.Set<PlanningGuest>().AsNoTracking()
+            .Where(x => x.WeddingId == weddingId && x.Id == guestId)).SingleAsync(ct);
+        await tx.CommitAsync(ct);
+        return result;
+    }
+
     public async Task<PlanningImportOutcome> ImportAsync(Guid weddingId, Guid key, PlanningImport input, CancellationToken ct)
     {
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(input))));
@@ -169,7 +202,7 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
         var existing = await db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null)
             .Select(x => new { x.RecipientName, x.Phone }).ToListAsync(ct);
         var names = existing.Select(x => PlanningText.Key(x.RecipientName)).ToHashSet();
-        var phones = existing.Where(x => x.Phone != null).Select(x => x.Phone!).ToHashSet();
+        var phones = existing.Where(x => x.Phone != null).Select(x => PlanningText.PhoneKey(x.Phone)).ToHashSet();
         foreach (var row in input.Rows!)
         {
             var r = row!;
@@ -194,10 +227,11 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
                 GroupId = groupId, Phone = Optional(r.Phone), Note = Optional(r.Note), Email = Optional(r.Email),
                 InvitationToken = InvitationToken.Generate()
             };
-            if (names.Contains(PlanningText.Key(guest.RecipientName)) || (guest.Phone is not null && phones.Contains(guest.Phone)))
+            if (names.Contains(PlanningText.Key(guest.RecipientName)) ||
+                (guest.Phone is not null && phones.Contains(PlanningText.PhoneKey(guest.Phone))))
                 warnings.Add(new(r.RowNumber, "recipientName", "POSSIBLE_DUPLICATE", "Có khách trùng tên hoặc SĐT; đã giữ thành đầu mối riêng."));
             names.Add(PlanningText.Key(guest.RecipientName));
-            if (guest.Phone is not null) phones.Add(guest.Phone);
+            if (guest.Phone is not null) phones.Add(PlanningText.PhoneKey(guest.Phone));
             db.Add(guest);
             var person = new PlanningParticipant { Id = Guid.NewGuid(), GuestId = guest.Id, FullName = guest.RecipientName };
             db.Add(person);
@@ -217,7 +251,7 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
         from grp in names.DefaultIfEmpty()
         select new PlanningGuestDto(g.Id, g.Version, g.RecipientName, g.Honorific, g.InvitationKind,
             g.ExpectedPeople, g.Side, grp == null ? null : new PlanningGroupDto(grp.Id, grp.Name), g.Phone, g.Note, g.Email,
-            g.InvitationToken == null ? null : "/invite/" + g.InvitationToken);
+            g.InvitationToken == null ? null : "/invite/" + g.InvitationToken, g.ArchivedAt, false);
 
     private static string? Optional(string? value) => string.IsNullOrWhiteSpace(value) ? null : PlanningText.Clean(value);
 
@@ -238,8 +272,13 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
     }
 
     public async Task<PlanningGuestPage> ListScopedAsync(Guid weddingId, int page, int pageSize, string? search, string? side, Guid? groupId, CancellationToken ct, IReadOnlySet<Guid>? groupScope)
+        => await ListByArchiveStatusAsync(weddingId, page, pageSize, search, side, groupId, false, ct, groupScope);
+
+    public async Task<PlanningGuestPage> ListByArchiveStatusAsync(Guid weddingId, int page, int pageSize, string? search,
+        string? side, Guid? groupId, bool archivedOnly, CancellationToken ct, IReadOnlySet<Guid>? groupScope)
     {
-        var query = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null);
+        var query = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId &&
+            (archivedOnly ? x.ArchivedAt != null : x.ArchivedAt == null));
         if (groupScope is not null)
         {
             if (groupScope.Count == 0) query = query.Where(_ => false);
@@ -253,13 +292,47 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
     }
 
     public async Task<PlanningGuestDetail> DetailAsync(Guid weddingId, Guid guestId, CancellationToken ct)
+        => await DetailWithArchiveAsync(weddingId, guestId, false, ct);
+
+    public async Task<PlanningGuestDetail> DetailWithArchiveAsync(Guid weddingId, Guid guestId, bool includeArchived, CancellationToken ct)
     {
-        var guest = await Guests(db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Id == guestId && x.ArchivedAt == null)).SingleOrDefaultAsync(ct) ?? throw Missing("GUEST_NOT_FOUND");
+        var query = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Id == guestId);
+        if (!includeArchived) query = query.Where(x => x.ArchivedAt == null);
+        var guest = await Guests(query).SingleOrDefaultAsync(ct) ?? throw Missing("GUEST_NOT_FOUND");
         var places = await (from place in db.Set<PlanningPlace>().AsNoTracking() where place.GuestId == guestId
             join p in db.Set<PlanningParticipant>() on place.ParticipantId equals (Guid?)p.Id into people
             from p in people.DefaultIfEmpty() orderby place.Position
             select new PlanningPlaceDto(place.Id, p == null ? null : new PlanningPersonDto(p.Id, p.FullName, p.Role, p.AttendanceStatus))).ToListAsync(ct);
         return new(guest, places);
+    }
+
+    private async Task<bool> HasPossibleDuplicateAsync(Guid weddingId, string recipientName, string? phone,
+        Guid? excludingGuestId, IReadOnlySet<Guid>? groupScope, CancellationToken ct)
+    {
+        var nameKey = PlanningText.Key(recipientName);
+        var phoneKey = PlanningText.PhoneKey(phone);
+        if (nameKey.Length == 0 && phoneKey.Length == 0) return false;
+        var query = db.Set<PlanningGuest>().AsNoTracking()
+            .Where(x => x.WeddingId == weddingId && x.ArchivedAt == null);
+        if (groupScope is not null)
+        {
+            if (groupScope.Count == 0) return false;
+            var scopedGroups = groupScope.ToArray();
+            query = query.Where(x => x.GroupId.HasValue && scopedGroups.Contains(x.GroupId.Value));
+        }
+        if (excludingGuestId is { } id) query = query.Where(x => x.Id != id);
+        var existing = await query.Select(x => new { x.RecipientName, x.Phone }).ToListAsync(ct);
+        return existing.Any(x => PlanningText.Key(x.RecipientName) == nameKey ||
+            (phoneKey.Length > 0 && x.Phone != null && PlanningText.PhoneKey(x.Phone) == phoneKey));
+    }
+
+    private static (Guid GuestId, bool PossibleDuplicate) ReadCreateResult(string resultJson)
+    {
+        using var document = JsonDocument.Parse(resultJson);
+        if (document.RootElement.ValueKind == JsonValueKind.String)
+            return (document.RootElement.GetGuid(), false); // Backward compatibility with existing idempotency rows.
+        var root = document.RootElement;
+        return (root.GetProperty("guestId").GetGuid(), root.GetProperty("possibleDuplicate").GetBoolean());
     }
 }
 
