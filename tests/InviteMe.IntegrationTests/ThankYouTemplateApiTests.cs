@@ -185,7 +185,11 @@ public sealed class ThankYouTemplateApiTests
         await db.Database.MigrateAsync(); var ai = new FakeAi();
         await using var source = new DatabaseApiFactory(db.Database.GetConnectionString()!);
         await using var factory = source.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
-        { services.RemoveAll<IAiTextGenerator>(); services.AddSingleton<IAiTextGenerator>(ai); }));
+        {
+            foreach (var registration in services.Where(x => x.ServiceType == typeof(Microsoft.Extensions.Hosting.IHostedService) &&
+                x.ImplementationType == typeof(InviteMe.Infrastructure.Notifications.ThankYouDeliveryWorker)).ToArray()) services.Remove(registration);
+            services.RemoveAll<IAiTextGenerator>(); services.AddSingleton<IAiTextGenerator>(ai);
+        }));
         using var owner = factory.CreateClient(new() { BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false, HandleCookies = false });
         await SignIn(owner, "thank-you-owner");
         var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "thank-you-test");

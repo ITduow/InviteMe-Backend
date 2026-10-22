@@ -40,6 +40,24 @@ public sealed class SmtpInvitationChannelProvider(IOptions<SmtpOptions> options,
         var smtp = options.Value;
         try
         {
+            if (item.Purpose == "THANK_YOU")
+            {
+                var thankYouText = InvitationEmailFormatter.BuildThankYouPlainText(item);
+                var thankYouHtml = InvitationEmailFormatter.BuildThankYouHtml(item);
+                using var thankYouMail = new MailMessage(smtp.From!, item.Recipient)
+                {
+                    Subject = item.Subject,
+                    BodyEncoding = Encoding.UTF8,
+                    SubjectEncoding = Encoding.UTF8
+                };
+                thankYouMail.AlternateViews.Add(AlternateView.CreateAlternateViewFromString(thankYouText, Encoding.UTF8, "text/plain"));
+                thankYouMail.AlternateViews.Add(AlternateView.CreateAlternateViewFromString(thankYouHtml, Encoding.UTF8, "text/html"));
+                using var thankYouClient = new SmtpClient(smtp.Host!, smtp.Port)
+                { EnableSsl = smtp.EnableSsl, DeliveryMethod = SmtpDeliveryMethod.Network };
+                if (!string.IsNullOrWhiteSpace(smtp.UserName)) thankYouClient.Credentials = new NetworkCredential(smtp.UserName, smtp.Password);
+                await thankYouClient.SendMailAsync(thankYouMail, ct);
+                return new InvitationDeliveryReceipt(null);
+            }
             var plainText = InvitationEmailFormatter.BuildPlainText(item);
             var html = InvitationEmailFormatter.BuildHtml(item);
             using var qrStream = new MemoryStream(qrCodeRenderer.RenderPng(item.RsvpLink));
@@ -83,6 +101,22 @@ public static class InvitationEmailFormatter
     {
         var message = NormalizeNewlines(item.Content);
         return $"{message}\n\nXác nhận tham dự: {item.RsvpLink}\nMở hoặc tải mã QR: {item.QrLink}";
+    }
+
+    public static string BuildThankYouPlainText(InvitationOutboundMessage item) =>
+        $"{NormalizeNewlines(item.Content)}\n\nXem lại thư cảm ơn: {item.PublicLink}";
+
+    public static string BuildThankYouHtml(InvitationOutboundMessage item)
+    {
+        var message = string.Join("<br>\n", NormalizeNewlines(item.Content).Split('\n').Select(HtmlEncoder.Default.Encode));
+        var link = HtmlEncoder.Default.Encode(item.PublicLink ?? "");
+        return new StringBuilder("<!doctype html><html><body style=\"margin:0;background:#f7f4ef;font-family:Arial,sans-serif;color:#332b27\">")
+            .Append("<div style=\"max-width:600px;margin:24px auto;padding:32px 24px;background:#fff;border:1px solid #eee5dc;border-radius:16px;text-align:center\">")
+            .Append("<div style=\"font-size:24px;color:#9a6b52;margin-bottom:20px\">Lời cảm ơn</div>")
+            .Append("<div style=\"font-size:16px;line-height:1.8;text-align:left\">").Append(message).Append("</div>")
+            .Append("<p style=\"margin:28px 0 20px\"><a href=\"").Append(link)
+            .Append("\" style=\"display:inline-block;padding:13px 24px;background:#9a6b52;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold\">Mở lại thư cảm ơn</a></p>")
+            .Append("</div></body></html>").ToString();
     }
 
     public static string BuildHtml(InvitationOutboundMessage item)

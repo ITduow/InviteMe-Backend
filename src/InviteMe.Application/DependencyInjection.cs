@@ -40,6 +40,7 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Features.Gifts.GiftWebhookHandler>();
         services.AddScoped<IWeddingPermissionService, WeddingPermissionService>();
         services.AddScoped<InviteMe.Application.Features.AI.ThankYouTemplates.ThankYouTemplateHandler>();
+        services.AddScoped<InviteMe.Application.Features.AI.ThankYouMessages.ThankYouMessageHandler>();
         services.AddSingleton<InviteMe.Application.Ports.AI.IThankYouTemplateRenderer,
             InviteMe.Application.Features.AI.ThankYouTemplates.ThankYouTemplateRenderer>();
         return services;

@@ -65,6 +65,9 @@ public sealed class InviteMeDbContext(DbContextOptions<InviteMeDbContext> option
     public DbSet<GiftMessage> GiftMessages => Set<GiftMessage>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<AiGeneration> AiGenerations => Set<AiGeneration>();
+    public DbSet<ThankYouMessage> ThankYouMessages => Set<ThankYouMessage>();
+    public DbSet<ThankYouSendBatch> ThankYouSendBatches => Set<ThankYouSendBatch>();
+    public DbSet<ThankYouSendJob> ThankYouSendJobs => Set<ThankYouSendJob>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)

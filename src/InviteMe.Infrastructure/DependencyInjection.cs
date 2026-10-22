@@ -51,6 +51,10 @@ public static class DependencyInjection
             InviteMe.Infrastructure.Notifications.InvitationChannelSender>();
         if (configuration.GetValue("InvitationMessaging:WorkerEnabled", true))
             services.AddHostedService<InviteMe.Infrastructure.Notifications.InvitationDeliveryWorker>();
+        services.AddScoped<InviteMe.Application.Features.AI.ThankYouMessages.IThankYouMessageStore,
+            InviteMe.Infrastructure.Persistence.Adapters.ThankYouMessageStore>();
+        if (configuration.GetValue("ThankYouMessages:WorkerEnabled", true))
+            services.AddHostedService<InviteMe.Infrastructure.Notifications.ThankYouDeliveryWorker>();
         services.AddOptions<InviteMe.Infrastructure.Authentication.GoogleAuthOptions>().BindConfiguration("Authentication:Google");
         services.AddScoped<InviteMe.Application.Ports.Authentication.IGoogleTokenValidator, InviteMe.Infrastructure.Authentication.GoogleTokenValidator>();
 

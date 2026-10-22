@@ -27,7 +27,7 @@ public sealed record InvitationRecipient(Guid Id, string RecipientName, string? 
 public sealed record InvitationBatchWriteResult(Guid BatchId, bool Replayed);
 public sealed record InvitationMessagingLinks(string FrontendUrl, string PublicApiUrl);
 public sealed record InvitationOutboundMessage(Guid JobId, Guid WeddingId, string Channel, string Recipient,
-    string Subject, string Content, string RsvpLink, string QrLink);
+    string Subject, string Content, string RsvpLink, string QrLink, string Purpose = "INVITATION", string? PublicLink = null);
 public sealed record InvitationDeliveryReceipt(string? ProviderMessageId);
 public sealed record InvitationDeliveryFailure(string Code, bool Transient);
 

@@ -194,7 +194,8 @@ public sealed class GiftApiTests
             {
                 foreach (var registration in services.Where(x => x.ServiceType == typeof(IHostedService) &&
                     (x.ImplementationType == typeof(InviteMe.Infrastructure.Rsvps.RsvpReminderWorker) ||
-                     x.ImplementationType == typeof(InviteMe.Infrastructure.Notifications.InvitationDeliveryWorker))).ToArray())
+                     x.ImplementationType == typeof(InviteMe.Infrastructure.Notifications.InvitationDeliveryWorker) ||
+                     x.ImplementationType == typeof(InviteMe.Infrastructure.Notifications.ThankYouDeliveryWorker))).ToArray())
                     services.Remove(registration);
                 services.RemoveAll<GiftWebhookOptions>();
                 services.AddSingleton(new GiftWebhookOptions(WebhookKey));

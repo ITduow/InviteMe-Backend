@@ -94,6 +94,242 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.AI.ThankYouMessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("ApprovedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("approved_at");
+
+                    b.Property<Guid?>("ApprovedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("approved_by");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasMaxLength(3000)
+                        .HasColumnType("character varying(3000)")
+                        .HasColumnName("content");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<long?>("GiftAmount")
+                        .HasColumnType("bigint")
+                        .HasColumnName("gift_amount");
+
+                    b.Property<Guid>("GuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("guest_id");
+
+                    b.Property<bool>("IncludesGiftAmount")
+                        .HasColumnType("boolean")
+                        .HasColumnName("includes_gift_amount");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("model");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Tone")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("tone");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<bool>("UsedFallback")
+                        .HasColumnType("boolean")
+                        .HasColumnName("used_fallback");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("thank_you_messages_pkey");
+
+                    b.HasIndex("WeddingId", "GuestId", "CreatedAt")
+                        .HasDatabaseName("ix_thank_you_messages_guest_created");
+
+                    b.ToTable("thank_you_messages", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_thank_you_messages_amount", "(includes_gift_amount = false AND gift_amount IS NULL) OR (includes_gift_amount = true AND gift_amount > 0)");
+
+                            t.HasCheckConstraint("ck_thank_you_messages_approval", "(status = 'DRAFT' AND approved_by IS NULL AND approved_at IS NULL) OR (status = 'APPROVED' AND approved_by IS NOT NULL AND approved_at IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_thank_you_messages_content", "length(btrim(content)) > 0 AND length(content) <= 3000 AND strpos(content, '{{GuestName}}') > 0");
+
+                            t.HasCheckConstraint("ck_thank_you_messages_status", "status IN ('DRAFT','APPROVED')");
+
+                            t.HasCheckConstraint("ck_thank_you_messages_tone", "tone IN ('FORMAL','WARM','FRIENDLY')");
+
+                            t.HasCheckConstraint("ck_thank_you_messages_version", "version > 0");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.AI.ThankYouSendBatch", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("IdempotencyHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("idempotency_hash");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("request_hash");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("thank_you_send_batches_pkey");
+
+                    b.HasIndex("WeddingId", "IdempotencyHash")
+                        .IsUnique()
+                        .HasDatabaseName("uq_thank_you_send_batch_idempotency");
+
+                    b.ToTable("thank_you_send_batches", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_thank_you_send_batches_hashes", "length(idempotency_hash) = 64 AND length(request_hash) = 64");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.AI.ThankYouSendJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempt_count");
+
+                    b.Property<Guid>("BatchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("batch_id");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("channel");
+
+                    b.Property<string>("ContentSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(3000)
+                        .HasColumnType("character varying(3000)")
+                        .HasColumnName("content_snapshot");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("error_code");
+
+                    b.Property<Guid>("GuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("guest_id");
+
+                    b.Property<DateTimeOffset?>("LeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("lease_expires_at");
+
+                    b.Property<Guid?>("LeaseId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("lease_id");
+
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_attempt_at");
+
+                    b.Property<string>("ProviderMessageId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("provider_message_id");
+
+                    b.Property<string>("Recipient")
+                        .IsRequired()
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)")
+                        .HasColumnName("recipient");
+
+                    b.Property<DateTimeOffset?>("SentAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("sent_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("thank_you_send_jobs_pkey");
+
+                    b.HasIndex("BatchId", "Id")
+                        .HasDatabaseName("ix_thank_you_send_jobs_batch");
+
+                    b.HasIndex("Status", "NextAttemptAt", "Id")
+                        .HasDatabaseName("ix_thank_you_send_jobs_due");
+
+                    b.ToTable("thank_you_send_jobs", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_thank_you_send_jobs_attempt", "attempt_count >= 0");
+
+                            t.HasCheckConstraint("ck_thank_you_send_jobs_channel", "channel IN ('EMAIL','SMS')");
+
+                            t.HasCheckConstraint("ck_thank_you_send_jobs_lease", "(status = 'SENDING' AND lease_id IS NOT NULL AND lease_expires_at IS NOT NULL) OR (status <> 'SENDING' AND lease_id IS NULL AND lease_expires_at IS NULL)");
+
+                            t.HasCheckConstraint("ck_thank_you_send_jobs_status", "status IN ('PENDING','SENDING','SENT','FAILED')");
+                        });
+                });
+
             modelBuilder.Entity("InviteMe.Domain.AI.ThankYouTemplate", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1335,12 +1571,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<DateTimeOffset?>("ArchivedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Email")
                         .HasMaxLength(254)
                         .HasColumnType("character varying(254)");
-
-                      b.Property<DateTimeOffset?>("ArchivedAt")
-                          .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("ExpectedPeople")
                         .HasColumnType("integer");
@@ -4707,6 +4943,77 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_ai_generations_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.AI.ThankYouMessage", b =>
+                {
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ApprovedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_thank_you_messages_approved_by");
+
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_thank_you_messages_created_by");
+
+                    b.HasOne("InviteMe.Domain.Guests.PlanningGuest", null)
+                        .WithMany()
+                        .HasForeignKey("GuestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_thank_you_messages_guest");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_thank_you_messages_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.AI.ThankYouSendBatch", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_thank_you_send_batches_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.AI.ThankYouSendJob", b =>
+                {
+                    b.HasOne("InviteMe.Domain.AI.ThankYouSendBatch", null)
+                        .WithMany()
+                        .HasForeignKey("BatchId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_thank_you_send_jobs_batch");
+
+                    b.HasOne("InviteMe.Domain.Guests.PlanningGuest", null)
+                        .WithMany()
+                        .HasForeignKey("GuestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_thank_you_send_jobs_guest");
+
+                    b.HasOne("InviteMe.Domain.AI.ThankYouMessage", null)
+                        .WithMany()
+                        .HasForeignKey("MessageId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_thank_you_send_jobs_message");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_thank_you_send_jobs_wedding");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.AI.ThankYouTemplate", b =>
