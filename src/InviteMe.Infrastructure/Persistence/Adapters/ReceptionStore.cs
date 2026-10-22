@@ -25,7 +25,7 @@ public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : I
         (from g in db.Set<PlanningGuest>().AsNoTracking()
          join w in db.Weddings on g.WeddingId equals w.Id
          join owner in db.Users on w.OwnerUserId equals owner.Id
-         where g.Id == guestId && g.WeddingId == weddingId && owner.Status == "ACTIVE" && (w.Status == "DRAFT" || w.Status == "PUBLISHED")
+         where g.Id == guestId && g.WeddingId == weddingId && g.ArchivedAt == null && owner.Status == "ACTIVE" && (w.Status == "DRAFT" || w.Status == "PUBLISHED")
          select new ReceptionGuest(g.Id, g.RecipientName, g.Honorific)).SingleOrDefaultAsync(ct);
 
     // One wedding's guests are a few hundred rows; the handler matches names without accents in memory.
@@ -35,7 +35,7 @@ public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : I
     public async Task<IReadOnlyList<ReceptionCandidate>> CandidatesScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<Guid>? groupScope)
     {
         var scopeIds = groupScope?.ToArray();
-        var guestQuery = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId);
+        var guestQuery = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null);
         if (scopeIds is not null) guestQuery = guestQuery.Where(x => x.GroupId.HasValue && scopeIds.Contains(x.GroupId.Value));
         var guests = await guestQuery
             .Select(x => new { x.Id, x.RecipientName, x.Honorific, x.Side, x.Phone }).ToListAsync(ct);

@@ -60,7 +60,7 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
 
     public async Task<InvitationRecipient?> FindRecipientAsync(Guid weddingId, Guid guestId, CancellationToken ct)
     {
-        var guest = await db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Id == guestId)
+        var guest = await db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Id == guestId && x.ArchivedAt == null)
             .Select(x => new InvitationRecipient(x.Id, x.RecipientName, x.Email, x.Phone, x.InvitationToken)).SingleOrDefaultAsync(ct);
         return guest is null ? null : guest with { CoupleNames = await CoupleNamesAsync(weddingId, ct) };
     }
@@ -97,7 +97,7 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
             return new(prior.Id, true);
         }
 
-        var guestsQuery = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId);
+        var guestsQuery = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null);
         if (input.GroupId is { } groupId)
         {
             var groupExists = await db.Set<PlanningGroup>().AnyAsync(x => x.Id == groupId && x.WeddingId == weddingId, ct);
@@ -182,7 +182,10 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
     {
         var batch = await db.InvitationSendBatches.AsNoTracking().SingleOrDefaultAsync(x => x.Id == batchId && x.WeddingId == weddingId, ct)
             ?? throw new ApplicationProblemException(ProblemKind.NotFound, "INVITATION_BATCH_NOT_FOUND", "Invitation batch not found.");
-        var rows = await db.InvitationSendJobs.Where(x => x.BatchId == batch.Id && x.Status == "FAILED").ToListAsync(ct);
+        var rows = await (from job in db.InvitationSendJobs
+                          join guest in db.Set<PlanningGuest>() on job.PlanningGuestId equals guest.Id
+                          where job.BatchId == batch.Id && job.Status == "FAILED" && guest.ArchivedAt == null
+                          select job).ToListAsync(ct);
         foreach (var row in rows)
         {
             row.Status = "PENDING";

@@ -10,6 +10,17 @@ internal static class GuestPlanningEndpoints
     {
         var g = endpoints.MapGroup("/api/weddings/{weddingId:guid}/guest-planning")
             .RequireAuthorization().WithTags("Guest Planning v2");
+        g.MapPost("/guests", async (Guid weddingId, CreatePlanningGuest input,
+            [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+            GuestPlanningHandler handler, CancellationToken ct) =>
+        {
+            var outcome = await handler.CreateAsync(weddingId, idempotencyKey, input, ct);
+            return outcome.Replayed
+                ? Results.Ok(outcome.Guest)
+                : Results.Created($"/api/weddings/{weddingId}/guest-planning/guests/{outcome.Guest.Id}", outcome.Guest);
+        }).WithName("CreatePlanningGuest")
+            .Produces<PlanningGuestDto>(201).Produces<PlanningGuestDto>(200)
+            .ProducesValidationProblem().ProducesProblem(403).ProducesProblem(404).ProducesProblem(409);
         g.MapPost("/imports", async (Guid weddingId, PlanningImport input, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
             GuestPlanningHandler handler, CancellationToken ct) =>
         {
@@ -22,6 +33,8 @@ internal static class GuestPlanningEndpoints
         {
             return await handler.ListAsync(weddingId, new(page, pageSize, search, side, groupId), ct);
         });
+        g.MapGet("/groups", (Guid weddingId, GuestPlanningHandler handler, CancellationToken ct) =>
+            handler.ListGroupsAsync(weddingId, ct));
         g.MapGet("/guests/{guestId:guid}", async (Guid weddingId, Guid guestId, GuestPlanningHandler handler, CancellationToken ct) =>
         {
             var detail = await handler.DetailAsync(weddingId, guestId, ct);
@@ -33,6 +46,11 @@ internal static class GuestPlanningEndpoints
             Results.Ok(await handler.UpdateAsync(weddingId, guestId, input, ct)))
             .WithName("UpdatePlanningGuest")
             .Produces<PlanningGuestDto>().ProducesValidationProblem().ProducesProblem(403).ProducesProblem(404).ProducesProblem(409);
+        g.MapDelete("/guests/{guestId:guid}", async (Guid weddingId, Guid guestId, int expectedVersion,
+            GuestPlanningHandler handler, CancellationToken ct) =>
+            Results.Ok(await handler.ArchiveAsync(weddingId, guestId, expectedVersion, ct)))
+            .WithName("ArchivePlanningGuest")
+            .Produces<ArchivePlanningGuestResult>().ProducesValidationProblem().ProducesProblem(403).ProducesProblem(404).ProducesProblem(409);
         g.MapGet("/seating-plan", (Guid weddingId, PlanningSeatingHandler handler, CancellationToken ct) => handler.GetAsync(weddingId, ct));
         g.MapPatch("/seating-plan", (Guid weddingId, ChangePlanningSeating input, PlanningSeatingHandler handler, CancellationToken ct) => handler.ChangeAsync(weddingId, input, ct));
         g.MapPost("/seating-suggestions", (Guid weddingId, SuggestPlanningSeating input, PlanningSeatingHandler handler, CancellationToken ct) => handler.SuggestAsync(weddingId, input, ct));

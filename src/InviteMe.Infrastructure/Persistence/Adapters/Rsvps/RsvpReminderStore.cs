@@ -25,7 +25,7 @@ public sealed class RsvpReminderStore(InviteMeDbContext db) : IRsvpReminderStore
             .Select(x => new { x.RsvpDeadline, x.Timezone }).SingleOrDefaultAsync(ct);
         var auto = await db.Set<PlanningRsvpSettings>().AsNoTracking().Where(x => x.WeddingId == weddingId)
             .Select(x => (bool?)x.AutoRemindersEnabled).SingleOrDefaultAsync(ct) ?? true;
-        var guests = await db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId)
+        var guests = await db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null)
             .Select(x => new { x.Id, x.RecipientName, x.Email, x.InvitationToken }).ToListAsync(ct);
         var responded = (await db.Set<PlanningRsvp>().AsNoTracking().Where(x => x.WeddingId == weddingId).Select(x => x.GuestId).ToListAsync(ct)).ToHashSet();
         var locked = (await db.Set<PlanningRsvpLock>().AsNoTracking().Where(x => x.WeddingId == weddingId).Select(x => x.GuestId).ToListAsync(ct)).ToHashSet();
@@ -71,7 +71,7 @@ public sealed class RsvpReminderStore(InviteMeDbContext db) : IRsvpReminderStore
                 INSERT INTO inviteme.planning_rsvp_reminders
                     (id, wedding_id, guest_id, kind, channel, recipient, status, attempt_count, next_attempt_at, requested_by, created_at)
                 SELECT {r.Id}, {r.WeddingId}, g."Id", {r.Kind}, {r.Channel}, {r.Recipient}, {r.Status}, 0, {r.NextAttemptAt}, {r.RequestedBy}, {r.CreatedAt}
-                FROM inviteme.planning_guests g WHERE g."Id" = {r.GuestId} AND g."WeddingId" = {r.WeddingId}
+                FROM inviteme.planning_guests g WHERE g."Id" = {r.GuestId} AND g."WeddingId" = {r.WeddingId} AND g."ArchivedAt" IS NULL
                 ON CONFLICT (guest_id, kind) DO NOTHING
                 """, ct);
             if (inserted == 1) queued.Add(item.GuestId);

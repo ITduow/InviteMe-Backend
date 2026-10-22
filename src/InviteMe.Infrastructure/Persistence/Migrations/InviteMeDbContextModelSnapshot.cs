@@ -1339,6 +1339,9 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasMaxLength(254)
                         .HasColumnType("character varying(254)");
 
+                      b.Property<DateTimeOffset?>("ArchivedAt")
+                          .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("ExpectedPeople")
                         .HasColumnType("integer");
 

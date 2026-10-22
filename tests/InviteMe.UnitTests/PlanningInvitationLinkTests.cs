@@ -16,7 +16,8 @@ public sealed class PlanningInvitationLinkTests
         var store = new Store();
         var handler = new GuestPlanningHandler(store, new Permissions(canSend),
             new RequestValidation<PlanningImport>([]), new RequestValidation<PlanningGuestQuery>([]),
-            new RequestValidation<UpdatePlanningGuest>([]), new CurrentUser(Guid.NewGuid()), new Publisher());
+            new RequestValidation<UpdatePlanningGuest>([]), new RequestValidation<CreatePlanningGuest>([]),
+            new CurrentUser(Guid.NewGuid()), new Publisher());
         var weddingId = Guid.NewGuid();
         var page = await handler.ListAsync(weddingId, new(), default);
         var detail = await handler.DetailAsync(weddingId, store.Guest.Id, default);
@@ -45,9 +46,15 @@ public sealed class PlanningInvitationLinkTests
             "BRIDE", null, null, null, InvitationPath: "/invite/" + new string('a', 64));
         public Task<PlanningGuestPage> ListAsync(Guid id, int page, int size, string? search, string? side, Guid? groupId, CancellationToken ct) =>
             Task.FromResult(new PlanningGuestPage([Guest], page, size, 1));
+        public Task<IReadOnlyList<PlanningGroupDto>> ListGroupsAsync(Guid weddingId, CancellationToken ct,
+            IReadOnlySet<Guid>? groupScope = null) => Task.FromResult<IReadOnlyList<PlanningGroupDto>>([]);
         public Task<PlanningGuestDetail> DetailAsync(Guid id, Guid guestId, CancellationToken ct) =>
             Task.FromResult(new PlanningGuestDetail(Guest, []));
         public Task<PlanningImportOutcome> ImportAsync(Guid id, Guid key, PlanningImport input, CancellationToken ct) =>
             throw new NotSupportedException();
+        public Task<CreatePlanningGuestOutcome> CreateAsync(Guid weddingId, Guid key, CreatePlanningGuest input,
+            Guid actorId, CancellationToken ct, IReadOnlySet<Guid>? groupScope = null) => throw new NotSupportedException();
+        public Task<ArchivePlanningGuestResult> ArchiveAsync(Guid weddingId, Guid guestId, int expectedVersion,
+            Guid actorId, CancellationToken ct, IReadOnlySet<Guid>? groupScope = null) => throw new NotSupportedException();
     }
 }

@@ -111,7 +111,7 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         {
             var ids = input.PlaceIds!;
             var places = await (from p in db.Set<PlanningPlace>() join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
-                where g.WeddingId == weddingId && ids.Contains(p.Id) && (scopeIds == null || g.GroupId != null && scopeIds.Contains(g.GroupId.Value)) orderby g.Id, p.Position select p.Id).ToListAsync(ct);
+                where g.WeddingId == weddingId && g.ArchivedAt == null && ids.Contains(p.Id) && (scopeIds == null || g.GroupId != null && scopeIds.Contains(g.GroupId.Value)) orderby g.Id, p.Position select p.Id).ToListAsync(ct);
             if (places.Count != ids.Count) throw Missing("PLACE_NOT_FOUND");
             if (table is not null && scopeIds is not null)
             {
@@ -155,7 +155,7 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         if (scopeIds is not null) tablesQuery = tablesQuery.Where(x => x.GroupId != null && scopeIds.Contains(x.GroupId.Value));
         var tables = await tablesQuery.OrderBy(x => x.Name).ThenBy(x => x.Id)
             .Select(x => new PlanningTableDto(x.Id, x.Name, x.Capacity, x.GroupId)).ToListAsync(ct);
-        var guestQuery = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId);
+        var guestQuery = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null);
         if (scopeIds is not null) guestQuery = guestQuery.Where(x => x.GroupId != null && scopeIds.Contains(x.GroupId.Value));
         var guests = await (from g in guestQuery
             join groupName in db.Set<PlanningGroup>() on g.GroupId equals (Guid?)groupName.Id into groups
@@ -163,7 +163,7 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
             select new PlanningGuestDto(g.Id, g.Version, g.RecipientName, g.Honorific, g.InvitationKind, g.ExpectedPeople, g.Side,
                 groupName == null ? null : new PlanningGroupDto(groupName.Id, groupName.Name), g.Phone, g.Note, g.Email)).ToListAsync(ct);
         var places = await (from p in db.Set<PlanningPlace>().AsNoTracking()
-            join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id where g.WeddingId == weddingId && (scopeIds == null || g.GroupId != null && scopeIds.Contains(g.GroupId.Value))
+            join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id where g.WeddingId == weddingId && g.ArchivedAt == null && (scopeIds == null || g.GroupId != null && scopeIds.Contains(g.GroupId.Value))
             join person in db.Set<PlanningParticipant>() on p.ParticipantId equals (Guid?)person.Id into people
             from person in people.DefaultIfEmpty() orderby p.GuestId, p.Position
             select new PlanningSeatingPlace(p.Id, p.GuestId, p.Position, person == null ? null : new PlanningPersonDto(person.Id, person.FullName, person.Role, person.AttendanceStatus))).ToListAsync(ct);

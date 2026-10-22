@@ -97,3 +97,24 @@ public sealed class PlanningGuestQueryValidator : AbstractValidator<PlanningGues
         RuleFor(x => x.Side).Must(PlanningText.ValidSide);
     }
 }
+
+public sealed class CreatePlanningGuestValidator : AbstractValidator<CreatePlanningGuest>
+{
+    public CreatePlanningGuestValidator()
+    {
+        RuleFor(x => x.RecipientName).Must(x => PlanningText.Valid(x, 150, required: true)).WithErrorCode("INVALID_TEXT");
+        RuleFor(x => x.Honorific).Must(x => PlanningText.Valid(x, 50)).WithErrorCode("INVALID_TEXT");
+        RuleFor(x => x.InvitationKind).Must(x => x is "INDIVIDUAL" or "FAMILY" or "GROUP").WithErrorCode("INVALID_KIND");
+        RuleFor(x => x.ExpectedPeople).InclusiveBetween(1, 500).WithErrorCode("INVALID_EXPECTED_PEOPLE");
+        RuleFor(x => x.Side).Must(PlanningText.ValidSide).WithErrorCode("INVALID_SIDE");
+        RuleFor(x => x.GroupId).Must(x => x is null || x != Guid.Empty).WithErrorCode("INVALID_GROUP");
+        RuleFor(x => x.Phone).Must(PlanningText.ValidPhone).WithErrorCode("INVALID_PHONE")
+            .WithMessage("SĐT cần 7–15 chữ số, có thể có dấu + ở đầu, khoảng trắng, dấu chấm, gạch nối hoặc ngoặc.");
+        RuleFor(x => x.Email).Cascade(CascadeMode.Stop)
+            .MaximumLength(254).WithErrorCode("INVALID_EMAIL")
+            .EmailAddress().WithErrorCode("INVALID_EMAIL")
+            .Must(x => PlanningText.Valid(x, 254)).WithErrorCode("INVALID_EMAIL")
+            .When(x => !string.IsNullOrWhiteSpace(x.Email));
+        RuleFor(x => x.Note).Must(x => PlanningText.Valid(x, 2000)).WithErrorCode("INVALID_TEXT");
+    }
+}

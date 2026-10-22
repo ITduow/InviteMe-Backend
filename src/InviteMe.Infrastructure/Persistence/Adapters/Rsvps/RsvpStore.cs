@@ -43,7 +43,7 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
 
     public async Task<RsvpDto> GetAsync(Guid weddingId, Guid guestId, CancellationToken ct)
     {
-        var guest = await db.Set<PlanningGuest>().AsNoTracking().SingleOrDefaultAsync(x => x.Id == guestId && x.WeddingId == weddingId, ct)
+        var guest = await db.Set<PlanningGuest>().AsNoTracking().SingleOrDefaultAsync(x => x.Id == guestId && x.WeddingId == weddingId && x.ArchivedAt == null, ct)
             ?? throw Missing("GUEST_NOT_FOUND");
         return await State(guest, ct);
     }
@@ -91,18 +91,18 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
         var guests = await (from g in db.Set<PlanningGuest>().AsNoTracking()
                             join grp in db.Set<PlanningGroup>() on g.GroupId equals (Guid?)grp.Id into groups
                             from grp in groups.DefaultIfEmpty()
-                            where g.WeddingId == weddingId && (scopedIds == null || g.GroupId.HasValue && scopedIds.Contains(g.GroupId.Value))
+                            where g.WeddingId == weddingId && g.ArchivedAt == null && (scopedIds == null || g.GroupId.HasValue && scopedIds.Contains(g.GroupId.Value))
                             select new { g.Id, g.RecipientName, g.RowNumber, g.Side, g.GroupId, GroupName = grp == null ? null : grp.Name, g.Phone, g.Email }).ToListAsync(ct);
         var rsvps = await db.Set<PlanningRsvp>().AsNoTracking().Where(x => x.WeddingId == weddingId).ToDictionaryAsync(x => x.GuestId, ct);
         var people = (await (from p in db.Set<PlanningParticipant>().AsNoTracking()
                              join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
                              join n in db.Set<PlanningDietaryNote>() on p.Id equals n.ParticipantId into notes
                              from n in notes.DefaultIfEmpty()
-                             where g.WeddingId == weddingId && (scopedIds == null || g.GroupId.HasValue && scopedIds.Contains(g.GroupId.Value))
+                             where g.WeddingId == weddingId && g.ArchivedAt == null && (scopedIds == null || g.GroupId.HasValue && scopedIds.Contains(g.GroupId.Value))
                              select new { p.GuestId, p.Id, p.FullName, p.Role, p.AttendanceStatus, Dietary = n == null ? null : n.Note }).ToListAsync(ct))
             .ToLookup(x => x.GuestId);
         var places = (await (from x in db.Set<PlanningPlace>().AsNoTracking() join g in db.Set<PlanningGuest>() on x.GuestId equals g.Id
-                             where g.WeddingId == weddingId && (scopedIds == null || g.GroupId.HasValue && scopedIds.Contains(g.GroupId.Value)) select new { x.GuestId, x.Position, x.ParticipantId }).ToListAsync(ct))
+                             where g.WeddingId == weddingId && g.ArchivedAt == null && (scopedIds == null || g.GroupId.HasValue && scopedIds.Contains(g.GroupId.Value)) select new { x.GuestId, x.Position, x.ParticipantId }).ToListAsync(ct))
             .ToLookup(x => x.GuestId);
         var locked = (await db.Set<PlanningRsvpLock>().AsNoTracking().Where(x => x.WeddingId == weddingId).Select(x => x.GuestId).ToListAsync(ct)).ToHashSet();
         var pending = (await db.Set<PlanningRsvpRequest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Status == PlanningRsvpRequest.Pending)
@@ -113,7 +113,7 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
         var lateForAll = deadline <= clock.GetUtcNow();
         var occupied = scopedIds is null ? await Occupied(weddingId, ct) : await (from p in db.Set<PlanningParticipant>().AsNoTracking()
             join g in db.Set<PlanningGuest>().AsNoTracking() on p.GuestId equals g.Id
-            where g.WeddingId == weddingId && scopedIds.Contains(g.GroupId!.Value) && p.AttendanceStatus == Attending select p.Id).LongCountAsync(ct);
+            where g.WeddingId == weddingId && g.ArchivedAt == null && scopedIds.Contains(g.GroupId!.Value) && p.AttendanceStatus == Attending select p.Id).LongCountAsync(ct);
         await tx.CommitAsync(ct);
         return new(weddingId, scopedIds is null ? wedding.MaxCapacity : null, occupied, deadline, guests.Select(g =>
         {
@@ -566,7 +566,7 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
     // Walk-ins added at the counter (Cohost04) are planning participants with ATTENDING, so they are already counted here.
     private async Task<long> Occupied(Guid weddingId, CancellationToken ct) =>
         await (from p in db.Set<PlanningParticipant>() join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
-               where g.WeddingId == weddingId && p.AttendanceStatus == Attending select p).LongCountAsync(ct);
+               where g.WeddingId == weddingId && g.ArchivedAt == null && p.AttendanceStatus == Attending select p).LongCountAsync(ct);
 
     private async Task<Wedding> LockWedding(Guid weddingId, CancellationToken ct)
     {
@@ -577,7 +577,7 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
     }
 
     private Task<PlanningGuest?> LockGuest(Guid weddingId, Guid guestId, CancellationToken ct) =>
-        db.Set<PlanningGuest>().FromSqlInterpolated($"SELECT * FROM inviteme.planning_guests WHERE \"Id\"={guestId} AND \"WeddingId\"={weddingId} FOR UPDATE")
+        db.Set<PlanningGuest>().FromSqlInterpolated($"SELECT * FROM inviteme.planning_guests WHERE \"Id\"={guestId} AND \"WeddingId\"={weddingId} AND \"ArchivedAt\" IS NULL FOR UPDATE")
             .SingleOrDefaultAsync(ct);
 
     // Unknown, malformed, closed-wedding or inactive-owner tokens all give the same 404, so nothing leaks.

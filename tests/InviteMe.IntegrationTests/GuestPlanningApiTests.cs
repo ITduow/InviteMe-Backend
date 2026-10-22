@@ -5,6 +5,7 @@ using System.Text.Json;
 using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Application.Features.Identity.Accounts;
 using InviteMe.Application.Ports.Authentication;
+using InviteMe.Application.Features.Seating.Planning;
 using InviteMe.Domain.Guests;
 using Microsoft.EntityFrameworkCore;
 
@@ -12,6 +13,77 @@ namespace InviteMe.IntegrationTests;
 
 public sealed class GuestPlanningApiTests
 {
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task ManualCreateIsIdempotentAndArchiveRevokesAccessAndRemovesActiveSeats() => SchemaV2MigrationTests.InDatabase(async db =>
+    {
+        await db.Database.MigrateAsync();
+        await using var factory = new DatabaseApiFactory(db.Database.GetConnectionString()!);
+        using var owner = await CoHostPermissionTests.SignIn(factory, "manual-guest-owner");
+        var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "manual-guest-test");
+        var path = $"/api/weddings/{wedding.Id}/guest-planning";
+        var key = Guid.NewGuid();
+        var input = new CreatePlanningGuest("Nguyễn Thị Mai", "Cô", "FAMILY", 3, "BRIDE", null,
+            "0900123456", "Dị ứng đậu phộng", "mai@example.test");
+
+        async Task<HttpResponseMessage> Create(CreatePlanningGuest body)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, path + "/guests") { Content = JsonContent.Create(body) };
+            request.Headers.Add("Idempotency-Key", key.ToString());
+            return await owner.SendAsync(request);
+        }
+
+        var created = await Create(input);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var guest = (await created.Content.ReadFromJsonAsync<PlanningGuestDto>())!;
+        Assert.Equal("mai@example.test", guest.Email);
+        Assert.Equal(3, guest.ExpectedPeople);
+        Assert.NotNull(guest.InvitationPath);
+        Assert.Equal(3, await db.Set<PlanningPlace>().CountAsync(x => x.GuestId == guest.Id));
+        Assert.Single(await db.Set<PlanningParticipant>().Where(x => x.GuestId == guest.Id).ToListAsync());
+
+        var replay = await Create(input);
+        Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+        Assert.Equal(guest.Id, (await replay.Content.ReadFromJsonAsync<PlanningGuestDto>())!.Id);
+        Assert.Equal(HttpStatusCode.Conflict, (await Create(input with { RecipientName = "Khách khác" })).StatusCode);
+        Assert.Equal(1, await db.Set<PlanningGuest>().CountAsync(x => x.WeddingId == wedding.Id));
+
+        var planPath = path + "/seating-plan";
+        var plan = await owner.GetFromJsonAsync<PlanningSeatingDto>(planPath);
+        var table = await owner.PatchAsJsonAsync(planPath, new ChangePlanningSeating(plan!.Version, "CREATE_TABLE",
+            Name: "Bàn kiểm thử", Capacity: 4));
+        Assert.Equal(HttpStatusCode.OK, table.StatusCode);
+        plan = await owner.GetFromJsonAsync<PlanningSeatingDto>(planPath);
+        Assert.Equal(3, plan!.Places.Count(x => x.GuestId == guest.Id));
+        Assert.Single(plan.Tables);
+        var move = await owner.PatchAsJsonAsync(planPath, new ChangePlanningSeating(plan.Version, "MOVE_PLACES",
+            TableId: plan.Tables[0].Id, PlaceIds: [plan.Places.First(x => x.GuestId == guest.Id).Id]));
+        Assert.Equal(HttpStatusCode.OK, move.StatusCode);
+        plan = await owner.GetFromJsonAsync<PlanningSeatingDto>(planPath);
+        Assert.Single(plan!.Assignments);
+
+        var tokenBeforeArchive = await db.Set<PlanningGuest>().Where(x => x.Id == guest.Id)
+            .Select(x => x.InvitationToken).SingleAsync();
+        using var guestClient = factory.CreateHttpsClient();
+        Assert.Equal(HttpStatusCode.OK, (await guestClient.GetAsync($"/api/rsvp/{tokenBeforeArchive}")).StatusCode);
+        var archive = await owner.DeleteAsync(path + $"/guests/{guest.Id}?expectedVersion={guest.Version}");
+        Assert.Equal(HttpStatusCode.OK, archive.StatusCode);
+        var archived = await archive.Content.ReadFromJsonAsync<ArchivePlanningGuestResult>();
+        Assert.Equal(guest.Version + 1, archived!.Version);
+        Assert.NotEqual(default, archived.ArchivedAt);
+        var stored = await db.Set<PlanningGuest>().AsNoTracking().SingleAsync(x => x.Id == guest.Id);
+        Assert.Null(stored.InvitationToken);
+        Assert.NotNull(stored.ArchivedAt);
+        Assert.Equal(1, await db.Set<PlanningGuest>().CountAsync(x => x.WeddingId == wedding.Id));
+        Assert.Empty((await owner.GetFromJsonAsync<PlanningGuestPage>(path + "/guests"))!.Items);
+        Assert.Equal(HttpStatusCode.NotFound, (await owner.GetAsync(path + $"/guests/{guest.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await owner.PutAsJsonAsync(path + $"/guests/{guest.Id}",
+            new UpdatePlanningGuest(guest.Version, "Mai", null, "BRIDE", null, null, null, null))).StatusCode);
+        Assert.Empty((await owner.GetFromJsonAsync<PlanningSeatingDto>(planPath))!.Assignments);
+        Assert.Equal(plan.Version + 1, (await owner.GetFromJsonAsync<PlanningSeatingDto>(planPath))!.Version);
+        Assert.Equal(HttpStatusCode.NotFound, (await guestClient.GetAsync($"/api/guest-invitations/{tokenBeforeArchive}/qr")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await guestClient.GetAsync($"/api/rsvp/{tokenBeforeArchive}")).StatusCode);
+    });
+
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task ImportIsAtomicIdempotentScopedAndCreatesReservedPlaces() => SchemaV2MigrationTests.InDatabase(async db =>
     {
