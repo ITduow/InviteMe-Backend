@@ -81,6 +81,7 @@ app.MapWeddingWebsite();
 app.MapWeddingMedia();
 app.MapGuestAccess();
 app.MapThankYouTemplates();
+app.MapThankYouMessages();
 app.MapHub<WeddingHub>("/hubs/weddings", options => options.CloseOnAuthenticationExpiration = true)
     .RequireAuthorization();
 app.MapHub<PublicWeddingHub>("/hubs/public-weddings").RequireRateLimiting("guest-invitation");

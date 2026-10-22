@@ -38,7 +38,8 @@ public sealed class InvitationMessagingApiTests
                 // configuration enabled it before the test configuration was applied.
                 foreach (var registration in services.Where(x =>
                     x.ServiceType == typeof(Microsoft.Extensions.Hosting.IHostedService) &&
-                    x.ImplementationType == typeof(InviteMe.Infrastructure.Notifications.InvitationDeliveryWorker)).ToArray())
+                    (x.ImplementationType == typeof(InviteMe.Infrastructure.Notifications.InvitationDeliveryWorker) ||
+                     x.ImplementationType == typeof(InviteMe.Infrastructure.Notifications.ThankYouDeliveryWorker))).ToArray())
                     services.Remove(registration);
                 services.RemoveAll<IAiTextGenerator>();
                 services.AddSingleton<IAiTextGenerator>(ai);
