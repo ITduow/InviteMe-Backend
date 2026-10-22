@@ -65,9 +65,10 @@ internal static class GiftEndpoints
             {
                 var file = await h.ExportAsync(weddingId, new GiftLedgerFilter(status, method, search, guestId), ct);
                 http.Response.Headers.CacheControl = "no-store";
-                return Results.File(file.Content, "text/csv; charset=utf-8", file.FileName);
+                // Not text/*: Swagger UI reads text responses as a string and drops the UTF-8 BOM, so Excel shows broken Vietnamese.
+                return Results.File(file.Content, "application/octet-stream", file.FileName);
             })
-            .WithName("ExportGifts").Produces(StatusCodes.Status200OK, contentType: "text/csv").ProducesProblem(StatusCodes.Status403Forbidden);
+            .WithName("ExportGifts").Produces(StatusCodes.Status200OK, contentType: "application/octet-stream").ProducesProblem(StatusCodes.Status403Forbidden);
         host.MapPost("", async (Guid weddingId, RecordGift input, [Microsoft.AspNetCore.Mvc.FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
                 GiftHostHandler h, CancellationToken ct) =>
                 Results.Json(await h.RecordAsync(weddingId, input, idempotencyKey, ct), statusCode: StatusCodes.Status201Created))

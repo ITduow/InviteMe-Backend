@@ -77,10 +77,11 @@ internal static class RsvpEndpoints
             {
                 var file = await h.ExportAsync(weddingId, new RsvpDashboardFilter(side, groupId, status, search), ct);
                 http.Response.Headers.CacheControl = "no-store";
-                return Results.File(file.Content, "text/csv; charset=utf-8", file.FileName);
+                // Not text/*: Swagger UI reads text responses as a string and drops the UTF-8 BOM, so Excel shows broken Vietnamese.
+                return Results.File(file.Content, "application/octet-stream", file.FileName);
             })
             .WithName("ExportRsvpDashboard")
-            .Produces(StatusCodes.Status200OK, contentType: "text/csv").ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden);
+            .Produces(StatusCodes.Status200OK, contentType: "application/octet-stream").ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden);
         host.MapGet("/rsvps/{guestId:guid}", (Guid weddingId, Guid guestId, RsvpHandler h, CancellationToken ct) => h.GetAsync(weddingId, guestId, ct))
             .WithName("GetGuestRsvp")
             .Produces<RsvpDto>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound);

@@ -98,7 +98,11 @@ public sealed class GiftApiTests
             summary.CashTotal, summary.TransferTotal, summary.AmountMismatches, summary.NeedsReview));
         var ledger = (await owner.GetFromJsonAsync<PagedResult<GiftDto>>(path + "?method=QR"))!;
         Assert.Equal(2, ledger.TotalCount);
-        Assert.Contains("Bác Ba", await owner.GetStringAsync(path + "/export"));
+        var export = await owner.GetAsync(path + "/export");
+        Assert.Equal("application/octet-stream", export.Content.Headers.ContentType!.MediaType); // Swagger UI keeps the BOM of non-text files
+        var csv = await export.Content.ReadAsByteArrayAsync();
+        Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }, csv[..3]); // Excel reads Vietnamese as UTF-8
+        Assert.Contains("Bác Ba", Encoding.UTF8.GetString(csv[3..]));
         Assert.Equal(PlanningGift.Paid, (await db.Set<PlanningGift>().AsNoTracking().SingleAsync(x => x.Id == gift.Id)).Status);
     });
 
