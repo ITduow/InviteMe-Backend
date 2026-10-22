@@ -79,6 +79,10 @@ public sealed class GiftApiTests
         Assert.Equal(HttpStatusCode.NoContent, (await owner.PostAsync($"{path}/transactions/{review.Single(x => x.Status == PlanningGiftTransaction.Duplicate).Id}/dismiss", null)).StatusCode);
         Assert.Empty((await owner.GetFromJsonAsync<List<GiftTransactionDto>>(path + "/transactions"))!);
 
+        // A guest id from another wedding (or Swagger's sample id) is refused, not a server error.
+        await AssertProblem(HttpStatusCode.NotFound, "GUEST_NOT_FOUND", await Send(owner, path,
+            new RecordGift(PlanningGift.Cash, 1_000_000, Guid.Parse("3fa85f64-5717-4562-b3fc-2c963f66afa6"), "Bác Ba"), "bad-guest"));
+
         // Cash envelope (idempotent) and a guest who says "đã chuyển" but the couple confirms a different amount.
         var cash = await Read<GiftDto>(await Send(owner, path, new RecordGift(PlanningGift.Cash, 1_000_000, GiverName: "Bác Ba"), "cash-1"), HttpStatusCode.Created);
         Assert.Equal(cash.Id, (await Read<GiftDto>(await Send(owner, path, new RecordGift(PlanningGift.Cash, 1_000_000, GiverName: "Bác Ba"), "cash-1"), HttpStatusCode.Created)).Id);

@@ -286,9 +286,11 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock) : IGiftS
 
     private async Task<string> GiverName(Guid weddingId, Guid? guestId, string? giverName, CancellationToken ct)
     {
-        if (!string.IsNullOrWhiteSpace(giverName)) return GiftRules.Clean(giverName)!;
-        return await db.Set<PlanningGuest>().Where(x => x.Id == guestId && x.WeddingId == weddingId).Select(x => x.RecipientName).SingleOrDefaultAsync(ct)
-            ?? throw Missing("GUEST_NOT_FOUND");
+        // A guest id must belong to this wedding even when a giver name is typed as well.
+        var guestName = guestId is null ? null
+            : await db.Set<PlanningGuest>().Where(x => x.Id == guestId && x.WeddingId == weddingId).Select(x => x.RecipientName).SingleOrDefaultAsync(ct)
+              ?? throw Missing("GUEST_NOT_FOUND");
+        return !string.IsNullOrWhiteSpace(giverName) ? GiftRules.Clean(giverName)! : guestName ?? throw Missing("GUEST_NOT_FOUND");
     }
 
     private async Task<IReadOnlyList<GiftBankAccountDto>> Accounts(Guid weddingId, CancellationToken ct) =>
