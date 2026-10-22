@@ -19,6 +19,7 @@ public sealed class PlanningGuest
     // Null for guests imported before token generation was introduced.
     public string? InvitationToken { get; set; }
     public int Version { get; set; } = 1;
+    public DateTimeOffset? ArchivedAt { get; set; }
 }
 public sealed class PlanningGroup
 {

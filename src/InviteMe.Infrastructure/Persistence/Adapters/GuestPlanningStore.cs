@@ -4,6 +4,9 @@ using System.Text.Json;
 using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Domain.Guests;
 using InviteMe.Domain.Audit;
+using InviteMe.Domain.Seating;
+using InviteMe.Domain.Rsvps;
+using InviteMe.Domain.CheckIn;
 using InviteMe.Infrastructure.Authentication;
 using Microsoft.EntityFrameworkCore;
 using static InviteMe.Infrastructure.Persistence.Adapters.PlanningPersistence;
@@ -12,11 +15,108 @@ namespace InviteMe.Infrastructure.Persistence.Adapters;
 
 public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningStore
 {
+    public async Task<CreatePlanningGuestOutcome> CreateAsync(Guid weddingId, Guid key, CreatePlanningGuest input,
+        Guid actorId, CancellationToken ct, IReadOnlySet<Guid>? groupScope = null)
+    {
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(input))));
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await LockWedding(db, weddingId, ct);
+        var prior = await db.Set<PlanningImportBatch>().SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.Key == key, ct);
+        if (prior is not null)
+        {
+            if (prior.RequestHash != hash) throw Conflict("IDEMPOTENCY_KEY_REUSED");
+            var priorGuestId = JsonSerializer.Deserialize<Guid>(prior.ResultJson);
+            var priorGuest = await Guests(db.Set<PlanningGuest>().AsNoTracking()
+                .Where(x => x.WeddingId == weddingId && x.Id == priorGuestId && x.ArchivedAt == null)).SingleOrDefaultAsync(ct)
+                ?? throw Missing("GUEST_NOT_FOUND");
+            return new(priorGuest, true);
+        }
+
+        if (input.GroupId is { } groupId && !await db.Set<PlanningGroup>().AnyAsync(x => x.Id == groupId && x.WeddingId == weddingId, ct))
+            throw Missing("GROUP_NOT_FOUND");
+        if (groupScope is not null && (groupScope.Count == 0 || input.GroupId is not { } scopedGroup || !groupScope.Contains(scopedGroup)))
+            throw Missing("GROUP_NOT_FOUND");
+
+        var batch = new PlanningImportBatch { Id = Guid.NewGuid(), WeddingId = weddingId, Key = key, RequestHash = hash };
+        var guest = new PlanningGuest
+        {
+            Id = Guid.NewGuid(), WeddingId = weddingId, ImportId = batch.Id, RowNumber = 1,
+            RecipientName = PlanningText.Clean(input.RecipientName), Honorific = Optional(input.Honorific),
+            InvitationKind = input.InvitationKind, ExpectedPeople = input.ExpectedPeople, Side = input.Side,
+            GroupId = input.GroupId, Phone = Optional(input.Phone), Email = Optional(input.Email), Note = Optional(input.Note),
+            InvitationToken = InvitationToken.Generate()
+        };
+        db.Add(batch);
+        db.Add(guest);
+        var primary = new PlanningParticipant { Id = Guid.NewGuid(), GuestId = guest.Id, FullName = guest.RecipientName };
+        db.Add(primary);
+        for (var position = 1; position <= guest.ExpectedPeople; position++)
+            db.Add(new PlanningPlace
+            {
+                Id = Guid.NewGuid(), GuestId = guest.Id, Position = position,
+                ParticipantId = position == 1 ? primary.Id : null
+            });
+        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_guests", guest.Id, "GUEST_CREATED", actorId,
+            metadata: JsonSerializer.Serialize(new { guest.ExpectedPeople, guest.InvitationKind, guest.Side, guest.GroupId })));
+        await db.SaveChangesAsync(ct);
+        var result = await Guests(db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Id == guest.Id)).SingleAsync(ct);
+        batch.ResultJson = JsonSerializer.Serialize(guest.Id);
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return new(result);
+    }
+
+    public async Task<ArchivePlanningGuestResult> ArchiveAsync(Guid weddingId, Guid guestId, int expectedVersion,
+        Guid actorId, CancellationToken ct, IReadOnlySet<Guid>? groupScope = null)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var guest = await db.Set<PlanningGuest>().FromSqlInterpolated($"SELECT * FROM inviteme.planning_guests WHERE \"Id\"={guestId} AND \"WeddingId\"={weddingId} FOR UPDATE").SingleOrDefaultAsync(ct)
+            ?? throw Missing("GUEST_NOT_FOUND");
+        var scopeIds = groupScope?.ToArray();
+        if (scopeIds is not null && (guest.GroupId is null || !scopeIds.Contains(guest.GroupId.Value))) throw Missing("GUEST_NOT_FOUND");
+        if (guest.ArchivedAt is { } archivedAt)
+            return new(guest.Id, guest.Version, archivedAt);
+        if (guest.Version != expectedVersion) throw Conflict("GUEST_VERSION_CONFLICT");
+        if (await db.Set<PlanningCheckIn>().AnyAsync(x => x.GuestId == guestId, ct))
+            throw new InviteMe.Application.Common.Errors.ApplicationProblemException(
+                InviteMe.Application.Common.Errors.ProblemKind.BusinessRule, "GUEST_ALREADY_CHECKED_IN",
+                "Không thể lưu trữ khách đã check-in. Hãy xử lý check-in trước.");
+
+        guest.ArchivedAt = DateTimeOffset.UtcNow;
+        guest.InvitationToken = null;
+        guest.Version++;
+        var placeIds = await db.Set<PlanningPlace>().Where(x => x.GuestId == guestId).Select(x => x.Id).ToArrayAsync(ct);
+        var assignments = await db.Set<PlanningSeatAssignment>().Where(x => placeIds.Contains(x.PlaceId)).ToListAsync(ct);
+        if (assignments.Count > 0)
+        {
+            db.RemoveRange(assignments);
+            var plan = await db.Set<PlanningSeatingPlan>().SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
+            if (plan is not null) plan.Version++;
+        }
+        var queuedInvitations = await db.InvitationSendJobs.Where(x => x.PlanningGuestId == guestId &&
+            (x.Status == "PENDING" || x.Status == "SENDING")).ToListAsync(ct);
+        foreach (var job in queuedInvitations)
+        {
+            job.Status = "FAILED";
+            job.LastErrorCode = "GUEST_ARCHIVED";
+            job.LeaseId = null;
+            job.LeaseUntil = null;
+        }
+        var reminders = await db.Set<PlanningRsvpReminder>().Where(x => x.GuestId == guestId &&
+            (x.Status == PlanningRsvpReminder.Pending || x.Status == PlanningRsvpReminder.Sending)).ToListAsync(ct);
+        foreach (var reminder in reminders) reminder.Cancel("GUEST_ARCHIVED");
+        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_guests", guestId, "GUEST_ARCHIVED", actorId,
+            metadata: JsonSerializer.Serialize(new { previousVersion = expectedVersion, version = guest.Version })));
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return new(guest.Id, guest.Version, guest.ArchivedAt.Value);
+    }
+
     public async Task<PlanningGuestDto> UpdateAsync(Guid weddingId, Guid guestId, UpdatePlanningGuest input, Guid actorId,
         CancellationToken ct, IReadOnlySet<Guid>? groupScope = null)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        var guest = await db.Set<PlanningGuest>().FromSqlInterpolated($"SELECT * FROM inviteme.planning_guests WHERE \"Id\"={guestId} AND \"WeddingId\"={weddingId} FOR UPDATE").SingleOrDefaultAsync(ct)
+        var guest = await db.Set<PlanningGuest>().FromSqlInterpolated($"SELECT * FROM inviteme.planning_guests WHERE \"Id\"={guestId} AND \"WeddingId\"={weddingId} AND \"ArchivedAt\" IS NULL FOR UPDATE").SingleOrDefaultAsync(ct)
             ?? throw Missing("GUEST_NOT_FOUND");
         var scopeIds = groupScope?.ToArray();
         if (scopeIds is not null && (guest.GroupId is null || !scopeIds.Contains(guest.GroupId.Value))) throw Missing("GUEST_NOT_FOUND");
@@ -66,7 +166,7 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
         var createdGroups = new List<PlanningGroupDto>();
         var items = new List<PlanningImportedRow>();
         var warnings = new List<ImportIssue>();
-        var existing = await db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId)
+        var existing = await db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null)
             .Select(x => new { x.RecipientName, x.Phone }).ToListAsync(ct);
         var names = existing.Select(x => PlanningText.Key(x.RecipientName)).ToHashSet();
         var phones = existing.Where(x => x.Phone != null).Select(x => x.Phone!).ToHashSet();
@@ -124,9 +224,22 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
     public Task<PlanningGuestPage> ListAsync(Guid weddingId, int page, int pageSize, string? search, string? side, Guid? groupId, CancellationToken ct) =>
         ListScopedAsync(weddingId, page, pageSize, search, side, groupId, ct, null);
 
+    public async Task<IReadOnlyList<PlanningGroupDto>> ListGroupsAsync(Guid weddingId, CancellationToken ct,
+        IReadOnlySet<Guid>? groupScope = null)
+    {
+        var query = db.Set<PlanningGroup>().AsNoTracking().Where(x => x.WeddingId == weddingId);
+        if (groupScope is not null)
+        {
+            if (groupScope.Count == 0) return [];
+            var ids = groupScope.ToArray();
+            query = query.Where(x => ids.Contains(x.Id));
+        }
+        return await query.OrderBy(x => x.Name).Select(x => new PlanningGroupDto(x.Id, x.Name)).ToListAsync(ct);
+    }
+
     public async Task<PlanningGuestPage> ListScopedAsync(Guid weddingId, int page, int pageSize, string? search, string? side, Guid? groupId, CancellationToken ct, IReadOnlySet<Guid>? groupScope)
     {
-        var query = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId);
+        var query = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null);
         if (groupScope is not null)
         {
             if (groupScope.Count == 0) query = query.Where(_ => false);
@@ -141,7 +254,7 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
 
     public async Task<PlanningGuestDetail> DetailAsync(Guid weddingId, Guid guestId, CancellationToken ct)
     {
-        var guest = await Guests(db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Id == guestId)).SingleOrDefaultAsync(ct) ?? throw Missing("GUEST_NOT_FOUND");
+        var guest = await Guests(db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Id == guestId && x.ArchivedAt == null)).SingleOrDefaultAsync(ct) ?? throw Missing("GUEST_NOT_FOUND");
         var places = await (from place in db.Set<PlanningPlace>().AsNoTracking() where place.GuestId == guestId
             join p in db.Set<PlanningParticipant>() on place.ParticipantId equals (Guid?)p.Id into people
             from p in people.DefaultIfEmpty() orderby place.Position
