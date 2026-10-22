@@ -19,7 +19,7 @@ DotNetEnv.Env.NoClobber().TraversePath().Load();
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
-builder.Services.AddApplication().AddInfrastructure(builder.Configuration).AddApi(builder.Configuration).AddRsvpApi().AddGuestAccessApi(builder.Configuration);
+builder.Services.AddApplication().AddInfrastructure(builder.Configuration).AddApi(builder.Configuration).AddRsvpApi().AddGiftApi().AddGuestAccessApi(builder.Configuration);
 
 var app = builder.Build();
 
@@ -72,6 +72,7 @@ app.MapGet("/media/wedding-covers/{weddingId:guid}/{fileName}", async (Guid wedd
 app.MapCoHosts();
 app.MapAuditLogs();
 app.MapRsvp();
+app.MapGifts();
 app.MapGuestPlanning();
 app.MapInvitationWording();
 app.MapInvitationMessaging();

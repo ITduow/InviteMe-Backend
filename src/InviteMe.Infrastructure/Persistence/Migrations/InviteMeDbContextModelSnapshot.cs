@@ -825,6 +825,293 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Gifts.PlanningGift", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("AccountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("account_id");
+
+                    b.Property<long?>("AmountExpected")
+                        .HasColumnType("bigint")
+                        .HasColumnName("amount_expected");
+
+                    b.Property<long?>("AmountReceived")
+                        .HasColumnType("bigint")
+                        .HasColumnName("amount_received");
+
+                    b.Property<DateTimeOffset?>("ClaimedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claimed_at");
+
+                    b.Property<string>("Code")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("code");
+
+                    b.Property<string>("Confirmation")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("confirmation");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("GiverName")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("giver_name");
+
+                    b.Property<Guid?>("GuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("guest_id");
+
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("message");
+
+                    b.Property<bool>("MessagePublic")
+                        .HasColumnType("boolean")
+                        .HasColumnName("message_public");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("method");
+
+                    b.Property<DateTimeOffset?>("PaidAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("paid_at");
+
+                    b.Property<Guid?>("RecordedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("recorded_by");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique()
+                        .HasDatabaseName("uq_planning_gifts_code")
+                        .HasFilter("code IS NOT NULL");
+
+                    b.HasIndex("GuestId")
+                        .HasDatabaseName("ix_planning_gifts_guest");
+
+                    b.HasIndex("WeddingId", "CreatedAt")
+                        .HasDatabaseName("ix_planning_gifts_wedding");
+
+                    b.HasIndex("WeddingId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("uq_planning_gifts_idempotency")
+                        .HasFilter("idempotency_key IS NOT NULL");
+
+                    b.ToTable("planning_gifts", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_planning_gifts_amounts", "(amount_expected IS NULL OR amount_expected BETWEEN 10000 AND 100000000) AND (amount_received IS NULL OR amount_received > 0)");
+
+                            t.HasCheckConstraint("ck_planning_gifts_confirmation", "confirmation IS NULL OR confirmation IN ('AUTO','MANUAL')");
+
+                            t.HasCheckConstraint("ck_planning_gifts_method", "method IN ('QR','CASH','TRANSFER')");
+
+                            t.HasCheckConstraint("ck_planning_gifts_paid", "(status = 'PAID') = (amount_received IS NOT NULL AND paid_at IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_planning_gifts_qr_code", "(method = 'QR') = (code IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_planning_gifts_status", "status IN ('PENDING','CLAIMED','PAID','CANCELLED')");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Gifts.PlanningGiftAccount", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AccountName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("account_name");
+
+                    b.Property<string>("AccountNumber")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("account_number");
+
+                    b.Property<string>("BankBin")
+                        .IsRequired()
+                        .HasMaxLength(6)
+                        .HasColumnType("character varying(6)")
+                        .HasColumnName("bank_bin");
+
+                    b.Property<string>("BankName")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("bank_name");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Label")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("label");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AccountNumber")
+                        .HasDatabaseName("ix_planning_gift_accounts_number");
+
+                    b.HasIndex("WeddingId", "BankBin", "AccountNumber")
+                        .IsUnique()
+                        .HasDatabaseName("uq_planning_gift_accounts_wedding_account");
+
+                    b.ToTable("planning_gift_accounts", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_planning_gift_accounts_bin", "bank_bin ~ '^[0-9]{6}$'");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Gifts.PlanningGiftTransaction", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AccountNumber")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("account_number");
+
+                    b.Property<long>("Amount")
+                        .HasColumnType("bigint")
+                        .HasColumnName("amount");
+
+                    b.Property<string>("Code")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("code");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("content");
+
+                    b.Property<string>("Gateway")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("gateway");
+
+                    b.Property<Guid?>("GiftId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("gift_id");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("provider");
+
+                    b.Property<long>("ProviderTransactionId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("provider_transaction_id");
+
+                    b.Property<string>("RawPayload")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("raw_payload");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("received_at");
+
+                    b.Property<string>("ReferenceCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("reference_code");
+
+                    b.Property<DateTimeOffset?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("resolved_at");
+
+                    b.Property<Guid?>("ResolvedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resolved_by");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("TransactionAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("transaction_at");
+
+                    b.Property<string>("TransferType")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("transfer_type");
+
+                    b.Property<Guid?>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Provider", "ProviderTransactionId")
+                        .IsUnique()
+                        .HasDatabaseName("uq_planning_gift_transactions_provider_id");
+
+                    b.HasIndex("WeddingId", "Status")
+                        .HasDatabaseName("ix_planning_gift_transactions_wedding_status");
+
+                    b.ToTable("planning_gift_transactions", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_planning_gift_transactions_status", "status IN ('MATCHED','UNMATCHED','DUPLICATE','IGNORED')");
+                        });
+                });
+
             modelBuilder.Entity("InviteMe.Domain.Guests.GuestGroup", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4617,6 +4904,65 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_gift_messages_gift");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Gifts.PlanningGift", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Gifts.PlanningGiftAccount", null)
+                        .WithMany()
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_planning_gifts_account");
+
+                    b.HasOne("InviteMe.Domain.Guests.PlanningGuest", null)
+                        .WithMany()
+                        .HasForeignKey("GuestId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_planning_gifts_guest");
+
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("RecordedBy")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_planning_gifts_user");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_gifts_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Gifts.PlanningGiftAccount", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_gift_accounts_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Gifts.PlanningGiftTransaction", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Gifts.PlanningGift", null)
+                        .WithMany()
+                        .HasForeignKey("GiftId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_planning_gift_transactions_gift");
+
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ResolvedBy")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_planning_gift_transactions_user");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .HasConstraintName("fk_planning_gift_transactions_wedding");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Guests.GuestGroup", b =>

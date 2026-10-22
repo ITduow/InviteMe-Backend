@@ -593,7 +593,7 @@ public sealed class RsvpApiTests
 
         // Export for Excel: UTF-8 BOM, one line per person, formula injection neutralised, contacts only with GUEST_VIEW.
         var export = await owner.GetAsync($"/api/weddings/{w}/rsvps/dashboard/export");
-        Assert.Equal("text/csv", export.Content.Headers.ContentType!.MediaType);
+        Assert.Equal("application/octet-stream", export.Content.Headers.ContentType!.MediaType); // not text/*: Swagger UI keeps the BOM
         var bytes = await export.Content.ReadAsByteArrayAsync();
         Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }, bytes[..3]);
         var lines = System.Text.Encoding.UTF8.GetString(bytes[3..]).Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
