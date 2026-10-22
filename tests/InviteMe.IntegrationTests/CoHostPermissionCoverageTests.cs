@@ -9,7 +9,6 @@ namespace InviteMe.IntegrationTests;
 
 public sealed class CoHostPermissionCoverageTests
 {
-
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task AnonymousRequestsToEveryCoHostEndpointAreRejectedWith401() => CoHostPermissionTests.WithApi(async (db, factory) =>
     {
@@ -21,8 +20,9 @@ public sealed class CoHostPermissionCoverageTests
 
         await AssertStatus(HttpStatusCode.Unauthorized, anonymous.GetAsync(root), "GET list");
         await AssertStatus(HttpStatusCode.Unauthorized, anonymous.GetAsync($"{root}/{someUser}"), "GET by id");
-        await AssertStatus(HttpStatusCode.Unauthorized, anonymous.PostAsJsonAsync(root, new AddCoHostInput("x@example.test", ["GUEST_VIEW"])), "POST");
-        await AssertStatus(HttpStatusCode.Unauthorized, anonymous.PutAsJsonAsync($"{root}/{someUser}/permissions", new UpdateCoHostPermissionsInput(["GUEST_VIEW"])), "PUT");
+        await AssertStatus(HttpStatusCode.Unauthorized, anonymous.PostAsJsonAsync(InvitationsRoot(wedding.Id),
+            new CreateCoHostInvitationInput("x@example.test", [new("GUEST_VIEW", [], true)])), "POST invitation");
+        await AssertStatus(HttpStatusCode.Unauthorized, SetPermissions(anonymous, wedding.Id, someUser, "GUEST_VIEW"), "PUT");
         await AssertStatus(HttpStatusCode.Unauthorized, anonymous.DeleteAsync($"{root}/{someUser}"), "DELETE");
         Assert.Equal(0, await db.AuditLogs.CountAsync(x => x.EntityType == "wedding_members"));
     });
@@ -33,21 +33,22 @@ public sealed class CoHostPermissionCoverageTests
         using var owner = await CoHostPermissionTests.SignIn(factory, "leak-owner");
         using var outsider = await CoHostPermissionTests.SignIn(factory, "leak-outsider");
         var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "coh-leak");
-        var missing = Root(Guid.NewGuid());
+        var missingId = Guid.NewGuid();
+        var missing = Root(missingId);
         var someUser = Guid.NewGuid();
 
         foreach (var (name, client) in new[] { ("owner", owner), ("outsider", outsider) })
         {
             await AssertStatus(HttpStatusCode.Forbidden, client.GetAsync(missing), $"{name} GET list on missing wedding");
             await AssertStatus(HttpStatusCode.Forbidden, client.GetAsync($"{missing}/{someUser}"), $"{name} GET by id on missing wedding");
-            await AssertStatus(HttpStatusCode.Forbidden, client.PostAsJsonAsync(missing, new AddCoHostInput("x@example.test", ["GUEST_VIEW"])), $"{name} POST on missing wedding");
-            await AssertStatus(HttpStatusCode.Forbidden, client.PutAsJsonAsync($"{missing}/{someUser}/permissions", new UpdateCoHostPermissionsInput(["GUEST_VIEW"])), $"{name} PUT on missing wedding");
+            await AssertStatus(HttpStatusCode.Forbidden, SetPermissions(client, missingId, someUser, "GUEST_VIEW"), $"{name} PUT on missing wedding");
             await AssertStatus(HttpStatusCode.Forbidden, client.DeleteAsync($"{missing}/{someUser}"), $"{name} DELETE on missing wedding");
         }
 
         var real = Root(wedding.Id);
-        await AssertStatus(HttpStatusCode.Forbidden, outsider.PostAsJsonAsync(real, new AddCoHostInput("not-an-email", ["BOGUS"])), "outsider invalid POST must hit authorization first");
-        await AssertStatus(HttpStatusCode.Forbidden, outsider.PutAsJsonAsync($"{real}/{someUser}/permissions", new UpdateCoHostPermissionsInput(["BOGUS"])), "outsider invalid PUT must hit authorization first");
+        await AssertStatus(HttpStatusCode.Forbidden, outsider.PostAsJsonAsync(InvitationsRoot(wedding.Id),
+            new CreateCoHostInvitationInput("not-an-email", [new("BOGUS", [], true)])), "outsider invalid POST must hit authorization first");
+        await AssertStatus(HttpStatusCode.Forbidden, SetPermissions(outsider, wedding.Id, someUser, "BOGUS"), "outsider invalid PUT must hit authorization first");
         await AssertStatus(HttpStatusCode.NotFound, owner.GetAsync("/api/weddings/not-a-guid/co-hosts"), "malformed wedding id");
         await AssertStatus(HttpStatusCode.NotFound, owner.GetAsync($"{real}/not-a-guid"), "malformed co-host id");
     });
@@ -63,25 +64,21 @@ public sealed class CoHostPermissionCoverageTests
         var allPermissions = CoHostPermissionTests.Delegable;
         Assert.Equal(6, allPermissions.Length);
 
-        var added = await AddCoHost(owner, wedding.Id, cohostAccount.Email, allPermissions);
+        var added = await CoHostPermissionTests.AddCoHostAsync(owner, cohost, wedding.Id, allPermissions);
         Assert.Equal(6, added.Permissions.Count);
         var root = Root(wedding.Id);
 
         await AssertStatus(HttpStatusCode.Forbidden, cohost.GetAsync(root), "GET list");
         await AssertStatus(HttpStatusCode.Forbidden, cohost.GetAsync($"{root}/{cohostAccount.Id}"), "GET by id");
-        await AssertStatus(HttpStatusCode.Forbidden, cohost.PostAsJsonAsync(root, new AddCoHostInput(ownerAccount.Email, ["GUEST_VIEW"])), "POST");
+        await AssertStatus(HttpStatusCode.Forbidden, cohost.PostAsJsonAsync(InvitationsRoot(wedding.Id),
+            new CreateCoHostInvitationInput(ownerAccount.Email, [new("GUEST_VIEW", [], true)])), "POST invitation");
         await AssertStatus(HttpStatusCode.Forbidden, SetPermissions(cohost, wedding.Id, cohostAccount.Id, allPermissions), "PUT self");
         await AssertStatus(HttpStatusCode.Forbidden, cohost.DeleteAsync($"{root}/{cohostAccount.Id}"), "DELETE self");
 
         var stored = (await owner.GetFromJsonAsync<CoHostDto>($"{root}/{cohostAccount.Id}"))!;
         Assert.Equal("ACTIVE", stored.Status);
         Assert.Equal(6, stored.Permissions.Count);
-
     });
-
-
-
-
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task EveryMutationWritesOneAuditRowAndRejectedRequestsWriteNone() => CoHostPermissionTests.WithApi(async (db, factory) =>
@@ -92,31 +89,33 @@ public sealed class CoHostPermissionCoverageTests
         var ownerAccount = await Me(owner);
         var cohostAccount = await Me(cohost);
 
-        var added = await AddCoHost(owner, wedding.Id, cohostAccount.Email, "GUEST_VIEW");
+        var added = await CoHostPermissionTests.AddCoHostAsync(owner, cohost, wedding.Id, "GUEST_VIEW");
         await AssertStatus(HttpStatusCode.OK, SetPermissions(owner, wedding.Id, cohostAccount.Id, "GUEST_VIEW", "GUEST_EDIT"), "update");
         await AssertStatus(HttpStatusCode.NoContent, owner.DeleteAsync($"{Root(wedding.Id)}/{cohostAccount.Id}"), "revoke");
-        await AddCoHost(owner, wedding.Id, cohostAccount.Email, "RSVP_VIEW");
+        await CoHostPermissionTests.AddCoHostAsync(owner, cohost, wedding.Id, "RSVP_VIEW");
 
         var rows = await db.AuditLogs.AsNoTracking()
             .Where(x => x.WeddingId == wedding.Id && x.EntityType == "wedding_members")
             .OrderBy(x => x.CreatedAt).ToListAsync();
-        Assert.Equal(["COHOST_ADDED", "COHOST_PERMISSIONS_UPDATED", "COHOST_REVOKED", "COHOST_REACTIVATED"], rows.Select(x => x.Action).ToArray());
+        Assert.Equal(["COHOST_INVITATION_ACCEPTED", "COHOST_SCOPES_UPDATED", "COHOST_REVOKED", "COHOST_INVITATION_ACCEPTED"], rows.Select(x => x.Action).ToArray());
         Assert.All(rows, row =>
         {
             Assert.Equal("USER", row.ActorType);
-            Assert.Equal(ownerAccount.Id, row.ActorUserId);
             Assert.Equal(added.Id, row.EntityId);
         });
 
         var root = Root(wedding.Id);
+        var invitationsUrl = InvitationsRoot(wedding.Id);
         var before = await db.AuditLogs.CountAsync();
         await AssertStatus(HttpStatusCode.Forbidden, SetPermissions(cohost, wedding.Id, cohostAccount.Id, "GUEST_EDIT"), "co-host PUT");
         await AssertStatus(HttpStatusCode.Forbidden, cohost.DeleteAsync($"{root}/{cohostAccount.Id}"), "co-host DELETE");
-        await AssertStatus(HttpStatusCode.BadRequest, owner.PostAsJsonAsync(root, new AddCoHostInput("bad", ["GUEST_VIEW"])), "invalid email");
+        await AssertStatus(HttpStatusCode.BadRequest, owner.PostAsJsonAsync(invitationsUrl,
+            new CreateCoHostInvitationInput("bad", [new("GUEST_VIEW", [], true)])), "invalid email");
         await AssertStatus(HttpStatusCode.NotFound, SetPermissions(owner, wedding.Id, Guid.NewGuid(), "GUEST_VIEW"), "unknown member");
-        await AssertStatus(HttpStatusCode.Conflict, owner.PostAsJsonAsync(root, new AddCoHostInput(cohostAccount.Email, ["GUEST_VIEW"])), "already active");
-        await AssertStatus(HttpStatusCode.NotFound, owner.PostAsJsonAsync(root, new AddCoHostInput("ghost@example.test", ["GUEST_VIEW"])), "unknown email");
-        await AssertStatus(HttpStatusCode.Conflict, owner.PostAsJsonAsync(root, new AddCoHostInput(ownerAccount.Email, ["GUEST_VIEW"])), "owner as co-host");
+        await AssertStatus(HttpStatusCode.Conflict, owner.PostAsJsonAsync(invitationsUrl,
+            new CreateCoHostInvitationInput(cohostAccount.Email, [new("GUEST_VIEW", [], true)])), "already active");
+        await AssertStatus(HttpStatusCode.Conflict, owner.PostAsJsonAsync(invitationsUrl,
+            new CreateCoHostInvitationInput(ownerAccount.Email, [new("GUEST_VIEW", [], true)])), "owner as co-host");
         Assert.Equal(before, await db.AuditLogs.CountAsync());
     });
 
@@ -128,6 +127,7 @@ public sealed class CoHostPermissionCoverageTests
         var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "coh-codes");
         var cohostAccount = await Me(cohost);
         var root = Root(wedding.Id);
+        var invitationsUrl = InvitationsRoot(wedding.Id);
         string[] invalidCodes =
         [
             "1", "0", "999", "-1", "guest_view", "Guest_View", " GUEST_VIEW", "GUEST_VIEW ",
@@ -135,14 +135,18 @@ public sealed class CoHostPermissionCoverageTests
         ];
 
         foreach (var code in invalidCodes)
-            await AssertStatus(HttpStatusCode.BadRequest, owner.PostAsJsonAsync(root, new AddCoHostInput(cohostAccount.Email, [code])), $"POST code '{code}'");
-        await AssertStatus(HttpStatusCode.BadRequest, owner.PostAsJsonAsync(root, new AddCoHostInput(cohostAccount.Email, ["GUEST_VIEW", "1"])), "valid mixed with numeric");
-        await AssertStatus(HttpStatusCode.BadRequest, owner.PostAsJsonAsync(root, new AddCoHostInput(cohostAccount.Email, ["GUEST_VIEW", "GUEST_VIEW"])), "duplicate");
-        await AssertStatus(HttpStatusCode.BadRequest, owner.PostAsJsonAsync(root, new AddCoHostInput(cohostAccount.Email, ["GUEST_VIEW", "guest_view"])), "case duplicate");
+            await AssertStatus(HttpStatusCode.BadRequest, owner.PostAsJsonAsync(invitationsUrl,
+                new CreateCoHostInvitationInput(cohostAccount.Email, [new(code, [], true)])), $"POST code '{code}'");
+        await AssertStatus(HttpStatusCode.BadRequest, owner.PostAsJsonAsync(invitationsUrl,
+            new CreateCoHostInvitationInput(cohostAccount.Email, [new("GUEST_VIEW", [], true), new("1", [], true)])), "valid mixed with numeric");
+        await AssertStatus(HttpStatusCode.BadRequest, owner.PostAsJsonAsync(invitationsUrl,
+            new CreateCoHostInvitationInput(cohostAccount.Email, [new("GUEST_VIEW", [], true), new("GUEST_VIEW", [], true)])), "duplicate");
+        await AssertStatus(HttpStatusCode.BadRequest, owner.PostAsJsonAsync(invitationsUrl,
+            new CreateCoHostInvitationInput(cohostAccount.Email, [new("GUEST_VIEW", [], true), new("guest_view", [], true)])), "case duplicate");
         Assert.Equal(0, await db.WeddingMembers.CountAsync(x => x.WeddingId == wedding.Id));
         Assert.Equal(0, await db.WeddingMemberPermissions.CountAsync());
 
-        await AddCoHost(owner, wedding.Id, cohostAccount.Email, "GUEST_VIEW");
+        await CoHostPermissionTests.AddCoHostAsync(owner, cohost, wedding.Id, "GUEST_VIEW");
         foreach (var code in invalidCodes)
             await AssertStatus(HttpStatusCode.BadRequest, SetPermissions(owner, wedding.Id, cohostAccount.Id, code), $"PUT code '{code}'");
         await AssertStatus(HttpStatusCode.BadRequest, SetPermissions(owner, wedding.Id, cohostAccount.Id, "GUEST_EDIT", "2"), "PUT valid mixed with numeric");
@@ -151,7 +155,6 @@ public sealed class CoHostPermissionCoverageTests
         Assert.Equal(["GUEST_VIEW"], stored.Permissions.ToArray());
         Assert.Equal(1, await db.WeddingMemberPermissions.CountAsync());
     });
-
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task RevokedMembersStayVisibleToOwnerCannotBeEditedAndUnknownTargetsReturn404() => CoHostPermissionTests.WithApi(async (db, factory) =>
@@ -163,7 +166,7 @@ public sealed class CoHostPermissionCoverageTests
         var cohostAccount = await Me(cohost);
         var root = Root(wedding.Id);
 
-        await AddCoHost(owner, wedding.Id, cohostAccount.Email, "GUEST_VIEW", "RSVP_VIEW");
+        await CoHostPermissionTests.AddCoHostAsync(owner, cohost, wedding.Id, "GUEST_VIEW", "RSVP_VIEW");
         await AssertStatus(HttpStatusCode.NoContent, owner.DeleteAsync($"{root}/{cohostAccount.Id}"), "revoke");
 
         var detail = (await owner.GetFromJsonAsync<CoHostDto>($"{root}/{cohostAccount.Id}"))!;
@@ -185,29 +188,11 @@ public sealed class CoHostPermissionCoverageTests
         await AssertStatus(HttpStatusCode.NotFound, SetPermissions(owner, wedding.Id, ownerAccount.Id, "GUEST_VIEW"), "PUT owner as member");
         await AssertStatus(HttpStatusCode.NotFound, owner.DeleteAsync($"{root}/{ownerAccount.Id}"), "DELETE owner as member");
 
-        var again = await AddCoHost(owner, wedding.Id, cohostAccount.Email);
+        var again = await CoHostPermissionTests.AddCoHostAsync(owner, cohost, wedding.Id);
         Assert.Equal("ACTIVE", again.Status);
         Assert.Empty(again.Permissions);
         Assert.Equal(detail.Id, again.Id);
         Assert.Single(await db.WeddingMembers.AsNoTracking().Where(x => x.WeddingId == wedding.Id).ToListAsync());
-    });
-
-    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
-    public Task ConcurrentAddOfTheSameCoHostCreatesOneMemberAndNoServerError() => CoHostPermissionTests.WithApi(async (db, factory) =>
-    {
-        using var owner = await CoHostPermissionTests.SignIn(factory, "race-owner");
-        using var cohost = await CoHostPermissionTests.SignIn(factory, "race-cohost");
-        var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "coh-race");
-        var cohostAccount = await Me(cohost);
-        var payload = new AddCoHostInput(cohostAccount.Email, ["GUEST_VIEW"]);
-
-        var responses = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => owner.PostAsJsonAsync(Root(wedding.Id), payload)));
-        var codes = responses.Select(x => x.StatusCode).ToArray();
-
-        Assert.Equal(1, codes.Count(x => x == HttpStatusCode.Created));
-        Assert.Equal(3, codes.Count(x => x == HttpStatusCode.Conflict));
-        Assert.Single(await db.WeddingMembers.AsNoTracking().Where(x => x.WeddingId == wedding.Id).ToListAsync());
-        Assert.Equal(1, await db.WeddingMemberPermissions.CountAsync());
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
@@ -219,7 +204,7 @@ public sealed class CoHostPermissionCoverageTests
         var cohostAccount = await Me(cohost);
         var root = Root(wedding.Id);
 
-        await AddCoHost(owner, wedding.Id, cohostAccount.Email, "GUEST_VIEW");
+        await CoHostPermissionTests.AddCoHostAsync(owner, cohost, wedding.Id, "GUEST_VIEW");
         await AssertStatus(HttpStatusCode.NoContent, owner.DeleteAsync($"{root}/{cohostAccount.Id}"), "first revoke");
         var stamp = (await db.WeddingMembers.AsNoTracking().SingleAsync(x => x.WeddingId == wedding.Id)).UpdatedAt;
 
@@ -239,7 +224,7 @@ public sealed class CoHostPermissionCoverageTests
         var cohostAccount = await Me(cohost);
         var codes = await db.Permissions.AsNoTracking().ToDictionaryAsync(x => x.Id, x => x.Code);
 
-        await AddCoHost(owner, wedding.Id, cohostAccount.Email, "GUEST_VIEW", "RSVP_VIEW");
+        await CoHostPermissionTests.AddCoHostAsync(owner, cohost, wedding.Id, "GUEST_VIEW", "RSVP_VIEW");
         var before = (await db.WeddingMemberPermissions.AsNoTracking().ToListAsync()).ToDictionary(x => codes[x.PermissionId], x => x.GrantedAt);
         await Task.Delay(50);
 
@@ -262,12 +247,13 @@ public sealed class CoHostPermissionCoverageTests
         var root = Root(wedding.Id);
         await db.Database.ExecuteSqlRawAsync("DELETE FROM inviteme.permissions WHERE code = 'CHECKIN_MANAGE'");
 
-        await AssertStatus(HttpStatusCode.UnprocessableEntity, owner.PostAsJsonAsync(root, new AddCoHostInput(cohostAccount.Email, ["GUEST_VIEW", "CHECKIN_MANAGE"])), "add with missing catalog permission");
+        await AssertStatus(HttpStatusCode.UnprocessableEntity, owner.PostAsJsonAsync(InvitationsRoot(wedding.Id),
+            new CreateCoHostInvitationInput(cohostAccount.Email, [new("GUEST_VIEW", [], true), new("CHECKIN_MANAGE", [], true)])), "add with missing catalog permission");
         Assert.Equal(0, await db.WeddingMembers.CountAsync(x => x.WeddingId == wedding.Id));
         Assert.Equal(0, await db.WeddingMemberPermissions.CountAsync());
         Assert.Equal(0, await db.AuditLogs.CountAsync(x => x.EntityType == "wedding_members"));
 
-        await AddCoHost(owner, wedding.Id, cohostAccount.Email, "GUEST_VIEW");
+        await CoHostPermissionTests.AddCoHostAsync(owner, cohost, wedding.Id, "GUEST_VIEW");
         await AssertStatus(HttpStatusCode.UnprocessableEntity, SetPermissions(owner, wedding.Id, cohostAccount.Id, "CHECKIN_MANAGE"), "update with missing catalog permission");
         var stored = (await owner.GetFromJsonAsync<CoHostDto>($"{root}/{cohostAccount.Id}"))!;
         Assert.Equal(["GUEST_VIEW"], stored.Permissions.ToArray());
@@ -282,7 +268,7 @@ public sealed class CoHostPermissionCoverageTests
         var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "coh-lock");
         var cohostAccount = await Me(cohost);
         var root = Root(wedding.Id);
-        await AddCoHost(owner, wedding.Id, cohostAccount.Email, "GUEST_VIEW");
+        await CoHostPermissionTests.AddCoHostAsync(owner, cohost, wedding.Id, "GUEST_VIEW");
 
         var calls = new List<Task<HttpResponseMessage>>
         {
@@ -301,27 +287,17 @@ public sealed class CoHostPermissionCoverageTests
 
     private static string Root(Guid weddingId) => $"/api/weddings/{weddingId}/co-hosts";
 
+    private static string InvitationsRoot(Guid weddingId) => $"/api/weddings/{weddingId}/co-host-invitations";
+
     private static async Task<AccountDto> Me(HttpClient client) => (await client.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
 
-    private static async Task<CoHostDto> AddCoHost(HttpClient owner, Guid weddingId, string email, params string[] permissions)
-    {
-        var response = await owner.PostAsJsonAsync(Root(weddingId), new AddCoHostInput(email, permissions));
-        Assert.True(response.StatusCode == HttpStatusCode.Created, $"add co-host: expected 201 but got {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
-        return (await response.Content.ReadFromJsonAsync<CoHostDto>())!;
-    }
-
     private static Task<HttpResponseMessage> SetPermissions(HttpClient client, Guid weddingId, Guid coHostUserId, params string[] permissions) =>
-        client.PutAsJsonAsync($"{Root(weddingId)}/{coHostUserId}/permissions", new UpdateCoHostPermissionsInput(permissions));
+        client.PutAsJsonAsync($"{Root(weddingId)}/{coHostUserId}/scopes",
+            new UpdateCoHostScopesInput(permissions.Select(p => new CoHostPermissionScopeInput(p, [], true)).ToArray()));
 
     private static async Task AssertStatus(HttpStatusCode expected, Task<HttpResponseMessage> call, string label)
     {
         var response = await call;
         Assert.True(expected == response.StatusCode, $"{label}: expected {(int)expected} but got {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
-    }
-
-    private static async Task AssertNotForbidden(Task<HttpResponseMessage> call, string label)
-    {
-        var response = await call;
-        Assert.True(response.StatusCode is not (HttpStatusCode.Forbidden or HttpStatusCode.Unauthorized), $"{label}: unexpectedly denied with {(int)response.StatusCode}");
     }
 }

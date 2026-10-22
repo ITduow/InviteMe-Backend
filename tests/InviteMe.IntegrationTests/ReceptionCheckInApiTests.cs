@@ -111,10 +111,11 @@ public sealed class ReceptionCheckInApiTests
         using var staff = await CoHostPermissionTests.SignIn(factory, "reception-staff");
         using var planner = await CoHostPermissionTests.SignIn(factory, "reception-planner");
         using var outsider = await CoHostPermissionTests.SignIn(factory, "reception-outsider");
-        Assert.True((await owner.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts",
-            new AddCoHostInput("reception-staff@example.test", ["CHECKIN_MANAGE"]))).IsSuccessStatusCode);
-        Assert.True((await owner.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts",
-            new AddCoHostInput("reception-planner@example.test", ["GUEST_VIEW", "GUEST_EDIT"]))).IsSuccessStatusCode);
+
+        await CoHostPermissionTests.AddCoHostAsync(owner, staff, wedding.Id, "CHECKIN_MANAGE");
+        await CoHostPermissionTests.AddCoHostAsync(owner, planner, wedding.Id, "GUEST_VIEW", "GUEST_EDIT");
+
+
         Assert.Equal(CheckInOutcome.AlreadyCheckedIn, Assert.Single((await Read<CheckInResultDto>(await staff.PostAsJsonAsync(path + "/check-ins",
             new CheckInGuests(null, binh.Id, [binhPlace])))).Places).Result);
         Assert.Equal(4, (await Read<CheckInSummaryDto>(await staff.GetAsync(path + "/check-ins/summary"))).CheckedIn);

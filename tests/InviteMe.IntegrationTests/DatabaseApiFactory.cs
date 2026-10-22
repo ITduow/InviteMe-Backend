@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using InviteMe.Application.Features.Identity.Accounts;
+using InviteMe.Application.Features.Weddings.CoHosts;
 using InviteMe.Application.Ports.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -10,6 +12,10 @@ namespace InviteMe.IntegrationTests;
 
 internal sealed class DatabaseApiFactory(string connection, string? mediaDirectory = null) : WebApplicationFactory<Program>
 {
+    private static readonly ConcurrentDictionary<string, string> InvitationTokens = new(StringComparer.OrdinalIgnoreCase);
+
+    public static string GetInvitationToken(string email) => InvitationTokens[email.Trim()];
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
@@ -23,6 +29,8 @@ internal sealed class DatabaseApiFactory(string connection, string? mediaDirecto
         {
             services.RemoveAll<IAccountEmailSender>();
             services.AddScoped<IAccountEmailSender, AutoConfirmTestEmailSender>();
+            services.RemoveAll<ICoHostInvitationEmailSender>();
+            services.AddScoped<ICoHostInvitationEmailSender, CapturingCoHostInvitationEmailSender>();
             services.RemoveAll<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage>();
             services.AddSingleton<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage, InviteMe.Infrastructure.Media.LocalWeddingMediaStorage>();
         });
@@ -43,5 +51,14 @@ internal sealed class DatabaseApiFactory(string connection, string? mediaDirecto
             request.Email.Equals("has-data@example.test", StringComparison.OrdinalIgnoreCase)
                 ? Task.CompletedTask
                 : store.ConfirmEmailAsync(new ConfirmEmail(request.Email, request.Code), ct);
+    }
+
+    private sealed class CapturingCoHostInvitationEmailSender : ICoHostInvitationEmailSender
+    {
+        public Task SendAsync(string email, string weddingTitle, string token, DateTimeOffset expiresAt, CancellationToken ct)
+        {
+            InvitationTokens[email.Trim()] = token;
+            return Task.CompletedTask;
+        }
     }
 }

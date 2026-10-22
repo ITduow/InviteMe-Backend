@@ -588,7 +588,7 @@ public sealed class RsvpApiTests
         // A co-host with RSVP_VIEW but no GUEST_VIEW sees the numbers but not phone/email.
         using var viewer = await SignIn(factory, "dash-viewer");
         var viewerEmail = (await viewer.GetFromJsonAsync<AccountDto>("/api/auth/me"))!.Email;
-        Assert.Equal(HttpStatusCode.Created, (await owner.PostAsJsonAsync($"/api/weddings/{w}/co-hosts", new AddCoHostInput(viewerEmail, ["RSVP_VIEW"]))).StatusCode);
+        await CoHostPermissionTests.AddCoHostAsync(owner, viewer, w, "RSVP_VIEW");
         Assert.Null(Assert.Single((await viewer.GetFromJsonAsync<PagedResult<RsvpGuestRowDto>>($"/api/weddings/{w}/rsvps/dashboard/guests?status=NOT_RESPONDED"))!.Items).Phone);
 
         // Export for Excel: UTF-8 BOM, one line per person, formula injection neutralised, contacts only with GUEST_VIEW.
@@ -633,7 +633,7 @@ public sealed class RsvpApiTests
         using var viewer = await SignIn(factory, "viewer"); using var outsider = await SignIn(factory, "outsider");
         using var anonymous = factory.CreateHttpsClient();
         var viewerEmail = (await viewer.GetFromJsonAsync<AccountDto>("/api/auth/me"))!.Email;
-        Assert.Equal(HttpStatusCode.Created, (await owner.PostAsJsonAsync($"/api/weddings/{w}/co-hosts", new AddCoHostInput(viewerEmail, ["RSVP_VIEW"]))).StatusCode);
+        await CoHostPermissionTests.AddCoHostAsync(owner, viewer, w, "RSVP_VIEW");
         var url = $"/api/weddings/{w}/rsvps/{a.GuestId}"; var body = new SubmitRsvp(0, "ATTENDING", [a.Main]);
 
         foreach (var read in new[] { url, $"/api/weddings/{w}/rsvps/waitlist", $"/api/weddings/{w}/rsvps/requests", $"/api/weddings/{w}/rsvp-settings" })

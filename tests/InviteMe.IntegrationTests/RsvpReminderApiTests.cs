@@ -146,7 +146,7 @@ public sealed class RsvpReminderApiTests
         await InvitationEmailed(db, w, ownerId, guests["An"]);
         using var viewer = await SignIn(factory, "reminder-viewer"); using var outsider = await SignIn(factory, "reminder-outsider");
         var viewerEmail = (await viewer.GetFromJsonAsync<AccountDto>("/api/auth/me"))!.Email;
-        Assert.Equal(HttpStatusCode.Created, (await owner.PostAsJsonAsync($"/api/weddings/{w}/co-hosts", new AddCoHostInput(viewerEmail, ["RSVP_VIEW"]))).StatusCode);
+        await CoHostPermissionTests.AddCoHostAsync(owner, viewer, w, "RSVP_VIEW");
         var path = $"/api/weddings/{w}/rsvps/reminders";
 
         Assert.Equal(HttpStatusCode.OK, (await viewer.GetAsync(path + "/summary")).StatusCode);
@@ -165,8 +165,8 @@ public sealed class RsvpReminderApiTests
         var groupId = (await Read<PlanningImportResult>(await owner.SendAsync(groupImport))).CreatedGroups.Single().Id;
         using var scoped = await SignIn(factory, "reminder-scoped");
         var scopedMe = (await scoped.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
-        Assert.Equal(HttpStatusCode.Created, (await owner.PostAsJsonAsync($"/api/weddings/{w}/co-hosts",
-            new AddCoHostInput(scopedMe.Email, ["RSVP_VIEW"]))).StatusCode);
+        await CoHostPermissionTests.AddCoHostAsync(owner, scoped, w, "RSVP_VIEW");
+
         var scopes = await owner.PutAsJsonAsync($"/api/weddings/{w}/co-hosts/{scopedMe.Id}/scopes", new UpdateCoHostScopesInput([
             new CoHostPermissionScopeInput("RSVP_VIEW", [groupId])]));
         Assert.True(scopes.IsSuccessStatusCode, await scopes.Content.ReadAsStringAsync());

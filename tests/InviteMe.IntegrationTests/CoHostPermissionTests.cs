@@ -13,7 +13,6 @@ public sealed class CoHostPermissionTests
 {
     private const string Password = "Test-only-Pass123!";
 
-
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task OwnerOnlyPoliciesBlockCoHostsAndNonMembers() => WithApi(async (db, factory) =>
     {
@@ -25,22 +24,25 @@ public sealed class CoHostPermissionTests
         var cohostAccount = (await cohost.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
         var ownerAccount = (await owner.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
 
-        await owner.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts", new AddCoHostInput(cohostAccount.Email, ["GUEST_VIEW"]));
+        await AddCoHostAsync(owner, cohost, wedding.Id, "GUEST_VIEW");
 
         Assert.Equal(HttpStatusCode.Forbidden, (await cohost.GetAsync($"/api/weddings/{wedding.Id}/co-hosts")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await outsider.GetAsync($"/api/weddings/{wedding.Id}/co-hosts")).StatusCode);
 
-        Assert.Equal(HttpStatusCode.Forbidden, (await cohost.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts", new AddCoHostInput("new@example.test", ["GUEST_VIEW"]))).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await outsider.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts", new AddCoHostInput("new@example.test", ["GUEST_VIEW"]))).StatusCode);
+        var inviteInput = new CreateCoHostInvitationInput("new@example.test", [new("GUEST_VIEW", [], true)]);
+        Assert.Equal(HttpStatusCode.Forbidden, (await cohost.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-host-invitations", inviteInput)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await outsider.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-host-invitations", inviteInput)).StatusCode);
 
-        Assert.Equal(HttpStatusCode.Forbidden, (await cohost.PutAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts/{cohostAccount.Id}/permissions", new UpdateCoHostPermissionsInput(["GUEST_EDIT"]))).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await outsider.PutAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts/{cohostAccount.Id}/permissions", new UpdateCoHostPermissionsInput(["GUEST_EDIT"]))).StatusCode);
+        var scopeInput = new UpdateCoHostScopesInput([new("GUEST_EDIT", [], true)]);
+        Assert.Equal(HttpStatusCode.Forbidden, (await cohost.PutAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts/{cohostAccount.Id}/scopes", scopeInput)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await outsider.PutAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts/{cohostAccount.Id}/scopes", scopeInput)).StatusCode);
 
         Assert.Equal(HttpStatusCode.Forbidden, (await cohost.DeleteAsync($"/api/weddings/{wedding.Id}/co-hosts/{cohostAccount.Id}")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await outsider.DeleteAsync($"/api/weddings/{wedding.Id}/co-hosts/{cohostAccount.Id}")).StatusCode);
 
-        var selfAdd = await owner.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts", new AddCoHostInput(ownerAccount.Email, ["GUEST_VIEW"]));
-        Assert.Equal(HttpStatusCode.Conflict, selfAdd.StatusCode);
+        var selfInvite = await owner.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-host-invitations",
+            new CreateCoHostInvitationInput(ownerAccount.Email, [new("GUEST_VIEW", [], true)]));
+        Assert.Equal(HttpStatusCode.Conflict, selfInvite.StatusCode);
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
@@ -51,23 +53,24 @@ public sealed class CoHostPermissionTests
 
         var wedding = await CreateWedding(db, owner, "coh-validation");
         var cohostAccount = (await cohost.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
+        var invitationsUrl = $"/api/weddings/{wedding.Id}/co-host-invitations";
 
-        Assert.Equal(HttpStatusCode.BadRequest, (await owner.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts", new AddCoHostInput("invalid-email", ["GUEST_VIEW"]))).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await owner.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts", new AddCoHostInput(cohostAccount.Email, ["INVALID_PERMISSION"]))).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await owner.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts", new AddCoHostInput(cohostAccount.Email, ["GUEST_VIEW", "GUEST_VIEW"]))).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await owner.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts", new AddCoHostInput("nonexistent@example.test", ["GUEST_VIEW"]))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await owner.PostAsJsonAsync(invitationsUrl,
+            new CreateCoHostInvitationInput("invalid-email", [new("GUEST_VIEW", [], true)]))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await owner.PostAsJsonAsync(invitationsUrl,
+            new CreateCoHostInvitationInput(cohostAccount.Email, [new("INVALID_PERMISSION", [], true)]))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await owner.PostAsJsonAsync(invitationsUrl,
+            new CreateCoHostInvitationInput(cohostAccount.Email, [new("GUEST_VIEW", [], true), new("GUEST_VIEW", [], true)]))).StatusCode);
 
-        var initialAdd = await owner.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts", new AddCoHostInput(cohostAccount.Email, ["GUEST_VIEW"]));
-        Assert.Equal(HttpStatusCode.Created, initialAdd.StatusCode);
+        await AddCoHostAsync(owner, cohost, wedding.Id, "GUEST_VIEW");
 
-        var duplicateAdd = await owner.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts", new AddCoHostInput(cohostAccount.Email, ["GUEST_VIEW"]));
-        Assert.Equal(HttpStatusCode.Conflict, duplicateAdd.StatusCode);
+        var duplicateInvite = await owner.PostAsJsonAsync(invitationsUrl,
+            new CreateCoHostInvitationInput(cohostAccount.Email, [new("GUEST_VIEW", [], true)]));
+        Assert.Equal(HttpStatusCode.Conflict, duplicateInvite.StatusCode);
 
         await owner.DeleteAsync($"/api/weddings/{wedding.Id}/co-hosts/{cohostAccount.Id}");
 
-        var reactivate = await owner.PostAsJsonAsync($"/api/weddings/{wedding.Id}/co-hosts", new AddCoHostInput(cohostAccount.Email, ["RSVP_VIEW", "CHECKIN_MANAGE"]));
-        Assert.Equal(HttpStatusCode.Created, reactivate.StatusCode);
-        var reactivated = (await reactivate.Content.ReadFromJsonAsync<CoHostDto>())!;
+        var reactivated = await AddCoHostAsync(owner, cohost, wedding.Id, "RSVP_VIEW", "CHECKIN_MANAGE");
         Assert.Equal("ACTIVE", reactivated.Status);
         Assert.Equal(2, reactivated.Permissions.Count);
         Assert.Contains("RSVP_VIEW", reactivated.Permissions);
@@ -89,20 +92,42 @@ public sealed class CoHostPermissionTests
     internal static async Task<InviteMe.Domain.Weddings.Wedding> CreateWedding(InviteMeDbContext db, HttpClient client, string slug)
     {
         var owner = (await client.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
-        var wedding = InviteMe.Domain.Weddings.Wedding.Create(owner.Id, "CoHost Test Wedding", slug, 100);
+        var wedding = InviteMe.Domain.Weddings.Wedding.Create(owner.Id, "Co-Host Test Wedding", slug, 100);
         db.Weddings.Add(wedding);
         await db.SaveChangesAsync();
         return wedding;
     }
 
-    internal static async Task<HttpClient> SignIn(DatabaseApiFactory factory, string name)
+    internal static async Task<CoHostDto> AddCoHostAsync(HttpClient owner, HttpClient cohost, Guid weddingId, params string[] permissions)
+    {
+        var cohostAccount = (await cohost.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
+        var grants = (permissions.Length == 0 ? ["GUEST_VIEW"] : permissions)
+            .Select(p => new CoHostPermissionScopeInput(p, [], true))
+            .ToArray();
+        var invite = await owner.PostAsJsonAsync($"/api/weddings/{weddingId}/co-host-invitations",
+            new CreateCoHostInvitationInput(cohostAccount.Email, grants));
+        Assert.Equal(HttpStatusCode.Accepted, invite.StatusCode);
+        var token = DatabaseApiFactory.GetInvitationToken(cohostAccount.Email);
+        var accept = await cohost.PostAsJsonAsync("/api/co-host-invitations/accept", new { Token = token });
+        Assert.Equal(HttpStatusCode.NoContent, accept.StatusCode);
+        if (permissions.Length == 0)
+        {
+            var clear = await owner.PutAsJsonAsync($"/api/weddings/{weddingId}/co-hosts/{cohostAccount.Id}/scopes", new UpdateCoHostScopesInput([]));
+            Assert.Equal(HttpStatusCode.OK, clear.StatusCode);
+        }
+        return (await owner.GetFromJsonAsync<CoHostDto>($"/api/weddings/{weddingId}/co-hosts/{cohostAccount.Id}"))!;
+    }
+
+    internal static async Task<HttpClient> SignIn(DatabaseApiFactory factory, string prefix)
     {
         var client = factory.CreateHttpsClient();
-        var email = $"{name}@example.test";
-        await client.PostAsJsonAsync("/api/auth/register", new RegisterAccount(email, Password, name));
-        var tokenResponse = await client.PostAsJsonAsync("/api/auth/login", new LoginAccount(email, Password));
-        var token = (await tokenResponse.Content.ReadFromJsonAsync<TokenDto>())!;
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
+        var email = $"{prefix}-{Guid.NewGuid():N}@example.test";
+        var register = await client.PostAsJsonAsync("/api/auth/register", new RegisterAccount(email, Password, prefix));
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+        var login = await client.PostAsJsonAsync("/api/auth/login", new LoginAccount(email, Password));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var tokens = (await login.Content.ReadFromJsonAsync<TokenDto>())!;
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
         return client;
     }
 }
