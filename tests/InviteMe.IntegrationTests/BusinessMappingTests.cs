@@ -35,7 +35,7 @@ public sealed class BusinessMappingTests
             while (await reader.ReadAsync()) indexes[reader.GetString(0) + "." + reader.GetString(1)] = reader.GetString(2);
 
         var tables = db.Model.GetEntityTypes().Where(e => e.GetTableName() is not null).ToList();
-        Assert.Equal(68, tables.Count); // Previous 43 + 8 planning-v2 tables + thank-you/wording + 8 planning RSVP (incl. reminders) + 3 invitation messaging tables + planning check-ins + 3 co-host invitation/scope tables.
+        Assert.Equal(71, tables.Count); // Previous 43 + 8 planning-v2 tables + thank-you/wording + 8 planning RSVP (incl. reminders) + 3 invitation messaging tables + planning check-ins + 3 co-host invitation/scope tables + 3 planning gift tables.
         foreach (var entity in db.Model.GetEntityTypes())
         {
             var view = entity.GetViewName();
