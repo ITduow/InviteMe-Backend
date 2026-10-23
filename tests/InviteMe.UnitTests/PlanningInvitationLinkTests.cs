@@ -50,7 +50,7 @@ public sealed class PlanningInvitationLinkTests
             IReadOnlySet<Guid>? groupScope = null) => Task.FromResult<IReadOnlyList<PlanningGroupDto>>([]);
         public Task<PlanningGuestDetail> DetailAsync(Guid id, Guid guestId, CancellationToken ct) =>
             Task.FromResult(new PlanningGuestDetail(Guest, []));
-        public Task<PlanningImportOutcome> ImportAsync(Guid id, Guid key, PlanningImport input, CancellationToken ct) =>
+        public Task<PlanningImportOutcome> ImportAsync(Guid id, Guid key, PlanningImport input, Guid actorId, CancellationToken ct) =>
             throw new NotSupportedException();
         public Task<CreatePlanningGuestOutcome> CreateAsync(Guid weddingId, Guid key, CreatePlanningGuest input,
             Guid actorId, CancellationToken ct, IReadOnlySet<Guid>? groupScope = null) => throw new NotSupportedException();

@@ -10,7 +10,10 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace InviteMe.IntegrationTests;
 
-internal sealed class DatabaseApiFactory(string connection, string? mediaDirectory = null) : WebApplicationFactory<Program>
+internal sealed class DatabaseApiFactory(
+    string connection,
+    string? mediaDirectory = null,
+    IReadOnlyDictionary<string, string?>? additionalConfiguration = null) : WebApplicationFactory<Program>
 {
     private static readonly ConcurrentDictionary<string, string> InvitationTokens = new(StringComparer.OrdinalIgnoreCase);
 
@@ -19,12 +22,21 @@ internal sealed class DatabaseApiFactory(string connection, string? mediaDirecto
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
-        builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+        builder.ConfigureAppConfiguration((_, config) =>
         {
-            ["ConnectionStrings:PostgreSQL"] = connection, ["Jwt:Issuer"] = "InviteMe.Tests", ["Jwt:Audience"] = "InviteMe.Tests.Web",
-            ["Jwt:SigningKey"] = Convert.ToBase64String(ApiFactory.SigningKey), ["Frontend:Url"] = "http://localhost:3000",
-            ["WeddingMedia:LocalDirectory"] = mediaDirectory ?? Path.Combine(Path.GetTempPath(), "InviteMe-Test-Media", Guid.NewGuid().ToString("N"))
-        }));
+            var values = new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:PostgreSQL"] = connection,
+                ["Jwt:Issuer"] = "InviteMe.Tests",
+                ["Jwt:Audience"] = "InviteMe.Tests.Web",
+                ["Jwt:SigningKey"] = Convert.ToBase64String(ApiFactory.SigningKey),
+                ["Frontend:Url"] = "http://localhost:3000",
+                ["WeddingMedia:LocalDirectory"] = mediaDirectory ?? Path.Combine(Path.GetTempPath(), "InviteMe-Test-Media", Guid.NewGuid().ToString("N"))
+            };
+            if (additionalConfiguration is not null)
+                foreach (var item in additionalConfiguration) values[item.Key] = item.Value;
+            config.AddInMemoryCollection(values);
+        });
         builder.ConfigureServices(services =>
         {
             services.RemoveAll<IAccountEmailSender>();

@@ -12,4 +12,20 @@ public sealed class InvitationTemplate
     public string Status { get; private set; } = "ACTIVE";
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
+
+    public static InvitationTemplate Create(string name, string slug, string? theme, string? previewUrl,
+        string? configuration, string status) => new()
+    {
+        Id = Guid.NewGuid(), Name = name.Trim(), Slug = slug.Trim(), Theme = theme,
+        PreviewUrl = previewUrl, Configuration = configuration, Status = status
+    };
+
+    public void Update(string name, string slug, string? theme, string? previewUrl,
+        string? configuration, string status)
+    {
+        Name = name.Trim(); Slug = slug.Trim(); Theme = theme;
+        PreviewUrl = previewUrl; Configuration = configuration; Status = status;
+    }
+
+    public void SetStatus(string status) => Status = status;
 }

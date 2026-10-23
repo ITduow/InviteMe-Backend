@@ -144,7 +144,7 @@ public sealed class ThankYouTemplateApiTests
     });
 
     [Fact]
-    public async Task OpenApiListsSevenIndependentOperationsWithoutRestoringRemovedWorkflowApis()
+    public async Task OpenApiListsThankYouTemplateOperationsWithoutRestoringRemovedWorkflowApis()
     {
         using var factory = new ApiFactory(); using var client = factory.CreateHttpsClient();
         var doc = await client.GetFromJsonAsync<JsonElement>("/openapi/v1.json");
@@ -160,7 +160,7 @@ public sealed class ThankYouTemplateApiTests
                 Assert.True(operation.Value.GetProperty("security")[0].TryGetProperty("Bearer", out _));
             }
         }
-        Assert.Equal(new[] { "ApproveAiThankYouTemplate", "DeleteAiThankYouTemplate", "GenerateAiThankYouTemplate", "GetAiThankYouTemplateById", "GetAiThankYouTemplates", "PreviewAiThankYouTemplate", "UpdateAiThankYouTemplate" }, names.Order(StringComparer.Ordinal));
+        Assert.Equal(new[] { "ApproveAiThankYouTemplate", "DeleteAiThankYouTemplate", "GenerateAiThankYouTemplate", "GenerateAiThankYouTemplateOptions", "GetAiThankYouTemplateById", "GetAiThankYouTemplates", "PreviewAiThankYouTemplate", "UpdateAiThankYouTemplate" }, names.Order(StringComparer.Ordinal));
     }
 
     private static string Root(Guid weddingId) => $"/api/weddings/{weddingId}/ai/thank-you-templates";

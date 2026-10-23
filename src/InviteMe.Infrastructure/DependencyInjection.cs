@@ -27,6 +27,7 @@ public static class DependencyInjection
         {
             options.User.RequireUniqueEmail = true;
             options.Password.RequiredLength = 12;
+            options.Lockout.AllowedForNewUsers = true;
             options.Lockout.MaxFailedAccessAttempts = 5;
             options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
             options.Tokens.PasswordResetTokenProvider = "PasswordReset";
@@ -34,6 +35,12 @@ public static class DependencyInjection
           .AddEntityFrameworkStores<InviteMeDbContext>()
           .AddDefaultTokenProviders()
           .AddTokenProvider<PasswordResetTokenProvider<ApplicationUser>>("PasswordReset");
+        services.AddOptions<AdminBootstrapOptions>().BindConfiguration(AdminBootstrapOptions.SectionName)
+            .Validate(x => !x.Enabled || (IsValidAdminEmail(x.Email) && x.Password is { Length: >= 16 and <= 128 } &&
+                !string.IsNullOrWhiteSpace(x.DisplayName) && x.DisplayName.Trim().Length <= 150),
+                "AdminBootstrap requires a valid email, a 16-128 character password and a display name when enabled.")
+            .ValidateOnStart();
+        services.AddHostedService<AdminBootstrapSeeder>();
         services.Configure<DataProtectionTokenProviderOptions>(options =>
             options.TokenLifespan = TimeSpan.FromHours(24));
         services.Configure<PasswordResetTokenProviderOptions>(options =>
@@ -72,6 +79,7 @@ public static class DependencyInjection
             .ValidateOnStart();
         services.AddHttpClient<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage, S3WeddingMediaStorage>();
         services.AddScoped<InviteMe.Application.Ports.Audit.IAuditReader, AuditReader>();
+        services.AddScoped<InviteMe.Application.Features.Admin.IAdminStore, AdminStore>();
         services.AddScoped<InviteMe.Application.Ports.AI.IThankYouTemplateStore, ThankYouTemplateStore>();
         services.AddScoped<InviteMe.Application.Ports.AI.IThankYouGuestReader, ThankYouGuestReader>();
         services.AddOptions<InviteMe.Infrastructure.AI.OpenAiOptions>().Configure(options =>
@@ -114,6 +122,11 @@ public static class DependencyInjection
         services.AddHealthChecks().AddCheck<PostgreSqlHealthCheck>("postgresql", tags: ["ready"]);
         return services;
     }
+
+    private static bool IsValidAdminEmail(string? email) =>
+        !string.IsNullOrWhiteSpace(email) && email.Length <= 255 &&
+        System.Net.Mail.MailAddress.TryCreate(email.Trim(), out var parsed) &&
+        string.Equals(parsed.Address, email.Trim(), StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed class PasswordResetTokenProviderOptions : DataProtectionTokenProviderOptions
