@@ -9,6 +9,7 @@ using InviteMe.Application.Features.Seating.Planning;
 using InviteMe.Application.Features.Weddings.CoHosts;
 using InviteMe.Domain.CheckIn;
 using InviteMe.Domain.Guests;
+using InviteMe.Domain.Rsvps;
 using Microsoft.EntityFrameworkCore;
 
 namespace InviteMe.IntegrationTests;
@@ -102,6 +103,12 @@ public sealed class ReceptionCheckInApiTests
 
         var after = await Read<SeatLookupDto>(await owner.GetAsync(path + $"/seat-lookup?code={duc.InvitationToken}"));
         Assert.All(after.Seats, x => Assert.NotNull(x.CheckedInAt));
+
+        // An archived invitation is no longer expected, even with an ATTENDING answer.
+        var archived = (await PlanningTestData.Guests(db, wedding.Id, "ATTENDING", "Archived Guest"))[0];
+        var answer = PlanningRsvp.Create(wedding.Id, archived.Id, DateTimeOffset.UtcNow);
+        answer.Submit("ATTENDING", 1, DateTimeOffset.UtcNow);
+        db.Add(answer); archived.ArchivedAt = DateTimeOffset.UtcNow; await db.SaveChangesAsync();
 
         // Summary: 1 confirmed place expected; 4 arrived = 1 confirmed + 1 without RSVP + 2 exceptions.
         var summary = await Read<CheckInSummaryDto>(await owner.GetAsync(path + "/check-ins/summary"));
