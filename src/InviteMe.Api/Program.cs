@@ -30,9 +30,11 @@ if (app.Environment.IsDevelopment() && builder.Configuration.GetValue("Database:
 app.UseMiddleware<CorrelationMiddleware>();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
-if (!app.Environment.IsDevelopment())
+var httpsTerminatesAtProxy = builder.Configuration.GetValue<bool>("Https:TerminateAtProxy");
+if (!app.Environment.IsDevelopment() || httpsTerminatesAtProxy)
     app.UseHsts();
-app.UseHttpsRedirection();
+if (!httpsTerminatesAtProxy)
+    app.UseHttpsRedirection();
 app.UseCors("Frontend");
 
 if (app.Environment.IsDevelopment())

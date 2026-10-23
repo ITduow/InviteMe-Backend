@@ -33,6 +33,7 @@ jobs:
         run: |
           dotnet publish src/InviteMe.Api/InviteMe.Api.csproj -c Release -o ./publish
           rm -f ./publish/.env ./publish/appsettings.Development.json
+          cp -a .ebextensions .platform ./publish/
 
       - name: Create runtime Dockerfile & deployment package
         run: |
