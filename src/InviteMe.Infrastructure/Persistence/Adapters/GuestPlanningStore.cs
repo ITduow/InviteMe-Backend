@@ -177,7 +177,7 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
         return result;
     }
 
-    public async Task<PlanningImportOutcome> ImportAsync(Guid weddingId, Guid key, PlanningImport input, CancellationToken ct)
+    public async Task<PlanningImportOutcome> ImportAsync(Guid weddingId, Guid key, PlanningImport input, Guid actorId, CancellationToken ct)
     {
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(input))));
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -241,6 +241,9 @@ public sealed class GuestPlanningStore(InviteMeDbContext db) : IGuestPlanningSto
         }
         var result = new PlanningImportResult(batch.Id, items.Count, items.Sum(x => x.ExpectedPeople), items, createdGroups, warnings);
         batch.ResultJson = JsonSerializer.Serialize(result);
+        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_import_batches", batch.Id, "GUESTS_IMPORTED", actorId,
+            metadata: JsonSerializer.Serialize(new { guestCount = items.Count, expectedPeople = result.CreatedPlaceCount,
+                warningCount = warnings.Count, groupCount = createdGroups.Count })));
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
         return new(result, []);
     }

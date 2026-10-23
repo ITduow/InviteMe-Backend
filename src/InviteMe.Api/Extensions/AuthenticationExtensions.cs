@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Options;
 using InviteMe.Api.Authentication;
 using InviteMe.Api.Configuration;
+using InviteMe.Api.Authorization;
+using InviteMe.Application.Features.Admin;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Domain.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -123,7 +125,17 @@ internal static class AuthenticationExtensions
         {
             options.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build();
             options.AddPolicy("PlatformAdmin", policy => policy.RequireRole(PlatformRoles.Admin));
+            options.AddPolicy(AdminPolicyNames.DashboardView, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.DashboardView)));
+            options.AddPolicy(AdminPolicyNames.UsersView, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.UsersView)));
+            options.AddPolicy(AdminPolicyNames.UsersManage, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.UsersManage)));
+            options.AddPolicy(AdminPolicyNames.WeddingsView, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.WeddingsView)));
+            options.AddPolicy(AdminPolicyNames.TemplatesView, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.TemplatesView)));
+            options.AddPolicy(AdminPolicyNames.TemplatesManage, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.TemplatesManage)));
+            options.AddPolicy(AdminPolicyNames.AuditView, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.AuditView)));
+            options.AddPolicy(AdminPolicyNames.RbacView, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.RbacView)));
+            options.AddPolicy(AdminPolicyNames.RbacManage, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.RbacManage)));
         });
+        services.AddScoped<IAuthorizationHandler, AdminPermissionAuthorizationHandler>();
         return services;
     }
 

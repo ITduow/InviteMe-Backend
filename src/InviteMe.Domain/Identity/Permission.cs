@@ -8,6 +8,11 @@ public sealed class Permission
     public string? Description { get; private set; }
     public string Scope { get; private set; } = "WEDDING";
     public DateTimeOffset CreatedAt { get; private set; }
+
+    public static Permission Create(string code, string name, string? description, string scope) => new()
+    {
+        Id = Guid.NewGuid(), Code = code, Name = name, Description = description, Scope = scope
+    };
 }
 
 public sealed class RolePermission
@@ -15,4 +20,9 @@ public sealed class RolePermission
     public Guid RoleId { get; private set; }
     public Guid PermissionId { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
+
+    public static RolePermission Grant(Guid roleId, Guid permissionId) => new()
+    {
+        RoleId = roleId, PermissionId = permissionId
+    };
 }

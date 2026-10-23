@@ -90,6 +90,7 @@ public interface IAccountStore
 {
     Task<AccountIdentity> RegisterAsync(RegisterAccount input, CancellationToken ct);
     Task<AccountIdentity> LoginAsync(LoginAccount input, CancellationToken ct);
+    Task<AccountIdentity> LoginAdminAsync(LoginAccount input, CancellationToken ct);
     Task<AccountIdentity> LoginWithGoogleAsync(GoogleUserPayload payload, CancellationToken ct);
     Task<AccountIdentity?> GetAsync(Guid id, CancellationToken ct);
     Task<AccountIdentity> UpdateProfileAsync(Guid userId, UpdateProfile input, CancellationToken ct);

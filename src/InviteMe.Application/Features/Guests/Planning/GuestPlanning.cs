@@ -55,7 +55,7 @@ public interface IGuestPlanningStore
         CancellationToken ct, IReadOnlySet<Guid>? groupScope = null);
     Task<ArchivePlanningGuestResult> ArchiveAsync(Guid weddingId, Guid guestId, int expectedVersion, Guid actorId,
         CancellationToken ct, IReadOnlySet<Guid>? groupScope = null);
-    Task<PlanningImportOutcome> ImportAsync(Guid weddingId, Guid key, PlanningImport input, CancellationToken ct);
+    Task<PlanningImportOutcome> ImportAsync(Guid weddingId, Guid key, PlanningImport input, Guid actorId, CancellationToken ct);
     Task<PlanningGuestPage> ListAsync(Guid weddingId, int page, int pageSize, string? search, string? side, Guid? groupId, CancellationToken ct);
     Task<PlanningGuestPage> ListScopedAsync(Guid weddingId, int page, int pageSize, string? search, string? side, Guid? groupId, CancellationToken ct, IReadOnlySet<Guid>? groupScope) =>
         ListAsync(weddingId, page, pageSize, search, side, groupId, ct);
@@ -136,7 +136,9 @@ public sealed class GuestPlanningHandler(IGuestPlanningStore store, IWeddingPerm
         {
             return new(null, PlanningImportValidator.Issues(input, error.Errors));
         }
-        var result = await store.ImportAsync(weddingId, key, input, ct);
+        var actorId = current.UserId ?? throw new InviteMe.Application.Common.Errors.ApplicationProblemException(
+            InviteMe.Application.Common.Errors.ProblemKind.Unauthenticated, "AUTHENTICATION_REQUIRED", "Sign in first.");
+        var result = await store.ImportAsync(weddingId, key, input, actorId, ct);
         if (result.Result is not null && !result.Replayed)
             await changes.PublishAsync(weddingId, new("PlanningGuestsImported", weddingId), ct);
         return result;

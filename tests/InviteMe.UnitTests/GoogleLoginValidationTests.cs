@@ -150,6 +150,7 @@ public sealed class GoogleLoginValidationTests
 
         public Task<AccountIdentity> RegisterAsync(RegisterAccount input, CancellationToken ct) => throw new NotImplementedException();
         public Task<AccountIdentity> LoginAsync(LoginAccount input, CancellationToken ct) => throw new NotImplementedException();
+        public Task<AccountIdentity> LoginAdminAsync(LoginAccount input, CancellationToken ct) => throw new NotImplementedException();
         public Task<AccountIdentity?> GetAsync(Guid id, CancellationToken ct) => throw new NotImplementedException();
         public Task<AccountIdentity> UpdateProfileAsync(Guid userId, UpdateProfile input, CancellationToken ct) =>
             Task.FromResult(new AccountIdentity(userId, input.DisplayName.Trim(), "user@example.test", "USER", "stamp"));

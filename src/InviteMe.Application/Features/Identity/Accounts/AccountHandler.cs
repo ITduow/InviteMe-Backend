@@ -253,6 +253,14 @@ public sealed class AccountHandler(
         return MapToSessionDto(issuer.Issue(account), refresh);
     }
 
+    public async Task<AuthSessionDto> AdminLoginAsync(LoginAccount input, CancellationToken ct)
+    {
+        await loginValidation.ValidateAsync(input, ct);
+        var account = await store.LoginAdminAsync(input, ct);
+        var refresh = await refreshTokens.IssueAsync(account.Id, issuer.RefreshLifetime, ct);
+        return MapToSessionDto(issuer.Issue(account), refresh);
+    }
+
     public async Task<AuthSessionDto> LoginWithGoogleAsync(GoogleLogin input, CancellationToken ct)
     {
         await googleValidation.ValidateAsync(input, ct);

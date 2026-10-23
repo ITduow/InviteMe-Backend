@@ -37,6 +37,19 @@ public sealed class AccountStore(
 
     public async Task<AccountIdentity> LoginAsync(LoginAccount input, CancellationToken ct)
     {
+        return await AuthenticatePasswordAsync(input, adminOnly: false, ct);
+    }
+
+    public async Task<AccountIdentity> LoginAdminAsync(LoginAccount input, CancellationToken ct)
+    {
+        var account = await AuthenticatePasswordAsync(input, adminOnly: true, ct);
+        db.AuditLogs.Add(AuditLog.ForPlatform(account.Id, "users", account.Id, "ADMIN_LOGIN"));
+        await db.SaveChangesAsync(ct);
+        return account;
+    }
+
+    private async Task<AccountIdentity> AuthenticatePasswordAsync(LoginAccount input, bool adminOnly, CancellationToken ct)
+    {
         ct.ThrowIfCancellationRequested();
 
         var normalizedEmail = input.Email.Trim();
@@ -55,10 +68,20 @@ public sealed class AccountStore(
 
         if (!user.EmailConfirmed)
         {
+            if (adminOnly)
+            {
+                throw InvalidLogin();
+            }
+
             throw new ApplicationProblemException(
                 ProblemKind.Forbidden,
                 "EMAIL_NOT_CONFIRMED",
                 "Please confirm your email to activate your account.");
+        }
+
+        if (adminOnly && !await users.IsInRoleAsync(user, PlatformRoles.Admin))
+        {
+            throw InvalidLogin();
         }
 
         EnsureSuccess(await users.ResetAccessFailedCountAsync(user));
@@ -431,6 +454,8 @@ public sealed class AccountStore(
                 "ACTIVE_WEDDING_OWNED",
                 "Cannot delete account while owning active weddings (DRAFT or PUBLISHED). Please close or transfer your weddings first.");
         }
+
+        db.AuditLogs.Add(AuditLog.ForPlatform(user.Id, "users", user.Id, "ACCOUNT_DELETED"));
 
         // Thu hồi toàn bộ WeddingMembers của user (status = 'REVOKED')
         var memberships = await db.WeddingMembers

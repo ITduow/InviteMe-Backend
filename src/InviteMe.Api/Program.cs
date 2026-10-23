@@ -12,10 +12,6 @@ using Microsoft.EntityFrameworkCore;
 // Environment variables supplied by the host take precedence over local values.
 DotNetEnv.Env.NoClobber().TraversePath().Load();
 
-// Load the nearest .env (including the repository root) before configuration is built.
-// Environment variables supplied by the host take precedence over local values.
-DotNetEnv.Env.NoClobber().TraversePath().Load();
-
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
@@ -54,6 +50,7 @@ app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => fa
 app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") }).AllowAnonymous();
 app.MapApplicationHealth();
 app.MapAccounts();
+app.MapAdminManagement();
 app.MapWeddingAccess();
 app.MapWeddingSetup(builder.Configuration);
 app.MapGet("/media/wedding-covers/{weddingId:guid}/{fileName}", async (Guid weddingId, string fileName,

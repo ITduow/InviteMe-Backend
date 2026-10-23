@@ -69,6 +69,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
 
         public Task<AccountIdentity> RegisterAsync(RegisterAccount input, CancellationToken ct) => throw new NotImplementedException();
         public Task<AccountIdentity> LoginAsync(LoginAccount input, CancellationToken ct) => throw new NotImplementedException();
+        public Task<AccountIdentity> LoginAdminAsync(LoginAccount input, CancellationToken ct) => throw new NotImplementedException();
         public Task<AccountIdentity> LoginWithGoogleAsync(GoogleUserPayload payload, CancellationToken ct) => throw new NotImplementedException();
         public Task RevokeSessionsAsync(Guid id, CancellationToken ct) => Task.CompletedTask;
         public Task<PasswordResetRequest?> CreatePasswordResetAsync(string email, CancellationToken ct) => throw new NotImplementedException();
