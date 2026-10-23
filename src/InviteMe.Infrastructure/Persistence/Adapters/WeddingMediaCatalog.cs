@@ -6,6 +6,10 @@ namespace InviteMe.Infrastructure.Persistence.Adapters;
 
 public sealed class WeddingMediaCatalog(InviteMeDbContext db) : IWeddingMediaCatalog
 {
+    public Task<bool> ContainsAsync(Guid weddingId, string storageKey, CancellationToken ct) =>
+        db.WeddingMedia.AsNoTracking().AnyAsync(x => x.WeddingId == weddingId &&
+            x.StorageKey == storageKey && x.MediaType == "IMAGE", ct);
+
     public async Task<UploadedWeddingMedia> AddAsync(Guid weddingId, StoredWeddingImage image, CancellationToken ct)
     {
         var row = WeddingMedia.Create(weddingId, image.PublicUrl, image.Key, DateTimeOffset.UtcNow);

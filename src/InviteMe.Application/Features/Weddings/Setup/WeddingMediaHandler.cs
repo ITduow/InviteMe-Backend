@@ -8,6 +8,7 @@ public sealed record UploadedWeddingMedia(Guid Id, string Url);
 
 public interface IWeddingMediaCatalog
 {
+    Task<bool> ContainsAsync(Guid weddingId, string storageKey, CancellationToken ct);
     Task<UploadedWeddingMedia> AddAsync(Guid weddingId, StoredWeddingImage image, CancellationToken ct);
     Task<IReadOnlyList<UploadedWeddingMedia>> ListAsync(Guid weddingId, CancellationToken ct);
 }

@@ -24,7 +24,7 @@ public interface IInvitationDesignStore
 }
 
 public sealed class InvitationDesignHandler(IInvitationDesignStore store, IWeddingPermissionService permissions,
-    IWeddingAccessReader access, ICurrentUser user, IPlanningChangePublisher changes, IWeddingMediaStorage media)
+    IWeddingAccessReader access, ICurrentUser user, IPlanningChangePublisher changes, IWeddingMediaStorage media, IWeddingMediaCatalog catalog)
 {
     public async Task<InvitationDesignDto> GetAsync(Guid id, CancellationToken ct)
     {
@@ -57,16 +57,22 @@ public sealed class InvitationDesignHandler(IInvitationDesignStore store, IWeddi
     }
     private async Task ValidateMedia(Guid id, JsonElement document, CancellationToken ct)
     {
-        foreach (var source in InvitationDocumentValidator.MediaSources(document).Distinct())
+        foreach (var reference in InvitationDocumentValidator.MediaReferences(document).DistinctBy(x => x.Source))
         {
+            var source = reference.Source;
+            // Do not echo query strings (potential signed credentials) in errors.
+            var path = source.Split('?', '#')[0];
+            var location = $"Node '{reference.NodeId[..Math.Min(reference.NodeId.Length, 100)]}', image '{path[..Math.Min(path.Length, 200)]}'.";
             if (source.StartsWith("/api/template-studio/assets", StringComparison.Ordinal))
-                throw new ApplicationProblemException(ProblemKind.BadRequest, "INVITATION_MEDIA_TEMPORARY", "Ảnh tạm của Studio cần được tải lại vào thư viện wedding trước khi lưu hoặc publish.");
-            if (!media.TryGetOwnedFileName(id, source, out var fileName))
-                throw new ApplicationProblemException(ProblemKind.BadRequest, "INVITATION_MEDIA_NOT_OWNED", "Invitation image must belong to this wedding.");
+                throw new ApplicationProblemException(ProblemKind.BadRequest, "INVITATION_MEDIA_TEMPORARY", $"Upload this temporary image to the wedding library before saving. {location}");
+            if (!media.TryGetOwnedFileName(id, source, out var fileName) ||
+                !await catalog.ContainsAsync(id, fileName, ct))
+                throw new ApplicationProblemException(ProblemKind.BadRequest, "INVITATION_MEDIA_NOT_OWNED", $"Invitation image must belong to this wedding's media library. {location}");
             await using var stream = await media.OpenReadAsync(id, fileName, ct);
-            if (stream is null) throw new ApplicationProblemException(ProblemKind.BadRequest, "INVITATION_MEDIA_MISSING", "Invitation image is no longer available.");
+            if (stream is null) throw new ApplicationProblemException(ProblemKind.BadRequest, "INVITATION_MEDIA_MISSING", $"Invitation image is no longer available. {location}");
         }
     }
+
     public async Task<PublicInvitationDto> PublicAsync(string token, CancellationToken ct)
     {
         if (token.Length != 64 || token.Any(c => !char.IsAsciiHexDigitLower(c))) throw Missing();

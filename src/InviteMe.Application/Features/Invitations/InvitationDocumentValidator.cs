@@ -47,23 +47,29 @@ internal static partial class InvitationDocumentValidator
             (entry.Name == "ROOT" || children.Contains(entry.Name)));
     }
 
-    public static IEnumerable<string> MediaSources(JsonElement document)
+    public static IEnumerable<(string NodeId, string Source)> MediaReferences(JsonElement document)
     {
         foreach (var node in document.GetProperty("nodes").EnumerateObject())
         {
             var props = node.Value.GetProperty("props");
             foreach (var name in new[] { "src", "decoration" })
-                if (Get(props, name, out var source) && IsWeddingMedia(source.GetString()!)) yield return source.GetString()!;
+                if (Get(props, name, out var source) && !IsSharedAsset(source.GetString()!))
+                    yield return (node.Name, source.GetString()!);
             if (Get(props, "images", out var images))
                 foreach (var source in images.EnumerateArray())
-                    if (IsWeddingMedia(source.GetString()!)) yield return source.GetString()!;
-            if (Get(props, "cover", out var cover) && Get(cover, "decoration", out var coverSource) &&
-                IsWeddingMedia(coverSource.GetString()!)) yield return coverSource.GetString()!;
+                    if (!IsSharedAsset(source.GetString()!)) yield return (node.Name, source.GetString()!);
+            if (Get(props, "cover", out var cover) && Get(cover, "decoration", out var decoration) &&
+                !IsSharedAsset(decoration.GetString()!)) yield return (node.Name, decoration.GetString()!);
         }
     }
 
-    private static bool IsWeddingMedia(string source) => source.StartsWith("/media/", StringComparison.Ordinal) ||
-        source.StartsWith("/api/template-studio/assets", StringComparison.Ordinal) || Uri.TryCreate(source, UriKind.Absolute, out _);
+    public static IEnumerable<string> MediaSources(JsonElement document) =>
+        MediaReferences(document).Select(x => x.Source);
+
+    // Only explicitly allowed frontend template assets are shared. Everything else
+    // must pass wedding ownership checks; absolute URLs are never exempted.
+    private static bool IsSharedAsset(string source) =>
+        source.StartsWith("/images/", StringComparison.Ordinal) && AssetPattern().IsMatch(source);
 
     private static bool Node(string id, JsonElement node)
     {

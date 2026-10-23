@@ -81,14 +81,68 @@ public sealed class InvitationDesignTests
         await Assert.ThrowsAsync<ApplicationProblemException>(() => handler.PublicAsync(token, default));
         Assert.Equal(0, store.Reads);
     }
-    private static InvitationDesignHandler Create(Store store, bool canSend) =>
-        new(store, new Permissions(canSend), new Access(), new User(), new Changes(), new Media());
+    private static InvitationDesignHandler Create(Store store, bool canSend, bool registered = true) =>
+        new(store, new Permissions(canSend), new Access(), new User(), new Changes(), new Media(), new Catalog(registered));
     private sealed class Media : IWeddingMediaStorage
     {
         public Task<StoredWeddingImage> SaveAsync(Guid id, Stream content, string extension, CancellationToken ct) => throw new NotSupportedException();
-        public Task<Stream?> OpenReadAsync(Guid id, string fileName, CancellationToken ct) => Task.FromResult<Stream?>(null);
+        public Task<Stream?> OpenReadAsync(Guid id, string fileName, CancellationToken ct) => Task.FromResult<Stream?>(new MemoryStream([1]));
         public Task DeleteAsync(Guid id, string fileName, CancellationToken ct) => Task.CompletedTask;
-        public bool TryGetOwnedFileName(Guid id, string? reference, out string fileName) { fileName = ""; return false; }
+        public bool TryGetOwnedFileName(Guid id, string? reference, out string fileName) { fileName = "known.png"; return reference == $"/media/wedding-covers/{id:N}/known.png"; }
+    }
+    private sealed class Catalog(bool registered) : IWeddingMediaCatalog
+    {
+        public Task<bool> ContainsAsync(Guid id, string key, CancellationToken ct) => Task.FromResult(registered && key == "known.png");
+        public Task<UploadedWeddingMedia> AddAsync(Guid id, StoredWeddingImage image, CancellationToken ct) => throw new NotSupportedException();
+        public Task<IReadOnlyList<UploadedWeddingMedia>> ListAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
+    }
+    private static JsonElement WithImage(string source)
+    {
+        var doc = System.Text.Json.Nodes.JsonNode.Parse(Valid().GetRawText())!;
+        doc["nodes"]!["ROOT"]!["props"]!["src"] = source;
+        return JsonSerializer.SerializeToElement(doc);
+    }
+    [Theory]
+    [InlineData("/images/template-studio/minimalism-burgundy/paper.svg")]
+    [InlineData("/images/template-studio/minimalism-burgundy/envelope.svg")]
+    [InlineData("/images/template-studio/minimalism-burgundy/botanical.svg")]
+    [InlineData("/images/template-studio/minimalism-burgundy/photo.png")]
+    public async Task SharedTemplateAssetsCanBeSaved(string source)
+    {
+        var store = new Store();
+        await Create(store, true).SaveAsync(Guid.NewGuid(), new(0, WithImage(source)), default);
+        Assert.Equal(1, store.Saves);
+    }
+    [Fact]
+    public async Task UploadedWeddingImageCanBeSaved()
+    {
+        var id = Guid.NewGuid();
+        var store = new Store();
+        await Create(store, true).SaveAsync(id, new(0, WithImage($"/media/wedding-covers/{id:N}/known.png")), default);
+        Assert.Equal(1, store.Saves);
+    }
+    [Fact]
+    public async Task MatchingPathWithoutCatalogRecordIsRejected()
+    {
+        var id = Guid.NewGuid();
+        var store = new Store();
+        var error = await Assert.ThrowsAsync<ApplicationProblemException>(() =>
+            Create(store, true, false).SaveAsync(id, new(0, WithImage($"/media/wedding-covers/{id:N}/known.png")), default));
+        Assert.Equal("INVITATION_MEDIA_NOT_OWNED", error.Code);
+        Assert.Equal(0, store.Saves);
+    }
+    [Theory]
+    [InlineData("https://example.com/photo.png?secret=hidden", "INVITATION_MEDIA_NOT_OWNED")]
+    [InlineData("/api/template-studio/assets?id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "INVITATION_MEDIA_TEMPORARY")]
+    public async Task RejectedImageIdentifiesNodeWithoutQuery(string source, string code)
+    {
+        var store = new Store();
+        var error = await Assert.ThrowsAsync<ApplicationProblemException>(() =>
+            Create(store, true).SaveAsync(Guid.NewGuid(), new(0, WithImage(source)), default));
+        Assert.Equal(code, error.Code);
+        Assert.Contains("ROOT", error.Message);
+        Assert.DoesNotContain("secret=hidden", error.Message);
+        Assert.Equal(0, store.Saves);
     }
     private sealed class Changes : IPlanningChangePublisher
     {
