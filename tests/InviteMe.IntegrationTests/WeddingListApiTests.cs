@@ -66,6 +66,9 @@ public sealed class WeddingListApiTests(ApiFactory apiFactory) : IClassFixture<A
             // ParticipantCount counts confirmed planning participants only.
             await PlanningTestData.Guests(db, aprilTwelve.Id, "ATTENDING", "Confirmed Guest");
             await PlanningTestData.Guests(db, aprilTwelve.Id, "PENDING", "Undecided Guest");
+            var archived = (await PlanningTestData.Guests(db, aprilTwelve.Id, "ATTENDING", "Archived Guest"))[0];
+            archived.ArchivedAt = DateTimeOffset.UtcNow; // an archived invitation no longer counts
+            await db.SaveChangesAsync();
 
             var firstPage = await Read<PagedResult<WeddingSummaryDto>>(await owner.GetAsync("/api/weddings?page=1&pageSize=2&search=&sort=weddingDate"));
             Assert.Equal((3, 1, 2), (firstPage.TotalCount, firstPage.Page, firstPage.PageSize));

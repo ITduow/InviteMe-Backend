@@ -95,7 +95,8 @@ public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : I
         var scopeIds = groupScope?.ToArray();
         var rows = await (from place in db.Set<PlanningPlace>().AsNoTracking()
                           join g in db.Set<PlanningGuest>() on place.GuestId equals g.Id
-                          where g.WeddingId == weddingId && (scopeIds == null || g.GroupId.HasValue && scopeIds.Contains(g.GroupId.Value))
+                          // archived invitations are no longer expected (same rule as RSVP capacity)
+                          where g.WeddingId == weddingId && g.ArchivedAt == null && (scopeIds == null || g.GroupId.HasValue && scopeIds.Contains(g.GroupId.Value))
                           join person in db.Set<PlanningParticipant>() on place.ParticipantId equals (Guid?)person.Id into people
                           from person in people.DefaultIfEmpty()
                           select new

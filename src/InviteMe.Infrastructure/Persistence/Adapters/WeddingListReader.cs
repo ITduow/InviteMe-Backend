@@ -37,9 +37,9 @@ public sealed class WeddingListReader(InviteMeDbContext db) : IWeddingListReader
                        Wedding = wedding,
                        EventStart = weddingEvent == null ? (DateTimeOffset?)null : weddingEvent.StartAt,
                        TimeZone = settings == null ? "Asia/Ho_Chi_Minh" : settings.Timezone,
-                       // Confirmed people of Guest Planning v2 (walk-ins included), the same count RSVP uses for capacity.
+                       // Confirmed people of active Guest Planning v2 invitations (walk-ins included), the same count RSVP uses for capacity.
                        ParticipantCount = db.Set<PlanningParticipant>().LongCount(participant => participant.AttendanceStatus == "ATTENDING" &&
-                           db.Set<PlanningGuest>().Any(guest => guest.Id == participant.GuestId && guest.WeddingId == wedding.Id))
+                           db.Set<PlanningGuest>().Any(guest => guest.Id == participant.GuestId && guest.WeddingId == wedding.Id && guest.ArchivedAt == null))
                    };
 
         var ordered = query.Sort switch
