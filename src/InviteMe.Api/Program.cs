@@ -16,6 +16,19 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
 builder.Services.AddApplication().AddInfrastructure(builder.Configuration).AddApi(builder.Configuration).AddRsvpApi().AddGiftApi().AddGuestAccessApi(builder.Configuration);
+builder.Services.AddCors(options =>
+{
+    var frontend = builder.Configuration["Frontend:Url"];
+    if (!Uri.TryCreate(frontend, UriKind.Absolute, out var frontendUri) ||
+        (frontendUri.Scheme != "https" && frontendUri.Scheme != "http") ||
+        frontendUri.AbsolutePath != "/" || !string.IsNullOrEmpty(frontendUri.Query) ||
+        !string.IsNullOrEmpty(frontendUri.Fragment) || !string.IsNullOrEmpty(frontendUri.UserInfo))
+        throw new InvalidOperationException("Frontend:Url must be an HTTP(S) origin without a path.");
+
+    options.AddPolicy("Frontend", policy =>
+        policy.WithOrigins(frontendUri.GetLeftPart(UriPartial.Authority))
+            .AllowAnyHeader().AllowAnyMethod().AllowCredentials());
+});
 
 var app = builder.Build();
 
