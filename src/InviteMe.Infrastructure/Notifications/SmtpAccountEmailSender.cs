@@ -91,7 +91,14 @@ public sealed class SmtpAccountEmailSender(
             BodyEncoding = Encoding.UTF8,
             IsBodyHtml = false
         };
-        message.AlternateViews.Add(AlternateView.CreateAlternateViewFromString(html, Encoding.UTF8, "text/html"));
+        var htmlView = AlternateView.CreateAlternateViewFromString(html, Encoding.UTF8, "text/html");
+        var logo = new LinkedResource(EmailConfirmationTemplate.OpenBrandMark(), "image/png")
+        {
+            ContentId = EmailConfirmationTemplate.BrandMarkContentId,
+            TransferEncoding = System.Net.Mime.TransferEncoding.Base64
+        };
+        htmlView.LinkedResources.Add(logo);
+        message.AlternateViews.Add(htmlView);
 
         using var client = new SmtpClient(smtp.Host!, smtp.Port)
         {
