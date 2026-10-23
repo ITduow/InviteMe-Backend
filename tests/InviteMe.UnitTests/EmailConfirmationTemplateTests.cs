@@ -16,9 +16,9 @@ public sealed class EmailConfirmationTemplateTests
         Assert.DoesNotContain("Chào <Minh & An>", html);
         Assert.Contains("https://www.inviteme.asia/confirm-email?email=a%2Bb%40example.test&amp;code=a%26b%3Cc%3E", html);
         Assert.DoesNotContain("{{CONFIRMATION_URL}}", html);
-        Assert.Contains($"cid:{EmailConfirmationTemplate.BrandMarkContentId}", html);
-        using var logo = EmailConfirmationTemplate.OpenBrandMark();
-        Assert.True(logo.Length > 0);
+        Assert.Contains("&#9825;", html);
+        Assert.DoesNotContain("cid:", html);
+        Assert.DoesNotContain("<img", html, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("https://www.inviteme.asia/confirm-email?email=a%2Bb%40example.test&code=a%26b%3Cc%3E", plain);
         Assert.DoesNotContain("display:none", html, StringComparison.OrdinalIgnoreCase);
     }

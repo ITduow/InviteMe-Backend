@@ -10,5 +10,4 @@
   </ItemGroup>
   <ItemGroup><EmbeddedResource Include="Persistence/Schema/*.sql" LogicalName="InviteMe.Schema.%(Filename)%(Extension)" /></ItemGroup>
   <ItemGroup><EmbeddedResource Include="Notifications/Templates/EmailConfirmation.html" LogicalName="InviteMe.EmailConfirmation.html" /></ItemGroup>
-  <ItemGroup><EmbeddedResource Include="Notifications/Templates/InviteMeMark.png" LogicalName="InviteMe.EmailConfirmationMark.png" /></ItemGroup>
 </Project>
