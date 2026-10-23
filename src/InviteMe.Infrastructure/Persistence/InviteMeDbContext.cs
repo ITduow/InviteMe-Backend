@@ -64,6 +64,7 @@ public sealed class InviteMeDbContext(DbContextOptions<InviteMeDbContext> option
     public DbSet<Gift> Gifts => Set<Gift>();
     public DbSet<GiftMessage> GiftMessages => Set<GiftMessage>();
     public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<InviteMe.Infrastructure.Notifications.AccountConfirmationEmailJob> AccountConfirmationEmailJobs => Set<InviteMe.Infrastructure.Notifications.AccountConfirmationEmailJob>();
     public DbSet<AiGeneration> AiGenerations => Set<AiGeneration>();
     public DbSet<ThankYouMessage> ThankYouMessages => Set<ThankYouMessage>();
     public DbSet<ThankYouSendBatch> ThankYouSendBatches => Set<ThankYouSendBatch>();

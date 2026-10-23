@@ -159,6 +159,7 @@ public sealed class GoogleLoginValidationTests
         public Task<Guid> ResetPasswordAsync(ResetPassword input, CancellationToken ct) => throw new NotImplementedException();
         public Task ChangePasswordAsync(Guid userId, ChangePassword input, CancellationToken ct) => Task.CompletedTask;
         public Task<EmailConfirmationRequest?> CreateEmailConfirmationAsync(string email, CancellationToken ct) => Task.FromResult<EmailConfirmationRequest?>(null);
+        public Task QueueEmailConfirmationAsync(string email, CancellationToken ct) => Task.CompletedTask;
         public Task ConfirmEmailAsync(ConfirmEmail input, CancellationToken ct) => Task.CompletedTask;
         public Task DeleteAccountAsync(Guid userId, DeleteAccount input, GoogleUserPayload? googlePayload, CancellationToken ct) => Task.CompletedTask;
     }

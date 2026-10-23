@@ -237,11 +237,6 @@ public sealed class AccountHandler(
     {
         await registerValidation.ValidateAsync(input, ct);
         var account = await store.RegisterAsync(input, ct);
-        var confirmation = await store.CreateEmailConfirmationAsync(account.Email, ct);
-        if (confirmation is not null)
-        {
-            await emailSender.SendEmailConfirmationAsync(confirmation, ct);
-        }
         return MapToDto(account);
     }
 
@@ -334,11 +329,7 @@ public sealed class AccountHandler(
         await resendValidation.ValidateAsync(input, ct);
 
         // Same outcome whether or not the email exists, so callers cannot probe for accounts.
-        var confirmation = await store.CreateEmailConfirmationAsync(input.Email, ct);
-        if (confirmation is not null)
-        {
-            await emailSender.SendEmailConfirmationAsync(confirmation, ct);
-        }
+        await store.QueueEmailConfirmationAsync(input.Email, ct);
     }
 
     public async Task ChangePasswordAsync(ChangePassword input, CancellationToken ct)

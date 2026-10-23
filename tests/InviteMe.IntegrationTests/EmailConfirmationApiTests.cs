@@ -1,4 +1,5 @@
 using System.Net;
+using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using InviteMe.Application.Features.Identity.Accounts;
@@ -23,6 +24,7 @@ public sealed class EmailConfirmationApiTests
         var email = "register-confirm@example.test";
         var regResponse = await client.PostAsJsonAsync("/api/auth/register", new RegisterAccount(email, Password, "Confirm User"));
         Assert.Equal(HttpStatusCode.Created, regResponse.StatusCode);
+        await WaitForConfirmationsAsync(sender, 1);
 
         // Confirmation email should be sent with a non-empty signed token
         var sent = Assert.Single(sender.ConfirmationsSent);
@@ -60,6 +62,7 @@ public sealed class EmailConfirmationApiTests
     {
         var email = "wrong-code@example.test";
         await client.PostAsJsonAsync("/api/auth/register", new RegisterAccount(email, Password, "Wrong User"));
+        await WaitForConfirmationsAsync(sender, 1);
         var sent = Assert.Single(sender.ConfirmationsSent);
 
         // Wrong token
@@ -83,12 +86,14 @@ public sealed class EmailConfirmationApiTests
         // Register user
         var email = "resend-user@example.test";
         await client.PostAsJsonAsync("/api/auth/register", new RegisterAccount(email, Password, "Resend User"));
+        await WaitForConfirmationsAsync(sender, 1);
         Assert.Single(sender.ConfirmationsSent);
 
         // Resend confirmation invalidates the previous token
         var firstCode = sender.ConfirmationsSent.First().Code;
         var resendResponse = await client.PostAsJsonAsync("/api/auth/resend-confirmation", new ResendConfirmation(email));
         Assert.Equal(HttpStatusCode.Accepted, resendResponse.StatusCode);
+        await WaitForConfirmationsAsync(sender, 2);
         Assert.Equal(2, sender.ConfirmationsSent.Count);
 
         var oldTokenAttempt = await client.PostAsJsonAsync("/api/auth/confirm-email", new ConfirmEmail(email, firstCode));
@@ -109,7 +114,7 @@ public sealed class EmailConfirmationApiTests
     {
         await db.Database.MigrateAsync();
         var sender = new CapturingEmailSender();
-        await using var baseFactory = new DatabaseApiFactory(db.Database.GetConnectionString()!);
+        await using var baseFactory = new DatabaseApiFactory(db.Database.GetConnectionString()!, testAsyncConfirmation: true);
 
         // Verify default configured lifespan is 24 hours
         var defaultLifespan = baseFactory.Services
@@ -128,6 +133,7 @@ public sealed class EmailConfirmationApiTests
         using var client = factory.CreateClient(new() { BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false });
         var email = "expired-confirm@example.test";
         Assert.Equal(HttpStatusCode.Created, (await client.PostAsJsonAsync("/api/auth/register", new RegisterAccount(email, Password, "Expired User"))).StatusCode);
+        await WaitForConfirmationsAsync(sender, 1);
         var sent = Assert.Single(sender.ConfirmationsSent);
 
         // Wait in real time for the token to expire
@@ -145,7 +151,7 @@ public sealed class EmailConfirmationApiTests
     {
         await db.Database.MigrateAsync();
         var sender = new CapturingEmailSender();
-        await using var baseFactory = new DatabaseApiFactory(db.Database.GetConnectionString()!);
+        await using var baseFactory = new DatabaseApiFactory(db.Database.GetConnectionString()!, testAsyncConfirmation: true);
         await using var factory = baseFactory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<IAccountEmailSender>();
@@ -155,10 +161,18 @@ public sealed class EmailConfirmationApiTests
         await action(sender, client);
     });
 
+    private static async Task WaitForConfirmationsAsync(CapturingEmailSender sender, int count)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (sender.ConfirmationsSent.Count < count && DateTimeOffset.UtcNow < deadline)
+            await Task.Delay(50);
+        Assert.True(sender.ConfirmationsSent.Count >= count, "Confirmation worker did not deliver the queued email.");
+    }
+
     private sealed class CapturingEmailSender : IAccountEmailSender
     {
         public List<PasswordResetRequest> ResetSent { get; } = [];
-        public List<EmailConfirmationRequest> ConfirmationsSent { get; } = [];
+        public ConcurrentQueue<EmailConfirmationRequest> ConfirmationsSent { get; } = new();
 
         public Task SendPasswordResetAsync(PasswordResetRequest request, CancellationToken ct)
         {
@@ -168,7 +182,7 @@ public sealed class EmailConfirmationApiTests
 
         public Task SendEmailConfirmationAsync(EmailConfirmationRequest request, CancellationToken ct)
         {
-            ConfirmationsSent.Add(request);
+            ConfirmationsSent.Enqueue(request);
             return Task.CompletedTask;
         }
     }

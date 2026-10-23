@@ -6,6 +6,7 @@ using InviteMe.Domain.Audit;
 using InviteMe.Domain.Identity;
 using InviteMe.Infrastructure.Identity;
 using InviteMe.Infrastructure.Persistence;
+using InviteMe.Infrastructure.Notifications;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
@@ -30,6 +31,9 @@ public sealed class AccountStore(
 
         EnsureSuccess(await users.CreateAsync(user, input.Password));
         EnsureSuccess(await users.AddToRoleAsync(user, "USER"));
+
+        db.AccountConfirmationEmailJobs.Add(NewConfirmationJob(user));
+        await db.SaveChangesAsync(ct);
 
         await transaction.CommitAsync(ct);
         return await DescribeAsync(user);
@@ -351,6 +355,40 @@ public sealed class AccountStore(
         EnsureSuccess(await users.UpdateSecurityStampAsync(user));
         var code = await users.GenerateEmailConfirmationTokenAsync(user);
         return new EmailConfirmationRequest(user.Id, user.Email!, user.FullName, code);
+    }
+
+    public async Task QueueEmailConfirmationAsync(string email, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var user = await users.FindByEmailAsync(email.Trim());
+        if (user is not { Status: "ACTIVE" } || await users.IsLockedOutAsync(user) || user.EmailConfirmed)
+            return;
+
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        // Serialize resends for this account so only the newest queued link is deliverable.
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT 1 FROM inviteme.users WHERE id = {user.Id} FOR UPDATE", ct);
+        await db.Entry(user).ReloadAsync(ct);
+        if (user is not { Status: "ACTIVE" } || user.EmailConfirmed)
+            return;
+
+        EnsureSuccess(await users.UpdateSecurityStampAsync(user));
+        await db.AccountConfirmationEmailJobs
+            .Where(x => x.UserId == user.Id && (x.Status == "PENDING" || x.Status == "PROCESSING"))
+            .ExecuteUpdateAsync(x => x.SetProperty(j => j.Status, "SUPERSEDED"), ct);
+        db.AccountConfirmationEmailJobs.Add(NewConfirmationJob(user));
+        await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+    }
+
+    private static AccountConfirmationEmailJob NewConfirmationJob(ApplicationUser user)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new AccountConfirmationEmailJob
+        {
+            Id = Guid.NewGuid(), UserId = user.Id, SecurityStamp = user.SecurityStamp ?? "",
+            CreatedAt = now, NextAttemptAt = now
+        };
     }
 
     public async Task ConfirmEmailAsync(ConfirmEmail input, CancellationToken ct)

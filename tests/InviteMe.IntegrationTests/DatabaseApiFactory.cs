@@ -1,8 +1,11 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using InviteMe.Application.Features.Identity.Accounts;
 using InviteMe.Application.Features.Weddings.CoHosts;
 using InviteMe.Application.Ports.Authentication;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -13,7 +16,8 @@ namespace InviteMe.IntegrationTests;
 internal sealed class DatabaseApiFactory(
     string connection,
     string? mediaDirectory = null,
-    IReadOnlyDictionary<string, string?>? additionalConfiguration = null) : WebApplicationFactory<Program>
+    IReadOnlyDictionary<string, string?>? additionalConfiguration = null,
+    bool testAsyncConfirmation = false) : WebApplicationFactory<Program>
 {
     private static readonly ConcurrentDictionary<string, string> InvitationTokens = new(StringComparer.OrdinalIgnoreCase);
 
@@ -31,6 +35,7 @@ internal sealed class DatabaseApiFactory(
                 ["Jwt:Audience"] = "InviteMe.Tests.Web",
                 ["Jwt:SigningKey"] = Convert.ToBase64String(ApiFactory.SigningKey),
                 ["Frontend:Url"] = "http://localhost:3000",
+                ["AccountConfirmationEmail:WorkerEnabled"] = testAsyncConfirmation ? "true" : "false",
                 ["WeddingMedia:LocalDirectory"] = mediaDirectory ?? Path.Combine(Path.GetTempPath(), "InviteMe-Test-Media", Guid.NewGuid().ToString("N"))
             };
             if (additionalConfiguration is not null)
@@ -39,6 +44,8 @@ internal sealed class DatabaseApiFactory(
         });
         builder.ConfigureServices(services =>
         {
+            if (!testAsyncConfirmation)
+                services.AddTransient<IStartupFilter, InlineTestConfirmationStartupFilter>();
             services.RemoveAll<IAccountEmailSender>();
             services.AddScoped<IAccountEmailSender, AutoConfirmTestEmailSender>();
             services.RemoveAll<ICoHostInvitationEmailSender>();
@@ -46,6 +53,40 @@ internal sealed class DatabaseApiFactory(
             services.RemoveAll<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage>();
             services.AddSingleton<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage, InviteMe.Infrastructure.Media.LocalWeddingMediaStorage>();
         });
+    }
+
+    // Existing integration fixtures require an immediately confirmed account after registration.
+    // The dedicated confirmation tests opt out and exercise the real background worker.
+    private sealed class InlineTestConfirmationStartupFilter : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use(async (context, following) =>
+            {
+                if (!context.Request.Path.Equals("/api/auth/register", StringComparison.OrdinalIgnoreCase))
+                {
+                    await following();
+                    return;
+                }
+
+                context.Request.EnableBuffering();
+                using var reader = new StreamReader(context.Request.Body, leaveOpen: true);
+                var body = await reader.ReadToEndAsync(context.RequestAborted);
+                context.Request.Body.Position = 0;
+                var input = JsonSerializer.Deserialize<RegisterAccount>(body,
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+                await following();
+                if (context.Response.StatusCode != StatusCodes.Status201Created || input is null) return;
+
+                var store = context.RequestServices.GetRequiredService<IAccountStore>();
+                var confirmation = await store.CreateEmailConfirmationAsync(input.Email, context.RequestAborted);
+                if (confirmation is not null)
+                    await context.RequestServices.GetRequiredService<IAccountEmailSender>()
+                        .SendEmailConfirmationAsync(confirmation, context.RequestAborted);
+            });
+            next(app);
+        };
     }
     protected override void ConfigureClient(HttpClient client)
     {

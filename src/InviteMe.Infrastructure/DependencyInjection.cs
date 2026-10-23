@@ -47,6 +47,8 @@ public static class DependencyInjection
             options.TokenLifespan = TimeSpan.FromMinutes(15));
         services.AddOptions<SmtpOptions>().BindConfiguration("Smtp");
         services.AddScoped<InviteMe.Application.Ports.Authentication.IAccountEmailSender, SmtpAccountEmailSender>();
+        if (configuration.GetValue("AccountConfirmationEmail:WorkerEnabled", true))
+            services.AddHostedService<AccountConfirmationEmailWorker>();
         services.AddScoped<InviteMe.Infrastructure.Notifications.IInvitationChannelProvider, InviteMe.Infrastructure.Notifications.SmtpInvitationChannelProvider>();
         services.AddOptions<InviteMe.Infrastructure.Notifications.SpeedSmsOptions>()
             .BindConfiguration(InviteMe.Infrastructure.Notifications.SpeedSmsOptions.SectionName);

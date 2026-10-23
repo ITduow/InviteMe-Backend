@@ -32,8 +32,9 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Keep local databases up to date; production migrations run during deployment.
-if (app.Environment.IsDevelopment() && builder.Configuration.GetValue("Database:ApplyMigrationsOnStartup", true))
+// The Elastic Beanstalk deployment does not run migrations separately.
+// Apply pending migrations before hosted workers and HTTP requests start.
+if (builder.Configuration.GetValue("Database:ApplyMigrationsOnStartup", true))
 {
     await using var scope = app.Services.CreateAsyncScope();
     var db = scope.ServiceProvider.GetRequiredService<InviteMeDbContext>();

@@ -99,6 +99,7 @@ public interface IAccountStore
     Task<Guid> ResetPasswordAsync(ResetPassword input, CancellationToken ct);
     Task ChangePasswordAsync(Guid userId, ChangePassword input, CancellationToken ct);
     Task<EmailConfirmationRequest?> CreateEmailConfirmationAsync(string email, CancellationToken ct);
+    Task QueueEmailConfirmationAsync(string email, CancellationToken ct);
     Task ConfirmEmailAsync(ConfirmEmail input, CancellationToken ct);
     Task DeleteAccountAsync(Guid userId, DeleteAccount input, GoogleUserPayload? googlePayload, CancellationToken ct);
 }
