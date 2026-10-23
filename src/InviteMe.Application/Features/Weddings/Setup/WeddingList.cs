@@ -7,7 +7,8 @@ using InviteMe.Application.Ports.Authentication;
 namespace InviteMe.Application.Features.Weddings.Setup;
 
 public sealed record WeddingListQuery(int Page = 1, int PageSize = 20, string? Search = null, string Sort = "weddingDate");
-public sealed record WeddingSummaryDto(Guid Id, string Title, DateOnly? WeddingDate, long ParticipantCount, int MaxCapacity, int Version);
+public sealed record WeddingSummaryDto(Guid Id, string Title, DateOnly? WeddingDate, long ParticipantCount,
+    int MaxCapacity, int Version, string? CoverImageUrl = null);
 
 public interface IWeddingListReader
 {

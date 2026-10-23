@@ -48,7 +48,8 @@ public sealed class WeddingListApiTests(ApiFactory apiFactory) : IClassFixture<A
             using var unrelated = await SignIn(factory, "list-unrelated");
 
             var aprilTwelve = await Create(owner, "wedding-april-twelve", "2027-04-11T18:30:00Z"); // HCMC local date is April 12.
-            var aprilTen = await Create(owner, "wedding-april-ten", "2027-04-10T10:00:00+07:00");
+            var aprilTen = await Create(owner, "wedding-april-ten", "2027-04-10T10:00:00+07:00",
+                "https://cdn.example.test/weddings/april-ten-cover.webp");
             var aprilThirteen = await Create(owner, "wedding-april-thirteen", "2027-04-13T10:00:00+07:00");
             var coHostAccount = (await coHost.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
             var guestAccount = (await guestOnly.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
@@ -71,6 +72,7 @@ public sealed class WeddingListApiTests(ApiFactory apiFactory) : IClassFixture<A
             Assert.Equal([aprilTen.Id, aprilTwelve.Id], firstPage.Items.Select(x => x.Id).ToArray());
             Assert.Equal(new DateOnly(2027, 4, 12), firstPage.Items[1].WeddingDate);
             Assert.Equal(200, firstPage.Items[0].MaxCapacity);
+            Assert.Equal("https://cdn.example.test/weddings/april-ten-cover.webp", firstPage.Items[0].CoverImageUrl);
             Assert.Equal(1, firstPage.Items[1].ParticipantCount);
             Assert.Equal("Đám cưới", firstPage.Items[0].Title);
 
@@ -100,15 +102,16 @@ public sealed class WeddingListApiTests(ApiFactory apiFactory) : IClassFixture<A
             Assert.Equal(HttpStatusCode.BadRequest, (await owner.GetAsync("/api/weddings?sort=unknown")).StatusCode);
         });
 
-    private static CreateWeddingInput CreateInput(string slug, string eventDateTime)
+    private static CreateWeddingInput CreateInput(string slug, string eventDateTime, string? coverImageUrl = null)
     {
         var eventDate = DateTimeOffset.Parse(eventDateTime, System.Globalization.CultureInfo.InvariantCulture);
         return new("Đám cưới", slug, eventDate, "White Palace", "TP. Hồ Chí Minh", 200,
-            eventDate.AddDays(-7));
+            eventDate.AddDays(-7), coverImageUrl);
     }
 
-    private static async Task<WeddingSetupDto> Create(HttpClient client, string slug, string eventDateTime) =>
-        await Read<WeddingSetupDto>(await client.PostAsJsonAsync("/api/weddings", CreateInput(slug, eventDateTime)));
+    private static async Task<WeddingSetupDto> Create(HttpClient client, string slug, string eventDateTime,
+        string? coverImageUrl = null) =>
+        await Read<WeddingSetupDto>(await client.PostAsJsonAsync("/api/weddings", CreateInput(slug, eventDateTime, coverImageUrl)));
 
     private static async Task<HttpClient> SignIn(DatabaseApiFactory factory, string name)
     {

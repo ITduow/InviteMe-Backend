@@ -52,7 +52,8 @@ public sealed class WeddingListReader(InviteMeDbContext db) : IWeddingListReader
 
         var page = await ordered.Skip((query.Page - 1) * query.PageSize).Take(query.PageSize).ToListAsync(ct);
         var items = page.Select(x => new WeddingSummaryDto(x.Wedding.Id, x.Wedding.Title,
-            ToLocalDate(x.EventStart, x.TimeZone), x.ParticipantCount, x.Wedding.MaxCapacity ?? 0, x.Wedding.Version)).ToArray();
+            ToLocalDate(x.EventStart, x.TimeZone), x.ParticipantCount, x.Wedding.MaxCapacity ?? 0,
+            x.Wedding.Version, x.Wedding.CoverImageUrl)).ToArray();
         return new PagedResult<WeddingSummaryDto>(items, query.Page, query.PageSize, total);
     }
 
