@@ -97,6 +97,29 @@ public sealed class PublicationLifecycleTests
             Assert.Single(raced, x => x.StatusCode == HttpStatusCode.Conflict);
         });
 
+    internal static JsonElement WebsiteDesign(string title, string? image = null)
+    {
+        if (image is null)
+        {
+            return JsonSerializer.SerializeToElement(new
+            {
+                schemaVersion = 1,
+                templateId = "story-red-velvet",
+                nodes = new { ROOT = new { type = new { resolvedName = "StudioFrame" }, isCanvas = true,
+                    props = new { title, width = 480 }, displayName = "Frame", custom = new { }, hidden = false,
+                    nodes = Array.Empty<string>(), linkedNodes = new { } } }
+            });
+        }
+        return JsonSerializer.SerializeToElement(new
+        {
+            schemaVersion = 1,
+            templateId = "story-red-velvet",
+            nodes = new { ROOT = new { type = new { resolvedName = "StudioFrame" }, isCanvas = true,
+                props = new { title, width = 480, src = image }, displayName = "Frame", custom = new { }, hidden = false,
+                nodes = Array.Empty<string>(), linkedNodes = new { } } }
+        });
+    }
+
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task WebsiteSnapshotsRemainPublicUntilUnpublishAndRetainUnlinkedCoverImages() =>
         CoHostPermissionTests.WithApi(async (db, factory) =>
@@ -110,22 +133,23 @@ public sealed class PublicationLifecycleTests
             file.Add(new ByteArrayContent([0xFF, 0xD8, 0xFF]), "Image", "cover.jpg");
             file.Add(new StringContent("1"), "ExpectedVersion");
             var cover = await Ok<WeddingCoverImageResult>(await owner.PostAsync($"/api/weddings/{wedding.Id}/cover-image", file));
-            var document = new WebsiteDocument("story-red-velvet", "First", "A", "B", "Story",
-                DateTimeOffset.Parse("2026-12-20T11:00:00+07:00"), "Venue", "Address", cover.CoverImageUrl, true, true, null);
+            var document = WebsiteDesign("First", cover.CoverImageUrl);
             Assert.Equal(HttpStatusCode.Forbidden, (await other.PutAsJsonAsync(path, new SaveWebsite(0, document))).StatusCode);
             Assert.Equal(HttpStatusCode.BadRequest,
-                (await owner.PutAsJsonAsync(path, new SaveWebsite(0, document with { HeroImageUrl = "https://elsewhere.test/image.png" }))).StatusCode);
+                (await owner.PutAsJsonAsync(path, new SaveWebsite(0, WebsiteDesign("First", "https://elsewhere.test/image.png")))).StatusCode);
             var draft = await Ok<WebsiteDto>(await owner.PutAsJsonAsync(path, new SaveWebsite(0, document)));
             Assert.Equal(HttpStatusCode.NotFound, (await owner.GetAsync(publicPath)).StatusCode);
             var first = await Ok<WebsiteDto>(await owner.PostAsJsonAsync(path + "/publish", new { expectedVersion = draft.Version }));
             Assert.False(first.HasUnpublishedChanges);
-            var next = await Ok<WebsiteDto>(await owner.PutAsJsonAsync(path, new SaveWebsite(first.Version, document with { Title = "Next" })));
+            var next = await Ok<WebsiteDto>(await owner.PutAsJsonAsync(path, new SaveWebsite(first.Version, WebsiteDesign("Next", cover.CoverImageUrl))));
             Assert.Equal("PUBLISHED", next.Status);
-            Assert.Equal("First", (await owner.GetFromJsonAsync<PublicWebsiteDto>(publicPath))!.Document.Title);
+            var pubDoc = (await owner.GetFromJsonAsync<PublicWebsiteDto>(publicPath))!.Document;
+            Assert.Equal("First", pubDoc.GetProperty("nodes").GetProperty("ROOT").GetProperty("props").GetProperty("title").GetString());
             Assert.Equal(HttpStatusCode.OK, (await owner.DeleteAsync($"/api/weddings/{wedding.Id}/cover-image?expectedVersion={cover.Version}")).StatusCode);
             Assert.Equal(HttpStatusCode.OK, (await owner.GetAsync(cover.CoverImageUrl)).StatusCode);
             var published = await Ok<WebsiteDto>(await owner.PostAsJsonAsync(path + "/publish", new { expectedVersion = next.Version }));
-            Assert.Equal("Next", (await owner.GetFromJsonAsync<PublicWebsiteDto>(publicPath))!.Document.Title);
+            pubDoc = (await owner.GetFromJsonAsync<PublicWebsiteDto>(publicPath))!.Document;
+            Assert.Equal("Next", pubDoc.GetProperty("nodes").GetProperty("ROOT").GetProperty("props").GetProperty("title").GetString());
             Assert.Equal(HttpStatusCode.Conflict, (await owner.PostAsJsonAsync(path + "/unpublish", new { expectedVersion = 0 })).StatusCode);
             var hidden = await Ok<WebsiteDto>(await owner.PostAsJsonAsync(path + "/unpublish", new { expectedVersion = published.Version }));
             Assert.Equal("UNPUBLISHED", hidden.Status);
@@ -133,6 +157,33 @@ public sealed class PublicationLifecycleTests
             await Ok<WebsiteDto>(await owner.PostAsJsonAsync(path + "/publish", new { expectedVersion = hidden.Version }));
             Assert.Equal(HttpStatusCode.OK, (await owner.GetAsync(publicPath)).StatusCode);
             Assert.Equal(HttpStatusCode.NotFound, (await owner.GetAsync("/api/public/weddings/missing-slug")).StatusCode);
+        });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task LegacyPublicWebsiteStillReturnsLegacyResponse() =>
+        CoHostPermissionTests.WithApi(async (db, factory) =>
+        {
+            using var owner = await CoHostPermissionTests.SignIn(factory, "legacy-website-owner");
+            var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "legacy-website-slug");
+            var legacyJson = JsonSerializer.Serialize(new
+            {
+                templateId = "story-red-velvet",
+                title = "Lễ Thành Hôn Cũ",
+                partnerOne = "Hoàng",
+                partnerTwo = "Lan",
+                eventAt = "2026-12-20T11:00:00+07:00",
+                venueName = "White Palace",
+                venueAddress = "194 Hoàng Văn Thụ"
+            });
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE inviteme.wedding_settings SET website_published_json = {legacyJson}::jsonb, website_status = 1 WHERE wedding_id = {wedding.Id}");
+            var publicPath = "/api/public/weddings/legacy-website-slug";
+            var publicSite = await owner.GetFromJsonAsync<PublicWebsiteDto>(publicPath);
+            Assert.NotNull(publicSite);
+            Assert.Equal("legacy-website-slug", publicSite.Slug);
+            Assert.Equal("Lễ Thành Hôn Cũ", publicSite.Document.GetProperty("title").GetString());
+            Assert.Equal("Hoàng", publicSite.Document.GetProperty("partnerOne").GetString());
+            Assert.False(publicSite.Document.TryGetProperty("schemaVersion", out _));
         });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]

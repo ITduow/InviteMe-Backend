@@ -289,9 +289,15 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
         {
             try
             {
-                var website = JsonSerializer.Deserialize<WebsiteDocument>(wedding.WebsiteJson, PublicationJson.Web);
-                if (!string.IsNullOrWhiteSpace(website?.PartnerOne) && !string.IsNullOrWhiteSpace(website.PartnerTwo))
-                    return $"{website.PartnerOne.Trim()} & {website.PartnerTwo.Trim()}";
+                using var doc = JsonDocument.Parse(wedding.WebsiteJson);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("partnerOne", out var p1) && root.TryGetProperty("partnerTwo", out var p2) &&
+                    !string.IsNullOrWhiteSpace(p1.GetString()) && !string.IsNullOrWhiteSpace(p2.GetString()))
+                    return $"{p1.GetString()!.Trim()} & {p2.GetString()!.Trim()}";
+                if (root.TryGetProperty("nodes", out var nodes) && nodes.TryGetProperty("ROOT", out var frame) &&
+                    frame.TryGetProperty("props", out var props) && props.TryGetProperty("cover", out var cover) &&
+                    cover.TryGetProperty("names", out var names) && !string.IsNullOrWhiteSpace(names.GetString()))
+                    return names.GetString()!.Replace("\r", "").Replace("\n", " ").Trim();
             }
             catch (JsonException) { }
         }
