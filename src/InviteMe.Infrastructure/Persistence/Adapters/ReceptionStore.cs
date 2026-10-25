@@ -118,7 +118,8 @@ public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : I
 
     // Lock order as RsvpStore: wedding row, then the planning guest row. The key is stored as a planning import batch, which
     // also owns a new walk-in guest (every planning guest belongs to a batch), so a retried request replays its first outcome.
-    // Capacity follows RsvpStore: ATTENDING people consume it; walk-in people are added as ATTENDING.
+    // Capacity follows RsvpStore: ATTENDING people of active invitations consume it; walk-in people are added as ATTENDING.
+    // An archived invitation takes no more people, like check-in by guest id.
     public async Task<WalkInOutcome> AddWalkInAsync(Guid weddingId, Guid key, AddWalkIn input, Guid actor, CancellationToken ct)
     {
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("WALK_IN:" + JsonSerializer.Serialize(input))));
@@ -134,12 +135,12 @@ public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : I
         PlanningGuest? guest = null;
         if (input.GuestId is { } guestId)
             guest = await db.Set<PlanningGuest>()
-                .FromSqlInterpolated($"SELECT * FROM inviteme.planning_guests WHERE \"Id\"={guestId} AND \"WeddingId\"={weddingId} FOR UPDATE")
+                .FromSqlInterpolated($"SELECT * FROM inviteme.planning_guests WHERE \"Id\"={guestId} AND \"WeddingId\"={weddingId} AND \"ArchivedAt\" IS NULL FOR UPDATE")
                 .SingleOrDefaultAsync(ct) ?? throw new ApplicationProblemException(ProblemKind.NotFound, "GUEST_NOT_FOUND", "Guest is not in this wedding.");
 
         var capacity = await db.Weddings.Where(x => x.Id == weddingId).Select(x => x.MaxCapacity).SingleAsync(ct);
         var occupied = await (from p in db.Set<PlanningParticipant>() join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
-                              where g.WeddingId == weddingId && p.AttendanceStatus == Attending select p).CountAsync(ct);
+                              where g.WeddingId == weddingId && g.ArchivedAt == null && p.AttendanceStatus == Attending select p).CountAsync(ct);
         var overCapacity = capacity is { } max && occupied + input.People > max;
         var reason = string.IsNullOrWhiteSpace(input.OverrideReason) ? null : PlanningText.Clean(input.OverrideReason);
         if (overCapacity && reason is null)

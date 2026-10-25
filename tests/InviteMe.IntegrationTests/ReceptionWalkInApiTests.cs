@@ -95,6 +95,37 @@ public sealed class ReceptionWalkInApiTests
         Assert.Equal(HttpStatusCode.Forbidden, (await outsider.PostAsJsonAsync(path + $"/check-ins/{cuongMain}/void", new VoidCheckIn("x"))).StatusCode);
     });
 
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task ArchivedInvitationsTakeNoWalkInsAndFreeCapacity() => SchemaV2MigrationTests.InDatabase(async db =>
+    {
+        await db.Database.MigrateAsync();
+        await using var factory = new DatabaseApiFactory(db.Database.GetConnectionString()!);
+        using var owner = await CoHostPermissionTests.SignIn(factory, "walkin-archive-owner");
+        var account = (await owner.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
+        var wedding = Wedding.Create(account.Id, "Archived Walk-in Wedding", "walk-in-archived", 2);
+        db.Weddings.Add(wedding);
+        await db.SaveChangesAsync();
+        var path = $"/api/weddings/{wedding.Id}/guest-planning";
+        var import = new HttpRequestMessage(HttpMethod.Post, path + "/imports")
+        { Content = JsonContent.Create(new PlanningImport([new(1, "Hồ Văn Tâm", "Anh", "INDIVIDUAL", 1, "GROOM")])) };
+        import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        Assert.Equal(HttpStatusCode.Created, (await owner.SendAsync(import)).StatusCode);
+        var tam = await db.Set<PlanningGuest>().AsNoTracking().SingleAsync();
+        var main = await db.Set<PlanningParticipant>().AsNoTracking().SingleAsync(x => x.GuestId == tam.Id);
+        using var anonymous = factory.CreateHttpsClient();
+        Assert.Equal(HttpStatusCode.Created,
+            (await anonymous.PostAsJsonAsync($"/api/rsvp/{tam.InvitationToken}", new SubmitRsvp(0, "ATTENDING", [main.Id]))).StatusCode);
+        var version = (await db.Set<PlanningGuest>().AsNoTracking().SingleAsync(x => x.Id == tam.Id)).Version;
+        Assert.True((await owner.DeleteAsync(path + $"/guests/{tam.Id}?expectedVersion={version}")).IsSuccessStatusCode);
+
+        // The archived invitation takes no extra people, like check-in by guest id, and its attending person no longer
+        // uses the capacity (same rule as RSVP): two walk-ins fit in a capacity of 2 without a reason.
+        await Problem(HttpStatusCode.NotFound, "GUEST_NOT_FOUND", await Send(owner, path, Guid.NewGuid().ToString(), new AddWalkIn(tam.Id, null, 1)));
+        Assert.Equal(1, await db.Set<PlanningPlace>().CountAsync(x => x.GuestId == tam.Id));
+        var walkIn = await Read<WalkInResultDto>(await Send(owner, path, Guid.NewGuid().ToString(), new AddWalkIn(null, "Ngô Thị Hoa", 2)));
+        Assert.Equal((true, false, 2), (walkIn.NewGuest, walkIn.OverCapacity, walkIn.Places.Count));
+    });
+
     private static Task<HttpResponseMessage> Send(HttpClient client, string path, string key, AddWalkIn input)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, path + "/walk-ins") { Content = JsonContent.Create(input) };
