@@ -19,4 +19,12 @@ public sealed class Plan
     public string Status { get; private set; } = Active;
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
+
+    /// <summary>Admin edit. The free plan stays free and active: every new wedding starts on it.</summary>
+    public void Update(string name, decimal price, string limitsJson, string status)
+    {
+        if (Code == Free && (price != 0 || status != Active)) throw new InvalidOperationException("The free plan must stay free and active.");
+        if (price < 0 || status is not (Active or Inactive)) throw new ArgumentOutOfRangeException(nameof(price));
+        Name = name; Price = price; LimitsJson = limitsJson; Status = status;
+    }
 }

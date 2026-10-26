@@ -25,4 +25,9 @@ public sealed class Subscription
     };
 
     public void Cancel() => Status = Cancelled;
+
+    /// <summary>The order that paid for this plan (null: free plan or granted by an admin).</summary>
+    public Guid? OrderId { get; private set; }
+
+    public Subscription PaidBy(Guid orderId) { OrderId = orderId; return this; }
 }

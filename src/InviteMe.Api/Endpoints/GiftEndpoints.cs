@@ -98,7 +98,9 @@ internal static class GiftEndpoints
                 .WithName("SimulateSePayGiftTransfer").Produces<GiftWebhookResult>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden);
 
         // SePay webhook: "Authorization: Apikey <SePay:WebhookApiKey>"; SePay needs 200 + {"success": true} within 30 s.
-        endpoints.MapPost("/api/webhooks/sepay", async (HttpRequest request, GiftWebhookHandler h, CancellationToken ct) =>
+        // Plan payments (content with an IM... order code) share this endpoint; SePay sends every transfer of the account here.
+        endpoints.MapPost("/api/webhooks/sepay", async (HttpRequest request, GiftWebhookHandler h,
+            InviteMe.Application.Features.Billing.SePayWebhookDispatcher dispatcher, CancellationToken ct) =>
             {
                 if (!h.Configured) return Results.Json(new { success = false }, statusCode: StatusCodes.Status503ServiceUnavailable);
                 if (!h.Authorized(request.Headers.Authorization)) return Results.Json(new { success = false }, statusCode: StatusCodes.Status401Unauthorized);
@@ -108,7 +110,7 @@ internal static class GiftEndpoints
                 try { payload = JsonSerializer.Deserialize<SePayWebhookPayload>(raw, WebhookJson); }
                 catch (JsonException) { payload = null; }
                 if (payload is null || payload.Id <= 0) return Results.Json(new { success = false }, statusCode: StatusCodes.Status400BadRequest);
-                await h.ProcessAsync(payload, raw, ct);
+                await dispatcher.ProcessAsync(payload, raw, ct);
                 return Results.Json(new { success = true });
             })
             .AllowAnonymous().WithTags("Gifts (SePay webhook)").WithName("SePayWebhook")

@@ -20,6 +20,8 @@ public sealed class SubscriptionConfiguration : IEntityTypeConfiguration<Subscri
         builder.Property(x => x.UserId).HasColumnName("user_id").HasColumnType("uuid").IsRequired();
         builder.Property(x => x.PlanId).HasColumnName("plan_id").HasColumnType("uuid").IsRequired();
         builder.Property(x => x.WeddingId).HasColumnName("wedding_id").HasColumnType("uuid");
+        builder.Property(x => x.OrderId).HasColumnName("order_id").HasColumnType("uuid");
+        builder.HasOne<PlanOrder>().WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.SetNull).HasConstraintName("fk_subscriptions_order");
         builder.Property(x => x.Status).HasColumnName("status").HasColumnType("varchar(20)").HasMaxLength(20).IsRequired().HasDefaultValue("ACTIVE");
         builder.Property(x => x.StartedAt).HasColumnName("started_at").HasColumnType("timestamp with time zone").IsRequired().HasDefaultValueSql("NOW()");
         builder.Property(x => x.ExpiresAt).HasColumnName("expires_at").HasColumnType("timestamp with time zone");

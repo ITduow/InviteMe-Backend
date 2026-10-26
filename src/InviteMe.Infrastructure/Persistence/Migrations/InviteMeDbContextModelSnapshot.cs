@@ -611,6 +611,181 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Billing.PlanOrder", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<long>("Amount")
+                        .HasColumnType("bigint")
+                        .HasColumnName("amount");
+
+                    b.Property<DateTimeOffset?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("cancelled_at");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("code");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("note");
+
+                    b.Property<long>("PaidAmount")
+                        .HasColumnType("bigint")
+                        .HasColumnName("paid_amount");
+
+                    b.Property<DateTimeOffset?>("PaidAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("paid_at");
+
+                    b.Property<Guid>("PlanId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("plan_id");
+
+                    b.Property<Guid?>("ResolvedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resolved_by");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<Guid?>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique()
+                        .HasDatabaseName("uq_plan_orders_code");
+
+                    b.HasIndex("Status", "CreatedAt")
+                        .HasDatabaseName("ix_plan_orders_status");
+
+                    b.HasIndex("WeddingId", "CreatedAt")
+                        .HasDatabaseName("ix_plan_orders_wedding");
+
+                    b.ToTable("plan_orders", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_plan_orders_amounts", "amount > 0 AND paid_amount >= 0");
+
+                            t.HasCheckConstraint("ck_plan_orders_paid", "(status = 'PAID') = (paid_at IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_plan_orders_status", "status IN ('PENDING','UNDERPAID','PAID','CANCELLED')");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Billing.PlanPayment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AccountNumber")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("account_number");
+
+                    b.Property<long>("Amount")
+                        .HasColumnType("bigint")
+                        .HasColumnName("amount");
+
+                    b.Property<string>("Code")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("code");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("content");
+
+                    b.Property<Guid?>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("provider");
+
+                    b.Property<long>("ProviderTransactionId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("provider_transaction_id");
+
+                    b.Property<string>("RawPayload")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("raw_payload");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("reason");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("received_at");
+
+                    b.Property<string>("ReferenceCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("reference_code");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("TransactionAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("transaction_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId")
+                        .HasDatabaseName("ix_plan_payments_order");
+
+                    b.HasIndex("Provider", "ProviderTransactionId")
+                        .IsUnique()
+                        .HasDatabaseName("uq_plan_payments_provider_id");
+
+                    b.HasIndex("Status", "ReceivedAt")
+                        .HasDatabaseName("ix_plan_payments_status");
+
+                    b.ToTable("plan_payments", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_plan_payments_status", "status IN ('APPLIED','REVIEW')");
+                        });
+                });
+
             modelBuilder.Entity("InviteMe.Domain.Billing.Subscription", b =>
                 {
                     b.Property<Guid>("Id")
@@ -628,6 +803,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("ExpiresAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("expires_at");
+
+                    b.Property<Guid?>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
 
                     b.Property<Guid>("PlanId")
                         .HasColumnType("uuid")
@@ -5177,8 +5356,51 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_audit_logs_wedding");
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Billing.PlanOrder", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Billing.Plan", null)
+                        .WithMany()
+                        .HasForeignKey("PlanId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_plan_orders_plan");
+
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ResolvedBy")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_plan_orders_resolver");
+
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_plan_orders_user");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_plan_orders_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Billing.PlanPayment", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Billing.PlanOrder", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_plan_payments_order");
+                });
+
             modelBuilder.Entity("InviteMe.Domain.Billing.Subscription", b =>
                 {
+                    b.HasOne("InviteMe.Domain.Billing.PlanOrder", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_subscriptions_order");
+
                     b.HasOne("InviteMe.Domain.Billing.Plan", null)
                         .WithMany()
                         .HasForeignKey("PlanId")
