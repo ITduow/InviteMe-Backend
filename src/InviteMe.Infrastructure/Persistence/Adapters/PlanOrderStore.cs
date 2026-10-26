@@ -35,9 +35,9 @@ public sealed class PlanOrderStore(InviteMeDbContext db, TimeProvider clock, Bil
         var current = await entitlements.GetAsync(weddingId, ct);
         if (current.Legacy)
             throw Rule("PLAN_NOT_NEEDED", "Đám cưới này đã có đầy đủ tính năng, không cần mua gói.");
-        var currentPrice = await db.Set<Plan>().AsNoTracking().Where(x => x.Code == current.PlanCode).Select(x => x.Price).SingleAsync(ct);
+        var currentPlan = await db.Set<Plan>().AsNoTracking().Where(x => x.Code == current.PlanCode).Select(x => new { x.Id, x.Price }).SingleAsync(ct);
         // An upgrade only costs the difference with the plan already in force.
-        var amount = (long)(plan.Price - currentPrice);
+        var amount = (long)(plan.Price - currentPlan.Price);
         if (amount <= 0)
             throw Rule(plan.Code == current.PlanCode ? "PLAN_ALREADY_ACTIVE" : "PLAN_DOWNGRADE_NOT_ALLOWED",
                 plan.Code == current.PlanCode ? "Đám cưới đang dùng gói này." : "Chỉ có thể nâng lên gói cao hơn.");
@@ -53,7 +53,7 @@ public sealed class PlanOrderStore(InviteMeDbContext db, TimeProvider clock, Bil
             return new(Dto(same, plan), false);
         foreach (var old in open) { old.Cancel(actor, "Thay bằng đơn mới", now); db.AuditLogs.Add(Audit(old, "PLAN_ORDER_REPLACED", actor)); }
 
-        var order = PlanOrder.Create(weddingId, actor, plan.Id, PlanOrderRules.NewCode(), amount, now);
+        var order = PlanOrder.Create(weddingId, actor, plan.Id, PlanOrderRules.NewCode(), amount, now, currentPlan.Id);
         db.Add(order);
         db.AuditLogs.Add(Audit(order, "PLAN_ORDER_CREATED", actor));
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
@@ -105,9 +105,10 @@ public sealed class PlanOrderStore(InviteMeDbContext db, TimeProvider clock, Bil
         if (order is null) reason = PlanOrderRules.UnknownCode;
         else if (!account.Owns(accountNumber)) reason = PlanOrderRules.WrongAccount; // the money is not in InviteMe's account
         else if (!order.Open) reason = PlanOrderRules.OrderClosed;                    // paid twice, or paid a cancelled order
+        else if (order.Status == PlanOrder.Pending && now > order.ExpiresAt) reason = PlanOrderRules.OrderExpired; // QR older than 24 h
+        else if (!await PriceStillValid(order, ct)) reason = PlanOrderRules.PriceChanged; // plan edited, granted or changed since the order
         else
         {
-            if (order.WeddingId is { } weddingId) await LockWedding(weddingId, ct, requireOpen: false);
             var transactionAt = GiftRules.ParseSePayDate(payload.TransactionDate, now);
             activated = order.AddPayment(payload.TransferAmount, transactionAt);
             if (activated) await Activate(order, null, now, ct);
@@ -144,6 +145,9 @@ public sealed class PlanOrderStore(InviteMeDbContext db, TimeProvider clock, Bil
             throw Rule("PLAN_FREE_LOCKED", "Gói miễn phí phải giữ giá 0đ và luôn mở (đám cưới mới bắt đầu từ gói này).");
         var before = new { plan.Name, plan.Price, plan.Status, plan.LimitsJson };
         plan.Update(input.Name.Trim(), input.Price, input.Limits.ToJson(), input.Status);
+        // Open orders were priced with the old price: owners order again (orders that already got money wait for an admin).
+        if (before.Price != plan.Price || before.Status != plan.Status)
+            await CancelUnpaidOrders(x => x.PlanId == plan.Id || x.BasePlanId == plan.Id, actor, "Giá hoặc trạng thái gói đã đổi", ct);
         db.AuditLogs.Add(AuditLog.ForPlatform(actor, "plans", plan.Id, "PLAN_UPDATED",
             JsonSerializer.Serialize(new { code, before, after = new { plan.Name, plan.Price, plan.Status, plan.LimitsJson } }, Json)));
         await db.SaveChangesAsync(ct);
@@ -212,6 +216,7 @@ public sealed class PlanOrderStore(InviteMeDbContext db, TimeProvider clock, Bil
         var plan = await db.Set<Plan>().AsNoTracking().SingleOrDefaultAsync(x => x.Code == input.PlanCode, ct) ?? throw Missing("PLAN_NOT_FOUND");
         foreach (var old in await db.Set<Subscription>().Where(x => x.WeddingId == weddingId && x.Status == Subscription.Active).ToListAsync(ct))
             old.Cancel();
+        await CancelUnpaidOrders(x => x.WeddingId == weddingId, actor, "Admin đã đặt gói cho đám cưới", ct);
         await db.SaveChangesAsync(ct); // the unique "one ACTIVE per wedding" index is checked row by row
         db.Add(Subscription.ForWedding(wedding.OwnerUserId, plan.Id, weddingId, clock.GetUtcNow()));
         db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "subscriptions", weddingId, "PLAN_GRANTED", actor, null,
@@ -236,6 +241,34 @@ public sealed class PlanOrderStore(InviteMeDbContext db, TimeProvider clock, Bil
     }
 
     // ---------- helpers ----------
+
+    /// <summary>
+    /// The amount was computed from the plan in force and the target price at order time. Money only activates the plan when
+    /// both still hold (locks the wedding so a parallel grant cannot slip in); otherwise an admin decides.
+    /// </summary>
+    private async Task<bool> PriceStillValid(PlanOrder order, CancellationToken ct)
+    {
+        if (order.WeddingId is not { } weddingId) return false;
+        await LockWedding(weddingId, ct, requireOpen: false);
+        var target = await db.Set<Plan>().AsNoTracking().SingleAsync(x => x.Id == order.PlanId, ct);
+        if (target.Status != Plan.Active) return false;
+        var current = await db.Set<Subscription>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Status == Subscription.Active)
+            .Select(x => (Guid?)x.PlanId).SingleOrDefaultAsync(ct);
+        if (current != order.BasePlanId) return false;
+        var basePrice = order.BasePlanId is { } baseId
+            ? await db.Set<Plan>().AsNoTracking().Where(x => x.Id == baseId).Select(x => x.Price).SingleAsync(ct) : 0m;
+        return (long)(target.Price - basePrice) == order.Amount;
+    }
+
+    private async Task CancelUnpaidOrders(System.Linq.Expressions.Expression<Func<PlanOrder, bool>> which, Guid actor, string note, CancellationToken ct)
+    {
+        var now = clock.GetUtcNow();
+        foreach (var order in await db.Set<PlanOrder>().Where(x => x.Status == PlanOrder.Pending && x.PaidAmount == 0).Where(which).ToListAsync(ct))
+        {
+            order.Cancel(actor, note, now);
+            db.AuditLogs.Add(Audit(order, "PLAN_ORDER_CANCELLED", actor));
+        }
+    }
 
     /// <summary>The paid plan replaces whatever plan the wedding had (an upgrade from FREE or from a smaller plan).</summary>
     private async Task Activate(PlanOrder order, Guid? actor, DateTimeOffset now, CancellationToken ct)

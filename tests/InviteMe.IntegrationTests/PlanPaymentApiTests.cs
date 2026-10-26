@@ -75,47 +75,54 @@ public sealed class PlanPaymentApiTests
         // Money that cannot be applied waits for an admin.
         await Webhook(sepay, 70003, basic.Code, 299_000);                    // paid twice
         await Webhook(sepay, 70004, "IMAAAAAAAA", 50_000);                    // unknown order
-        await Webhook(sepay, 70005, basic.Code, 10_000, account: "0000000001"); // not InviteMe's account
-        Assert.Equal(new[] { (PlanPayment.Review, (string?)PlanOrderRules.OrderClosed), (PlanPayment.Review, PlanOrderRules.UnknownCode),
-                (PlanPayment.Review, PlanOrderRules.WrongAccount) },
+        await Webhook(sepay, 70005, basic.Code, 10_000, account: "0000000001"); // a couple's account: the gift module's business
+        Assert.Equal(new[] { (PlanPayment.Review, (string?)PlanOrderRules.OrderClosed), (PlanPayment.Review, PlanOrderRules.UnknownCode) },
             (await db.Set<PlanPayment>().AsNoTracking().Where(x => x.ProviderTransactionId >= 70003).OrderBy(x => x.ProviderTransactionId)
                 .Select(x => new { x.Status, x.Reason }).ToListAsync()).Select(x => (x.Status, x.Reason)).ToArray());
-        Assert.Equal(0, await db.Set<PlanningGiftTransaction>().CountAsync()); // plan payments never reach the gift book
+        Assert.Equal(70005, (await db.Set<PlanningGiftTransaction>().AsNoTracking().SingleAsync()).ProviderTransactionId);
 
         // Upgrade costs the difference; the same plan cannot be bought twice.
         await AssertProblem(HttpStatusCode.UnprocessableEntity, "PLAN_ALREADY_ACTIVE", await owner.PostAsJsonAsync(orders, new CreatePlanOrder("BASIC")));
         var upgrade = await Read<PlanOrderDto>(await owner.PostAsJsonAsync(orders, new CreatePlanOrder("PREMIUM")), HttpStatusCode.Created);
         Assert.Equal(400_000, upgrade.Amount);
 
-        // Admin back office.
+        // Admin back office: find and approve an order, review payments, revenue.
         Assert.Equal(HttpStatusCode.Forbidden, (await owner.GetAsync("/api/admin/plans")).StatusCode);
         using var admin = await SignInAdmin(factory, db);
-        var plans = (await admin.GetFromJsonAsync<List<AdminPlanDto>>("/api/admin/plans"))!;
-        Assert.Equal(1, plans.Single(x => x.Code == Plan.Basic).ActiveWeddings);
-        var basicPlan = plans.Single(x => x.Code == Plan.Basic);
-        var edited = await Read<AdminPlanDto>(await admin.PutAsJsonAsync("/api/admin/plans/basic",
-            new UpdatePlan("Cơ bản+", 349_000, Plan.Active, basicPlan.Limits with { GuestPlaces = 350 })), HttpStatusCode.OK);
-        Assert.Equal((349_000m, (int?)350), (edited.Price, edited.Limits.GuestPlaces));
-        await AssertProblem(HttpStatusCode.UnprocessableEntity, "PLAN_FREE_LOCKED", await admin.PutAsJsonAsync("/api/admin/plans/FREE",
-            new UpdatePlan("Miễn phí", 1_000, Plan.Active, plans.Single(x => x.Code == Plan.Free).Limits)));
-        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsJsonAsync("/api/admin/plans/BASIC",
-            new UpdatePlan("X", -1, Plan.Active, basicPlan.Limits))).StatusCode);
-
         var found = (await admin.GetFromJsonAsync<PagedResult<AdminPlanOrderDto>>($"/api/admin/plan-orders?search={upgrade.Code}"))!;
         Assert.Equal((upgrade.Id, "Buy wedding", PlanOrder.Pending), (found.Items.Single().Id, found.Items.Single().WeddingTitle, found.Items.Single().Status));
         Assert.Equal(PlanOrder.Paid, (await Read<AdminPlanOrderDto>(await admin.PostAsJsonAsync($"/api/admin/plan-orders/{upgrade.Id}/approve",
             new ResolvePlanOrder("Khách chuyển khoản ngoài giờ")), HttpStatusCode.OK)).Status);
         Assert.Equal(Plan.Premium, (await owner.GetFromJsonAsync<WeddingPlanDto>($"/api/weddings/{w}/plan"))!.PlanCode);
         await AssertProblem(HttpStatusCode.UnprocessableEntity, "PLAN_ORDER_CLOSED", await admin.PostAsJsonAsync($"/api/admin/plan-orders/{upgrade.Id}/cancel", new ResolvePlanOrder()));
-        Assert.Equal(3, (await admin.GetFromJsonAsync<PagedResult<AdminPlanPaymentDto>>("/api/admin/plan-payments?status=REVIEW"))!.TotalCount);
-
+        Assert.Equal(2, (await admin.GetFromJsonAsync<PagedResult<AdminPlanPaymentDto>>("/api/admin/plan-payments?status=REVIEW"))!.TotalCount);
         var revenue = (await admin.GetFromJsonAsync<PlanRevenueDto>("/api/admin/plan-revenue"))!;
-        Assert.Equal((299_000L, 3), (revenue.Total, revenue.PaymentsToReview));
+        Assert.Equal((299_000L, 2), (revenue.Total, revenue.PaymentsToReview));
         Assert.Equal((Plan.Basic, 299_000L), (revenue.ByPlan.Single().Key, revenue.ByPlan.Single().Amount));
 
+        // A manual grant replaces the plan and cancels unpaid orders of the wedding.
         Assert.Equal(Plan.Free, (await Read<WeddingPlanDto>(await admin.PutAsJsonAsync($"/api/admin/weddings/{w}/plan", new GrantPlan("free", "Hoàn tiền")),
             HttpStatusCode.OK)).PlanCode);
         Assert.Equal(1, await db.Set<Subscription>().CountAsync(x => x.WeddingId == w && x.Status == Subscription.Active));
+        var afterRefund = await Read<PlanOrderDto>(await owner.PostAsJsonAsync(orders, new CreatePlanOrder("BASIC")), HttpStatusCode.Created);
+        await admin.PutAsJsonAsync($"/api/admin/weddings/{w}/plan", new GrantPlan("FREE"));
+        Assert.Equal(PlanOrder.Cancelled, (await owner.GetFromJsonAsync<PlanOrderDto>($"{orders}/{afterRefund.Id}"))!.Status);
+
+        // Editing prices and limits; a price change cancels unpaid orders priced with the old price.
+        var plans = (await admin.GetFromJsonAsync<List<AdminPlanDto>>("/api/admin/plans"))!;
+        var basicPlan = plans.Single(x => x.Code == Plan.Basic);
+        var oldPrice = await Read<PlanOrderDto>(await owner.PostAsJsonAsync(orders, new CreatePlanOrder("BASIC")), HttpStatusCode.Created);
+        var edited = await Read<AdminPlanDto>(await admin.PutAsJsonAsync("/api/admin/plans/basic",
+            new UpdatePlan("Cơ bản+", 349_000, Plan.Active, basicPlan.Limits with { GuestPlaces = 350 })), HttpStatusCode.OK);
+        Assert.Equal((349_000m, (int?)350), (edited.Price, edited.Limits.GuestPlaces));
+        Assert.Equal(PlanOrder.Cancelled, (await owner.GetFromJsonAsync<PlanOrderDto>($"{orders}/{oldPrice.Id}"))!.Status);
+        await Webhook(sepay, 70006, oldPrice.Code, 299_000); // paid at the old price after the change: an admin decides
+        Assert.Equal(Plan.Free, (await owner.GetFromJsonAsync<WeddingPlanDto>($"/api/weddings/{w}/plan"))!.PlanCode);
+        Assert.Equal(349_000, (await Read<PlanOrderDto>(await owner.PostAsJsonAsync(orders, new CreatePlanOrder("BASIC")), HttpStatusCode.Created)).Amount);
+        await AssertProblem(HttpStatusCode.UnprocessableEntity, "PLAN_FREE_LOCKED", await admin.PutAsJsonAsync("/api/admin/plans/FREE",
+            new UpdatePlan("Miễn phí", 1_000, Plan.Active, plans.Single(x => x.Code == Plan.Free).Limits)));
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsJsonAsync("/api/admin/plans/BASIC",
+            new UpdatePlan("X", -1, Plan.Active, basicPlan.Limits))).StatusCode);
     });
 
     private static async Task<HttpResponseMessage> Webhook(HttpClient sepay, long id, string code, long amount, string account = Account)

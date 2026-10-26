@@ -22,6 +22,7 @@ public sealed class PlanOrderConfiguration : IEntityTypeConfiguration<PlanOrder>
         b.Property(x => x.WeddingId).HasColumnName("wedding_id");
         b.Property(x => x.UserId).HasColumnName("user_id");
         b.Property(x => x.PlanId).HasColumnName("plan_id");
+        b.Property(x => x.BasePlanId).HasColumnName("base_plan_id");
         b.Property(x => x.Code).HasColumnName("code").HasMaxLength(20);
         b.Property(x => x.Amount).HasColumnName("amount");
         b.Property(x => x.PaidAmount).HasColumnName("paid_amount");
@@ -40,6 +41,7 @@ public sealed class PlanOrderConfiguration : IEntityTypeConfiguration<PlanOrder>
         b.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.SetNull).HasConstraintName("fk_plan_orders_user");
         b.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ResolvedBy).OnDelete(DeleteBehavior.SetNull).HasConstraintName("fk_plan_orders_resolver");
         b.HasOne<Plan>().WithMany().HasForeignKey(x => x.PlanId).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_plan_orders_plan");
+        b.HasOne<Plan>().WithMany().HasForeignKey(x => x.BasePlanId).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_plan_orders_base_plan");
     }
 
     public void Configure(EntityTypeBuilder<PlanPayment> b)

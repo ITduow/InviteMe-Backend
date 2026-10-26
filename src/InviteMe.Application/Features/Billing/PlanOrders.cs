@@ -66,7 +66,8 @@ public static partial class PlanOrderRules
 {
     public const string Prefix = "IM", ChangedEvent = "WeddingPlanChanged";
     private const string Alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    public const string UnknownCode = "UNKNOWN_CODE", OrderClosed = "ORDER_CLOSED", WrongAccount = "WRONG_ACCOUNT";
+    public const string UnknownCode = "UNKNOWN_CODE", OrderClosed = "ORDER_CLOSED", WrongAccount = "WRONG_ACCOUNT",
+        OrderExpired = "ORDER_EXPIRED", PriceChanged = "PRICE_CHANGED";
 
     public static string NewCode()
     {
@@ -197,13 +198,16 @@ public sealed class PlanOrderHandler(IPlanOrderStore store, Ports.Authorization.
 /// One SePay endpoint for everything: money in with a plan order code (IM...) pays a plan; every other transfer goes to the
 /// gift module as before.
 /// </summary>
-public sealed class SePayWebhookDispatcher(GiftWebhookHandler gifts, IPlanOrderStore orders, IPlanningChangePublisher changes)
+public sealed class SePayWebhookDispatcher(GiftWebhookHandler gifts, IPlanOrderStore orders, BillingAccountOptions billing,
+    IPlanningChangePublisher changes)
 {
     public sealed record Outcome(GiftWebhookResult? Gift, PlanPaymentResult? Plan);
 
     public async Task<Outcome> ProcessAsync(SePayWebhookPayload payload, string rawJson, CancellationToken ct)
     {
-        var code = string.Equals(payload.TransferType, "in", StringComparison.OrdinalIgnoreCase) && payload.TransferAmount > 0
+        // Routed by the receiving account first: text in a gift transfer to a couple can never touch plan orders.
+        var toBilling = billing.Owns(payload.AccountNumber) || billing.Owns(payload.SubAccount);
+        var code = toBilling && string.Equals(payload.TransferType, "in", StringComparison.OrdinalIgnoreCase) && payload.TransferAmount > 0
             ? PlanOrderRules.FindCode(payload.Code, payload.Content) : null;
         if (code is null) return new(await gifts.ProcessAsync(payload, rawJson, ct), null);
         var result = await orders.ProcessPaymentAsync(payload, code, rawJson, ct);

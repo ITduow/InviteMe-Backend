@@ -622,6 +622,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("amount");
 
+                    b.Property<Guid?>("BasePlanId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("base_plan_id");
+
                     b.Property<DateTimeOffset?>("CancelledAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("cancelled_at");
@@ -5358,6 +5362,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("InviteMe.Domain.Billing.PlanOrder", b =>
                 {
+                    b.HasOne("InviteMe.Domain.Billing.Plan", null)
+                        .WithMany()
+                        .HasForeignKey("BasePlanId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_plan_orders_base_plan");
+
                     b.HasOne("InviteMe.Domain.Billing.Plan", null)
                         .WithMany()
                         .HasForeignKey("PlanId")

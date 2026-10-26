@@ -27,6 +27,7 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     wedding_id = table.Column<Guid>(type: "uuid", nullable: true),
                     user_id = table.Column<Guid>(type: "uuid", nullable: true),
                     plan_id = table.Column<Guid>(type: "uuid", nullable: false),
+                    base_plan_id = table.Column<Guid>(type: "uuid", nullable: true),
                     code = table.Column<string>(type: "character varying(20)", maxLength: 20, nullable: false),
                     amount = table.Column<long>(type: "bigint", nullable: false),
                     paid_amount = table.Column<long>(type: "bigint", nullable: false),
@@ -44,6 +45,13 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     table.CheckConstraint("ck_plan_orders_amounts", "amount > 0 AND paid_amount >= 0");
                     table.CheckConstraint("ck_plan_orders_paid", "(status = 'PAID') = (paid_at IS NOT NULL)");
                     table.CheckConstraint("ck_plan_orders_status", "status IN ('PENDING','UNDERPAID','PAID','CANCELLED')");
+                    table.ForeignKey(
+                        name: "fk_plan_orders_base_plan",
+                        column: x => x.base_plan_id,
+                        principalSchema: "inviteme",
+                        principalTable: "plans",
+                        principalColumn: "id",
+                        onDelete: ReferentialAction.Restrict);
                     table.ForeignKey(
                         name: "fk_plan_orders_plan",
                         column: x => x.plan_id,

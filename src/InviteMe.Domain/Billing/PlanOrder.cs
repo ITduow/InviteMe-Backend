@@ -15,6 +15,8 @@ public sealed class PlanOrder
     public Guid? WeddingId { get; private set; }
     public Guid? UserId { get; private set; }
     public Guid PlanId { get; private set; }
+    /// <summary>The plan in force when the order was priced (null: none). The amount is only valid while it stays in force.</summary>
+    public Guid? BasePlanId { get; private set; }
     /// <summary>Transfer content, e.g. IM7K2Q9PXA.</summary>
     public string Code { get; private set; } = "";
     /// <summary>What the owner must pay: the plan price minus the price of the paid plan already in force.</summary>
@@ -29,9 +31,10 @@ public sealed class PlanOrder
     /// <summary>Admin who approved or cancelled the order by hand.</summary>
     public Guid? ResolvedBy { get; private set; }
 
-    public static PlanOrder Create(Guid weddingId, Guid userId, Guid planId, string code, long amount, DateTimeOffset now) => amount > 0
-        ? new() { Id = Guid.NewGuid(), WeddingId = weddingId, UserId = userId, PlanId = planId, Code = code, Amount = amount,
-            CreatedAt = now, ExpiresAt = now + Lifetime }
+    public static PlanOrder Create(Guid weddingId, Guid userId, Guid planId, string code, long amount, DateTimeOffset now,
+        Guid? basePlanId = null) => amount > 0
+        ? new() { Id = Guid.NewGuid(), WeddingId = weddingId, UserId = userId, PlanId = planId, BasePlanId = basePlanId, Code = code,
+            Amount = amount, CreatedAt = now, ExpiresAt = now + Lifetime }
         : throw new ArgumentOutOfRangeException(nameof(amount));
 
     public bool Open => Status is Pending or Underpaid;

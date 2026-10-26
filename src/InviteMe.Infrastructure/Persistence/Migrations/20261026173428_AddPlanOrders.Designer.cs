@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace InviteMe.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(InviteMeDbContext))]
-    [Migration("20261026171717_AddPlanOrders")]
+    [Migration("20261026173428_AddPlanOrders")]
     partial class AddPlanOrders
     {
         /// <inheritdoc />
@@ -624,6 +624,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<long>("Amount")
                         .HasColumnType("bigint")
                         .HasColumnName("amount");
+
+                    b.Property<Guid?>("BasePlanId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("base_plan_id");
 
                     b.Property<DateTimeOffset?>("CancelledAt")
                         .HasColumnType("timestamp with time zone")
@@ -5361,6 +5365,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("InviteMe.Domain.Billing.PlanOrder", b =>
                 {
+                    b.HasOne("InviteMe.Domain.Billing.Plan", null)
+                        .WithMany()
+                        .HasForeignKey("BasePlanId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_plan_orders_base_plan");
+
                     b.HasOne("InviteMe.Domain.Billing.Plan", null)
                         .WithMany()
                         .HasForeignKey("PlanId")
