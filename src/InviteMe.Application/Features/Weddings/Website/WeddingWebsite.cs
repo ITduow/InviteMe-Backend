@@ -80,7 +80,7 @@ public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAc
         var website = await store.PublicAsync(slug, ct)
             ?? throw new ApplicationProblemException(ProblemKind.NotFound, "WEBSITE_UNAVAILABLE", "Website is not published.");
         // The plan keeps the public link open until some days after the wedding; the data itself is never removed.
-        if (await entitlements.PublicLinkOpenAsync(slug, ct) == false)
+        if (await entitlements.PublicLinkOpenAsync(website.Slug, ct) == false)
             throw new ApplicationProblemException(ProblemKind.Gone, InviteMe.Application.Features.Billing.PlanRules.PublicLinkExpired,
                 "Website cưới này đã hết thời gian hiển thị công khai.");
         return website;

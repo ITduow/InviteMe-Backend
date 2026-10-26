@@ -66,6 +66,13 @@ public sealed class WeddingWebsiteStore(InviteMeDbContext db) : IWeddingWebsiteS
 
     public async Task<PublicWebsiteDto?> PublicAsync(string slug, CancellationToken ct)
     {
+        // An old address of a wedding opens its current website; the response carries the current slug.
+        if (!await db.Weddings.AsNoTracking().AnyAsync(x => x.Slug == slug, ct) && await (
+                from history in db.Set<WeddingSlugHistory>().AsNoTracking()
+                join wedding in db.Weddings.AsNoTracking() on history.WeddingId equals wedding.Id
+                where history.Slug == slug.ToLower()
+                select wedding.Slug).SingleOrDefaultAsync(ct) is { } current)
+            slug = current;
         var row = await (from wedding in db.Weddings.AsNoTracking()
             join settings in db.WeddingSettings on wedding.Id equals settings.WeddingId
             join owner in db.Users on wedding.OwnerUserId equals owner.Id

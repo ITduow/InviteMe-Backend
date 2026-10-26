@@ -16,7 +16,8 @@ public sealed class WeddingSetupStore(InviteMeDbContext db, InviteMe.Application
     public async Task<WeddingSetupDto> CreateAsync(Guid ownerId, CreateWeddingInput input, string normalizedSlug, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        if (await db.Weddings.AnyAsync(x => x.Slug.ToLower() == normalizedSlug, ct)) throw SlugConflict();
+        if (await db.Weddings.AnyAsync(x => x.Slug.ToLower() == normalizedSlug, ct) || await SlugReleasedByAnotherWedding(normalizedSlug, null, ct))
+            throw SlugConflict();
 
         var wedding = Wedding.Create(ownerId, input.Name!.Trim(), normalizedSlug, input.Capacity!.Value, NormalizeCover(input.CoverImageUrl));
         var venue = Venue.Create(wedding.Id);
@@ -66,10 +67,19 @@ public sealed class WeddingSetupStore(InviteMeDbContext db, InviteMe.Application
             throw new ApplicationProblemException(ProblemKind.BusinessRule, "WEDDING_CLOSED", "Wedding setup cannot be changed in its current state.");
         if (wedding.Version != input.ExpectedVersion)
             throw new ApplicationProblemException(ProblemKind.Conflict, "WEDDING_CONCURRENCY_CONFLICT", "Wedding changed. Reload it before saving.");
-        if (await db.Weddings.AnyAsync(x => x.Id != weddingId && x.Slug.ToLower() == normalizedSlug, ct)) throw SlugConflict();
+        if (await db.Weddings.AnyAsync(x => x.Id != weddingId && x.Slug.ToLower() == normalizedSlug, ct)
+            || await SlugReleasedByAnotherWedding(normalizedSlug, weddingId, ct)) throw SlugConflict();
 
         var oldSlug = wedding.Slug;
-        if (!string.Equals(oldSlug, normalizedSlug, StringComparison.OrdinalIgnoreCase)) await entitlements.RequireCustomSlugAsync(weddingId, ct);
+        if (!string.Equals(oldSlug, normalizedSlug, StringComparison.OrdinalIgnoreCase))
+        {
+            await entitlements.RequireCustomSlugAsync(weddingId, ct);
+            // The old address stays with this wedding (shared links keep working); going back to it frees the history row.
+            var reclaimed = await db.Set<WeddingSlugHistory>().Where(x => x.WeddingId == weddingId && x.Slug == normalizedSlug).ToListAsync(ct);
+            db.RemoveRange(reclaimed);
+            if (!await db.Set<WeddingSlugHistory>().AnyAsync(x => x.Slug == oldSlug.ToLower(), ct))
+                db.Add(WeddingSlugHistory.Create(weddingId, oldSlug, DateTimeOffset.UtcNow));
+        }
         wedding.UpdateSetup(input.Name!.Trim(), normalizedSlug, input.Capacity!.Value, NormalizeCover(input.CoverImageUrl));
         var mainEvent = await db.WeddingEvents.SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.IsMain, ct);
         var venue = mainEvent?.VenueId is { } venueId
@@ -111,7 +121,11 @@ public sealed class WeddingSetupStore(InviteMeDbContext db, InviteMe.Application
         return (await GetAsync(weddingId, ct))!;
     }
 
+    private Task<bool> SlugReleasedByAnotherWedding(string normalizedSlug, Guid? weddingId, CancellationToken ct) =>
+        db.Set<WeddingSlugHistory>().AsNoTracking().AnyAsync(x => x.Slug == normalizedSlug && (weddingId == null || x.WeddingId != weddingId), ct);
+
     public async Task<bool> SlugAvailableAsync(string normalizedSlug, Guid? exceptWeddingId, CancellationToken ct) =>
+        !await SlugReleasedByAnotherWedding(normalizedSlug, exceptWeddingId, ct) &&
         !await db.Weddings.AsNoTracking().AnyAsync(x => x.Slug.ToLower() == normalizedSlug &&
             (exceptWeddingId == null || x.Id != exceptWeddingId.Value), ct);
 
@@ -149,7 +163,7 @@ public sealed class WeddingSetupStore(InviteMeDbContext db, InviteMe.Application
 
     private static bool IsSlugConflict(DbUpdateException exception) =>
         exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } postgres &&
-        postgres.ConstraintName is "weddings_slug_key" or "uq_weddings_slug_lower";
+        postgres.ConstraintName is "weddings_slug_key" or "uq_weddings_slug_lower" or "uq_wedding_slug_history_lower";
 
     private static ApplicationProblemException SlugConflict() => new(ProblemKind.Conflict,
         "WEDDING_SLUG_ALREADY_EXISTS", "This wedding URL is already in use. Please choose another slug.");

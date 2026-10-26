@@ -4509,6 +4509,40 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Weddings.WeddingSlugHistory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("ReleasedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("released_at");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)")
+                        .HasColumnName("slug");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Slug")
+                        .IsUnique()
+                        .HasDatabaseName("uq_wedding_slug_history_lower")
+                        .HasAnnotation("Npgsql:IndexExpression", "lower(slug)");
+
+                    b.HasIndex("WeddingId")
+                        .HasDatabaseName("ix_wedding_slug_history_wedding");
+
+                    b.ToTable("wedding_slug_history", "inviteme");
+                });
+
             modelBuilder.Entity("InviteMe.Infrastructure.Identity.ApplicationRole", b =>
                 {
                     b.Property<Guid>("Id")
@@ -6173,6 +6207,16 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_wedding_settings_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Weddings.WeddingSlugHistory", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_wedding_slug_history_wedding");
                 });
 
             modelBuilder.Entity("InviteMe.Infrastructure.Notifications.AccountConfirmationEmailJob", b =>

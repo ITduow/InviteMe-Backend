@@ -59,6 +59,14 @@ public sealed class PlanApiTests
         Assert.Equal("plan-wedding-new", (await Read<WeddingSetupDto>(await owner.PutAsJsonAsync($"/api/weddings/{w}", Update(same, "plan-wedding-new")), HttpStatusCode.OK)).Slug);
         using var stranger = await SignIn(factory, "plan-stranger");
         Assert.Equal(HttpStatusCode.Forbidden, (await stranger.GetAsync($"/api/weddings/{w}/plan")).StatusCode);
+
+        // The old address stays with this wedding: nobody else can take it, the owner can go back to it.
+        Assert.Equal(HttpStatusCode.Conflict, (await stranger.PostAsJsonAsync("/api/weddings", new CreateWeddingInput("Other", "plan-wedding",
+            eventAt, "Hall", "Address", 100, eventAt.AddDays(-7)))).StatusCode);
+        Assert.False((await stranger.GetFromJsonAsync<WeddingSlugAvailability>("/api/weddings/check-slug?slug=plan-wedding"))!.Available);
+        var renamed = await owner.GetFromJsonAsync<WeddingSetupDto>($"/api/weddings/{w}");
+        Assert.Equal("plan-wedding", (await Read<WeddingSetupDto>(await owner.PutAsJsonAsync($"/api/weddings/{w}", Update(renamed!, "plan-wedding")), HttpStatusCode.OK)).Slug);
+        Assert.Equal(new[] { "plan-wedding-new" }, await db.Set<Domain.Weddings.WeddingSlugHistory>().Where(x => x.WeddingId == w).Select(x => x.Slug).ToArrayAsync());
         Assert.Equal(1, await db.Set<Subscription>().CountAsync(x => x.WeddingId == w && x.Status == Subscription.Active));
     });
 
