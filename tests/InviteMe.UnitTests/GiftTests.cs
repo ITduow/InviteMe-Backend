@@ -21,6 +21,46 @@ public sealed class GiftTests
     }
 
     [Fact]
+    public void PayoutCodesAreSeparateFromGiftCodes()
+    {
+        Assert.All(Enumerable.Range(0, 50).Select(_ => GiftRules.NewPayoutCode()), c => Assert.Matches("^PO[A-HJ-NP-Z2-9]{8}$", c));
+        Assert.Equal("PO7K2Q9PXA", GiftRules.FindPayoutCode("MC7K2Q9PXA", "tra tien mung po7k2q9pxa"));
+        Assert.Null(GiftRules.FindPayoutCode(null, "MC7K2Q9PXA"));
+        Assert.Null(GiftRules.FindCode(null, "PO7K2Q9PXA"));
+    }
+
+    [Fact]
+    public void CollectionAccountIsOnlyActiveWhenFullyConfigured()
+    {
+        Assert.False(GiftCollectionOptions.Disabled.Active);
+        Assert.False(new GiftCollectionOptions(true, "123456", "9999", "InviteMe").Active); // unknown bank
+        Assert.False(new GiftCollectionOptions(false, "970422", "9999", "InviteMe").Active);
+        var on = new GiftCollectionOptions(true, "970422", " 9999 ", "InviteMe Thu hộ");
+        Assert.Equal((GiftCollectionOptions.AccountId, "MBBank", "9999", "INVITEME THU HO"),
+            (on.Account()!.Id, on.Account()!.BankName, on.Account()!.AccountNumber, on.Account()!.AccountName));
+        Assert.True(on.Owns("9999"));
+        Assert.False(on.Owns(null));
+        Assert.False(GiftCollectionOptions.Disabled.Owns("9999"));
+    }
+
+    [Fact]
+    public void PayoutAndLedgerKeepTheWeddingOfTheirSource()
+    {
+        var account = PlanningGiftAccount.Create(Guid.NewGuid(), "970422", "MBBank", "0000000001", "KIET", null, Now);
+        var payout = PlanningGiftPayout.Create(account.WeddingId, "POABCDEFGH", 400_000, account, null, "k", Guid.NewGuid(), Now);
+        Assert.Throws<ArgumentOutOfRangeException>(() => PlanningGiftPayout.Create(account.WeddingId, "PO", 9_999, account, null, "k", Guid.NewGuid(), Now));
+        var debit = PlanningGiftLedgerEntry.ForPayout(payout, Guid.NewGuid(), Now);
+        Assert.Equal((account.WeddingId, PlanningGiftLedgerEntry.Debit, 400_000L), (debit.WeddingId, debit.Type, debit.Amount));
+        payout.MarkPaid(Now);
+        Assert.Throws<InvalidOperationException>(() => payout.Cancel(Guid.NewGuid(), Now));
+
+        var collected = PlanningGift.ForQr(Guid.NewGuid(), Guid.NewGuid(), "An", null, "MCABCDEFGH", 500_000, null, false, "k", Now);
+        Assert.True(collected.CollectedByPlatform);
+        Assert.Equal(collected.WeddingId, PlanningGiftLedgerEntry.ForGift(collected, 500_000, null, null, Now).WeddingId);
+        Assert.Throws<InvalidOperationException>(() => PlanningGiftLedgerEntry.ForGift(NewGift(500_000), 500_000, null, null, Now)); // paid to the couple
+    }
+
+    [Fact]
     public void VietQrLinkCarriesAmountCodeAndHolderWithoutDiacritics()
     {
         var url = GiftRules.QrImageUrl("970422", "0000000001", "Nguyễn Tuấn  Kiệt", 500_000, "MC7K2Q9PXA");

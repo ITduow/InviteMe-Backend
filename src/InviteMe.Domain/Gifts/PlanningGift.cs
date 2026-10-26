@@ -64,13 +64,17 @@ public sealed class PlanningGift
     public DateTimeOffset ExpiresAt { get; private set; }
     public DateTimeOffset? ClaimedAt { get; private set; }
     public DateTimeOffset? PaidAt { get; private set; }
+    /// <summary>Sandbox collection: the guest paid InviteMe's collection account (no couple account); the money reaches the
+    /// couple through a payout made by an admin.</summary>
+    public bool CollectedByPlatform { get; private set; }
 
-    public static PlanningGift ForQr(Guid weddingId, Guid guestId, string giverName, Guid accountId, string code, long amount,
+    /// <summary>A QR gift to one of the couple's accounts, or to the platform collection account when accountId is null.</summary>
+    public static PlanningGift ForQr(Guid weddingId, Guid guestId, string giverName, Guid? accountId, string code, long amount,
         string? message, bool messagePublic, string idempotencyKey, DateTimeOffset now) => new()
     {
         Id = Guid.NewGuid(), WeddingId = weddingId, GuestId = guestId, GiverName = giverName, AccountId = accountId, Code = code,
         Method = Qr, AmountExpected = CheckAmount(amount), Message = message, MessagePublic = messagePublic,
-        IdempotencyKey = idempotencyKey, CreatedAt = now, ExpiresAt = now + CodeLifetime
+        IdempotencyKey = idempotencyKey, CreatedAt = now, ExpiresAt = now + CodeLifetime, CollectedByPlatform = accountId is null
     };
 
     /// <summary>Cash envelope or a transfer the couple records by hand: already received.</summary>
@@ -88,12 +92,12 @@ public sealed class PlanningGift
 
     /// <summary>A bank transfer without a usable code that the couple attaches to a giver (any received amount).</summary>
     public static PlanningGift FromBankTransfer(Guid weddingId, Guid? guestId, string giverName, long amount, string? message, Guid actor,
-        DateTimeOffset paidAt, DateTimeOffset now) => amount > 0
+        DateTimeOffset paidAt, DateTimeOffset now, bool collectedByPlatform = false) => amount > 0
         ? new()
         {
             Id = Guid.NewGuid(), WeddingId = weddingId, GuestId = guestId, GiverName = giverName, Method = Transfer,
             AmountReceived = amount, Message = message, Status = Paid, Confirmation = Manual, RecordedBy = actor,
-            CreatedAt = now, ExpiresAt = now, PaidAt = paidAt
+            CreatedAt = now, ExpiresAt = now, PaidAt = paidAt, CollectedByPlatform = collectedByPlatform
         }
         : throw new ArgumentOutOfRangeException(nameof(amount));
 
@@ -140,6 +144,8 @@ public sealed class PlanningGiftTransaction
     public Guid Id { get; private set; }
     public Guid? WeddingId { get; private set; }
     public Guid? GiftId { get; private set; }
+    /// <summary>Money out of the collection account that completed this payout.</summary>
+    public Guid? PayoutId { get; private set; }
     public string Provider { get; private set; } = SePay;
     public long ProviderTransactionId { get; private set; }
     public string Gateway { get; private set; } = "";
@@ -168,6 +174,12 @@ public sealed class PlanningGiftTransaction
     public void Resolve(string status, Guid? weddingId, Guid? giftId)
     {
         Status = status; WeddingId = weddingId; GiftId = giftId;
+    }
+
+    /// <summary>The bank reported the payout transfer leaving the collection account.</summary>
+    public void ResolvePayout(Guid weddingId, Guid payoutId)
+    {
+        Status = Matched; WeddingId = weddingId; PayoutId = payoutId;
     }
 
     /// <summary>The couple attached an unmatched transfer to a gift.</summary>

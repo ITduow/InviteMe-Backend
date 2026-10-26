@@ -65,6 +65,7 @@ public static class AdminPermissionCatalog
     public const string AuditView = "ADMIN_AUDIT_VIEW";
     public const string RbacView = "ADMIN_RBAC_VIEW";
     public const string RbacManage = "ADMIN_RBAC_MANAGE";
+    public const string GiftPayoutsManage = "ADMIN_GIFT_PAYOUTS_MANAGE";
 
     public static readonly (string Code, string Name, string Description)[] PlatformPermissions =
     [
@@ -76,10 +77,11 @@ public static class AdminPermissionCatalog
         (TemplatesManage, "Manage templates", "Create, update, publish and hide templates."),
         (AuditView, "View platform audit log", "View system-wide audit events."),
         (RbacView, "View access control", "View the role and permission model."),
-        (RbacManage, "Manage access control", "Assign the fixed platform permission set to the Admin role.")
+        (RbacManage, "Manage access control", "Assign the fixed platform permission set to the Admin role."),
+        (GiftPayoutsManage, "Manage gift payouts", "Sandbox collection: view wedding gift balances and order or cancel payouts to couples.")
     ];
 
     public static readonly string[] RequiredAdminPermissions =
-        [DashboardView, UsersView, UsersManage, WeddingsView, TemplatesView, TemplatesManage, AuditView, RbacView, RbacManage];
+        [DashboardView, UsersView, UsersManage, WeddingsView, TemplatesView, TemplatesManage, AuditView, RbacView, RbacManage, GiftPayoutsManage];
 }
 

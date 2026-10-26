@@ -146,14 +146,90 @@ public sealed class GiftApiTests
         Assert.Equal(PlanningGift.Paid, (await db.Set<PlanningGift>().AsNoTracking().SingleAsync(x => x.Id == toGroom.Id)).Status); // gift kept
     });
 
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task SandboxCollectionKeepsEveryAmountWithItsOwnWedding() => WithApi(async (db, factory, owner, ownerId) =>
+    {
+        // Two weddings of two couples, both collected by the same InviteMe sandbox account.
+        var a = await Wedding(db, ownerId, "collect-a");
+        using var ownerB = await SignIn(factory, "gift-owner-b");
+        var b = await Wedding(db, (await ownerB.GetFromJsonAsync<AccountDto>("/api/auth/me"))!.Id, "collect-b");
+        string pathA = $"/api/weddings/{a}/gifts", pathB = $"/api/weddings/{b}/gifts";
+        await AssertProblem(HttpStatusCode.UnprocessableEntity, "GIFT_ACCOUNT_IS_COLLECTION",
+            await owner.PostAsJsonAsync(pathA + "/accounts", new SaveGiftAccount("970422", CollectionNumber, "InviteMe")));
+        var accountA = await Read<GiftBankAccountDto>(await owner.PostAsJsonAsync(pathA + "/accounts", new SaveGiftAccount("970422", "0000000001", "Kiệt")), HttpStatusCode.Created);
+        var accountB = await Read<GiftBankAccountDto>(await ownerB.PostAsJsonAsync(pathB + "/accounts", new SaveGiftAccount("970436", "0123456789", "Hạnh")), HttpStatusCode.Created);
+
+        using var guest = Client(factory);
+        var anA = "/api/gifts/" + (await Import(db, owner, a, "An"))["An"].Token;
+        var binhB = "/api/gifts/" + (await Import(db, ownerB, b, "Bình"))["Bình"].Token;
+        var page = (await guest.GetFromJsonAsync<GuestGiftPageDto>(anA))!;
+        Assert.True(page.Sandbox);
+        Assert.Equal((GiftCollectionOptions.AccountId, CollectionNumber), (page.Accounts.Single().Id, page.Accounts.Single().AccountNumber));
+        var giftA = await Read<GuestGiftDto>(await Send(guest, anA, new CreateGuestGift(500_000), "a1"), HttpStatusCode.Created);
+        Assert.Contains($"970422-{CollectionNumber}-compact2.png?amount=500000&addInfo={giftA.Code}", giftA.QrImageUrl); // QR to the collection account
+        Assert.Equal(giftA.Id, (await Read<GuestGiftDto>(await Send(guest, anA, new CreateGuestGift(500_000), "a1"), HttpStatusCode.OK)).Id);
+        var giftB = await Read<GuestGiftDto>(await Send(guest, binhB, new CreateGuestGift(300_000), "b1"), HttpStatusCode.Created);
+        await AssertProblem(HttpStatusCode.UnprocessableEntity, "GIFT_COLLECTED_BY_PLATFORM", await owner.PostAsJsonAsync($"{pathA}/{giftA.Id}/confirm", new ConfirmGift()));
+
+        // Money in: each code credits its own wedding; a transfer without code belongs to no wedding.
+        using var sepay = Client(factory);
+        foreach (var (id, code, amount) in new[] { (50001L, giftA.Code, 500_000L), (50002L, giftB.Code, 300_000L), (50001L, giftA.Code, 500_000L) })
+            Assert.Equal(HttpStatusCode.OK, (await Webhook(sepay, id, code, amount, accountNumber: CollectionNumber)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Webhook(sepay, 50003, null, 100_000, content: "chuc mung", accountNumber: CollectionNumber)).StatusCode);
+        var orphan = await db.Set<PlanningGiftTransaction>().AsNoTracking().SingleAsync(x => x.ProviderTransactionId == 50003);
+        Assert.Equal((PlanningGiftTransaction.Ignored, (Guid?)null), (orphan.Status, orphan.WeddingId));
+        Assert.Equal(PlanningGift.Paid, (await guest.GetFromJsonAsync<GuestGiftDto>($"{anA}/{giftA.Id}"))!.Status);
+        Assert.Empty((await owner.GetFromJsonAsync<List<GiftTransactionDto>>(pathA + "/transactions"))!);
+        Assert.Equal(new GiftBalanceDto(true, 500_000, 0, 0, 500_000), await owner.GetFromJsonAsync<GiftBalanceDto>(pathA + "/balance"));
+        Assert.Equal(new GiftBalanceDto(true, 300_000, 0, 0, 300_000), await ownerB.GetFromJsonAsync<GiftBalanceDto>(pathB + "/balance"));
+        Assert.Equal(HttpStatusCode.Forbidden, (await ownerB.GetAsync(pathA + "/balance")).StatusCode);
+
+        // Admin: balances per wedding, payout only to that wedding's own account and within its balance.
+        Assert.Equal(HttpStatusCode.Forbidden, (await owner.GetAsync("/api/admin/gift-balances")).StatusCode);
+        using var admin = await SignInAdmin(factory, db);
+        var balances = (await admin.GetFromJsonAsync<PagedResult<AdminGiftBalanceDto>>("/api/admin/gift-balances"))!;
+        Assert.Equal(new[] { (a, 500_000L, accountA.Id), (b, 300_000L, accountB.Id) },
+            balances.Items.Select(x => (x.WeddingId, x.Balance.Available, x.Accounts.Single().Id)).ToArray());
+        var payouts = $"/api/admin/weddings/{a}/gift-payouts";
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsJsonAsync(payouts, new CreateGiftPayout(400_000, accountA.Id))).StatusCode); // no Idempotency-Key
+        await AssertProblem(HttpStatusCode.NotFound, "GIFT_ACCOUNT_NOT_FOUND", await Send(admin, payouts, new CreateGiftPayout(400_000, accountB.Id), "p0"));
+        await AssertProblem(HttpStatusCode.UnprocessableEntity, "GIFT_PAYOUT_EXCEEDS_BALANCE", await Send(admin, payouts, new CreateGiftPayout(600_000, accountA.Id), "p0"));
+        var payout = await Read<GiftPayoutDto>(await Send(admin, payouts, new CreateGiftPayout(400_000, accountA.Id, "Đợt 1"), "p1"), HttpStatusCode.Created);
+        Assert.Matches("^PO[A-Z2-9]{8}$", payout.Code);
+        Assert.Equal((a, "0000000001", PlanningGiftPayout.Pending), (payout.WeddingId, payout.AccountNumber, payout.Status));
+        Assert.Equal(payout.Id, (await Read<GiftPayoutDto>(await Send(admin, payouts, new CreateGiftPayout(400_000, accountA.Id, "Đợt 1"), "p1"), HttpStatusCode.OK)).Id);
+        await AssertProblem(HttpStatusCode.Conflict, "GIFT_PAYOUT_PENDING", await Send(admin, payouts, new CreateGiftPayout(50_000, accountA.Id), "p2"));
+        Assert.Equal(new GiftBalanceDto(true, 500_000, 0, 400_000, 100_000), await owner.GetFromJsonAsync<GiftBalanceDto>(pathA + "/balance"));
+
+        // Money out: only the exact amount from the collection account with the payout code completes it.
+        await Webhook(sepay, 50004, null, 399_000, content: payout.Code + " tra tien mung", transferType: "out", accountNumber: CollectionNumber);
+        await Webhook(sepay, 50005, null, 400_000, content: payout.Code, transferType: "out", accountNumber: "0000000001");
+        Assert.Equal(PlanningGiftPayout.Pending, (await owner.GetFromJsonAsync<List<GiftPayoutDto>>(pathA + "/payouts"))!.Single().Status);
+        await Webhook(sepay, 50006, null, 400_000, content: payout.Code + " tra tien mung", transferType: "out", accountNumber: CollectionNumber);
+        Assert.Equal(PlanningGiftPayout.Paid, (await owner.GetFromJsonAsync<List<GiftPayoutDto>>(pathA + "/payouts"))!.Single().Status);
+        Assert.Equal(new GiftBalanceDto(true, 500_000, 400_000, 0, 100_000), await owner.GetFromJsonAsync<GiftBalanceDto>(pathA + "/balance"));
+        Assert.Equal(new GiftBalanceDto(true, 300_000, 0, 0, 300_000), await ownerB.GetFromJsonAsync<GiftBalanceDto>(pathB + "/balance"));
+        Assert.Empty((await ownerB.GetFromJsonAsync<List<GiftPayoutDto>>(pathB + "/payouts"))!);
+        await AssertProblem(HttpStatusCode.UnprocessableEntity, "GIFT_PAYOUT_CLOSED", await admin.PostAsync($"/api/admin/gift-payouts/{payout.Id}/cancel", null));
+
+        // A cancelled payout gives the money back to the balance.
+        var second = await Read<GiftPayoutDto>(await Send(admin, $"/api/admin/weddings/{b}/gift-payouts", new CreateGiftPayout(300_000, accountB.Id), "b-1"), HttpStatusCode.Created);
+        Assert.Equal(PlanningGiftPayout.Cancelled, (await Read<GiftPayoutDto>(await admin.PostAsync($"/api/admin/gift-payouts/{second.Id}/cancel", null), HttpStatusCode.OK)).Status);
+        Assert.Equal(300_000, (await ownerB.GetFromJsonAsync<GiftBalanceDto>(pathB + "/balance"))!.Available);
+        Assert.Equal(2, (await admin.GetFromJsonAsync<PagedResult<GiftPayoutDto>>("/api/admin/gift-payouts"))!.TotalCount);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.GetAsync("/api/admin/gift-payouts?status=DONE")).StatusCode);
+    }, collection: true);
+
     // ---------------- helpers ----------------
 
+    private const string CollectionNumber = "9999999999";
+
     private static async Task<HttpResponseMessage> Webhook(HttpClient sepay, long id, string? code, long amount, string key = WebhookKey,
-        string? content = null, string transferType = "in")
+        string? content = null, string transferType = "in", string accountNumber = "0000000001")
     {
         var body = JsonSerializer.Serialize(new
         {
-            gateway = "MBBank", transactionDate = "2026-10-22 12:24:06", accountNumber = "0000000001", subAccount = "", code,
+            gateway = "MBBank", transactionDate = "2026-10-22 12:24:06", accountNumber, subAccount = "", code,
             content = content ?? $"{code} mung cuoi", transferType, description = content ?? $"{code} mung cuoi", transferAmount = amount,
             referenceCode = "SBAB9851BD8274", accumulated = 0, id
         });
@@ -185,7 +261,7 @@ public sealed class GiftApiTests
             .ToDictionaryAsync(x => x.RecipientName, x => (x.Id, x.InvitationToken!));
     }
 
-    private static Task WithApi(Func<InviteMeDbContext, WebApplicationFactory<Program>, HttpClient, Guid, Task> test) =>
+    private static Task WithApi(Func<InviteMeDbContext, WebApplicationFactory<Program>, HttpClient, Guid, Task> test, bool collection = false) =>
         SchemaV2MigrationTests.InDatabase(async db =>
         {
             await db.Database.MigrateAsync();
@@ -199,6 +275,8 @@ public sealed class GiftApiTests
                     services.Remove(registration);
                 services.RemoveAll<GiftWebhookOptions>();
                 services.AddSingleton(new GiftWebhookOptions(WebhookKey));
+                services.RemoveAll<GiftCollectionOptions>();
+                services.AddSingleton(collection ? new GiftCollectionOptions(true, "970422", CollectionNumber, "InviteMe Sandbox") : GiftCollectionOptions.Disabled);
             }));
             using var owner = await SignIn(factory, "gift-owner");
             var ownerId = (await owner.GetFromJsonAsync<AccountDto>("/api/auth/me"))!.Id;
@@ -213,6 +291,17 @@ public sealed class GiftApiTests
         var c = Client(factory);
         await Read<AccountDto>(await c.PostAsJsonAsync("/api/auth/register", new RegisterAccount(name + "@example.test", Password, name)), HttpStatusCode.Created);
         var token = await Read<TokenDto>(await c.PostAsJsonAsync("/api/auth/login", new LoginAccount(name + "@example.test", Password)), HttpStatusCode.OK);
+        c.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken); return c;
+    }
+
+    private static async Task<HttpClient> SignInAdmin(WebApplicationFactory<Program> factory, InviteMeDbContext db)
+    {
+        var c = Client(factory);
+        var account = await Read<AccountDto>(await c.PostAsJsonAsync("/api/auth/register", new RegisterAccount("gift-admin@example.test", Password, "Admin")), HttpStatusCode.Created);
+        var adminRoleId = await db.Roles.Where(x => x.Name == "ADMIN").Select(x => x.Id).SingleAsync();
+        db.UserRoles.Add(new Microsoft.AspNetCore.Identity.IdentityUserRole<Guid> { UserId = account.Id, RoleId = adminRoleId });
+        await db.SaveChangesAsync();
+        var token = await Read<TokenDto>(await c.PostAsJsonAsync("/api/auth/login", new LoginAccount("gift-admin@example.test", Password)), HttpStatusCode.OK);
         c.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken); return c;
     }
 
