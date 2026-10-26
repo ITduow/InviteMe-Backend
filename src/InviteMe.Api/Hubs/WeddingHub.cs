@@ -46,7 +46,16 @@ public sealed class WeddingHub(IWeddingPermissionService permissions, ISeatingDr
         // Only places inside the caller's seating edit scope can be locked: a group co-host cannot hold other groups' guests.
         var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_EDIT, Context.ConnectionAborted);
         var plan = await seating.GetScopedAsync(weddingId, Context.ConnectionAborted, scope.IsWeddingWide ? null : scope.GroupIds);
-        if (placeIds.Any(id => !plan.Places.Any(p => p.Id == id))) throw new HubException("PLACE_NOT_FOUND");
+        if (placeIds.Any(id => !plan.Places.Any(p => p.Id == id)))
+        {
+            if (!scope.IsWeddingWide)
+            {
+                var fullPlan = await seating.GetAsync(weddingId, Context.ConnectionAborted);
+                if (placeIds.All(id => fullPlan.Places.Any(p => p.Id == id)))
+                    throw new HubException("SEATING_SCOPE_DENIED");
+            }
+            throw new HubException("PLACE_NOT_FOUND");
+        }
         var account = await accounts.GetAsync(UserId, Context.ConnectionAborted);
         return Lease(() => leases.Acquire(weddingId, UserId, Context.ConnectionId, account?.DisplayName ?? "Cohost", placeIds));
     }

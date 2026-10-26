@@ -90,7 +90,7 @@ public sealed class SeatingDragHubTests
         var account = scope.ServiceProvider.GetRequiredService<IAccountStore>();
         var leases = new SeatingDragLeaseService(TimeProvider.System); var plan = new Plan();
         var group = Hub("group", Guid.NewGuid(), new GroupPermissions(), leases, plan, account);
-        Assert.Equal("PLACE_NOT_FOUND", (await Assert.ThrowsAsync<HubException>(() => group.StartSeatingDrag(plan.Wedding, [plan.OtherPlace]))).Message);
+        Assert.Equal("SEATING_SCOPE_DENIED", (await Assert.ThrowsAsync<HubException>(() => group.StartSeatingDrag(plan.Wedding, [plan.OtherPlace]))).Message);
         Assert.Empty(leases.Snapshot(plan.Wedding).Leases);
         await group.StartSeatingDrag(plan.Wedding, [plan.Place]);
         var weddingWide = Hub("wide", Guid.NewGuid(), new Permissions(), leases, plan, account);
