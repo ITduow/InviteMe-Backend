@@ -59,7 +59,7 @@ public sealed class CreateCoHostInvitationValidator : AbstractValidator<CreateCo
 }
 
 public sealed class CoHostInvitationHandler(ICoHostInvitationStore store, ICoHostInvitationEmailSender email,
-    ICurrentUser current, RequestValidation<CreateCoHostInvitationInput> validation)
+    ICurrentUser current, RequestValidation<CreateCoHostInvitationInput> validation, InviteMe.Application.Features.Billing.IWeddingEntitlements plans)
 {
     private static readonly TimeSpan Lifetime = TimeSpan.FromHours(72);
 
@@ -68,6 +68,7 @@ public sealed class CoHostInvitationHandler(ICoHostInvitationStore store, ICoHos
         var actor = RequireUser();
         await EnsureOwnerAsync(weddingId, actor, ct);
         await validation.ValidateAsync(input, ct);
+        await plans.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.CoHosts, 1, ct);
         var grants = input.Grants.Select(x => (Enum.Parse<WeddingPermission>(x.Permission), x.WeddingWide, x.GroupIds)).ToArray();
         var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         var expires = DateTimeOffset.UtcNow.Add(Lifetime);

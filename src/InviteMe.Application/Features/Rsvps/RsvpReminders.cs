@@ -170,7 +170,7 @@ public static class RsvpReminderRules
 public sealed class RsvpReminderHandler(IRsvpReminderStore store, IWeddingPermissionService permissions, ICurrentUser user,
     RequestValidation<SendRsvpReminders> sendValidation, RequestValidation<RsvpReminderHistoryFilter> historyValidation,
     RequestValidation<PageRequest> pages, RsvpReminderProcessor processor, IInvitationChannelSender sender, IPlanningChangePublisher changes,
-    TimeProvider clock)
+    TimeProvider clock, InviteMe.Application.Features.Billing.IWeddingEntitlements plans)
 {
     public const string RemindersChanged = "RsvpRemindersChanged";
 
@@ -183,6 +183,9 @@ public sealed class RsvpReminderHandler(IRsvpReminderStore store, IWeddingPermis
     public async Task<RsvpReminderSummaryDto> SaveSettingsAsync(Guid weddingId, SaveRsvpReminderSettings input, CancellationToken ct)
     {
         await RequireWeddingWideAsync(weddingId, WeddingPermission.INVITATION_SEND, ct);
+        // Automatic reminders need a plan with reminders; switching them off is always allowed.
+        if (input.AutoEnabled && InviteMe.Application.Features.Billing.PlanRules.Limit(await plans.LimitsAsync(weddingId, ct), InviteMe.Application.Features.Billing.PlanQuota.ReminderRounds) == 0)
+            await plans.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.ReminderRounds, 1, ct);
         await store.SetAutoAsync(weddingId, input.AutoEnabled, ct);
         await changes.PublishAsync(weddingId, new(RemindersChanged, weddingId), ct);
         return Summary(await store.ContextAsync(weddingId, ct), clock.GetUtcNow()) with { EmailConfigured = EmailReady };
@@ -207,6 +210,7 @@ public sealed class RsvpReminderHandler(IRsvpReminderStore store, IWeddingPermis
             "Chưa cấu hình máy chủ email (Smtp) nên chưa gửi nhắc được.");
         var now = clock.GetUtcNow();
         var (sendAt, eligible, skipped) = Manual(context, input.GuestIds, now);
+        if (eligible.Count > 0) await plans.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.ReminderRounds, 1, ct);
         var queued = await store.EnqueueAsync(weddingId, eligible.Select(g =>
             new RsvpReminderEnqueue(g.Id, PlanningRsvpReminder.Manual, g.Email!.Trim(), sendAt, user.UserId!.Value)).ToList(), now, ct);
         var queuedSet = queued.ToHashSet();

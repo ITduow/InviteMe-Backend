@@ -3,6 +3,11 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using InviteMe.Application.Features.Billing;
+using InviteMe.Application.Features.AI.ThankYouTemplates;
+using InviteMe.Application.Features.Guests.Reception;
+using InviteMe.Application.Features.Rsvps;
+using InviteMe.Application.Features.Seating.Planning;
+using InviteMe.Application.Features.Weddings.CoHosts;
 using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Application.Features.Identity.Accounts;
 using InviteMe.Application.Ports.Authentication;
@@ -85,6 +90,58 @@ public sealed class PlanApiTests
         Assert.Null(plan.PublicLinkUntil);
         Assert.Equal(HttpStatusCode.Created, (await Import(owner, legacy.Id, 120)).StatusCode);
     });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task FreePlanLocksPaidFeaturesUntilTheWeddingUpgrades() => SchemaV2MigrationTests.InDatabase(async db =>
+    {
+        await db.Database.MigrateAsync();
+        await using var factory = new DatabaseApiFactory(db.Database.GetConnectionString()!);
+        using var owner = await SignIn(factory, "limits-owner");
+        var eventAt = DateTimeOffset.UtcNow.AddMonths(2);
+        var w = (await Read<WeddingSetupDto>(await owner.PostAsJsonAsync("/api/weddings", new CreateWeddingInput("Limits wedding", "limits-wedding",
+            eventAt, "Hall", "Address", 100, eventAt.AddDays(-7))), HttpStatusCode.Created)).Id;
+        Assert.Equal(HttpStatusCode.Created, (await Import(owner, w, 3)).StatusCode);
+        var token = await db.Set<Domain.Guests.PlanningGuest>().Where(x => x.WeddingId == w).Select(x => x.InvitationToken!).FirstAsync();
+        var planning = $"/api/weddings/{w}/guest-planning";
+        var version = (await owner.GetFromJsonAsync<PlanningSeatingDto>($"{planning}/seating-plan"))!.Version;
+
+        // FREE: each paid feature answers 403 PLAN_LIMIT_REACHED with the plan to buy.
+        HttpResponseMessage CoHost() => owner.PostAsJsonAsync($"/api/weddings/{w}/co-host-invitations",
+            new CreateCoHostInvitationInput("helper@example.test", [new("GUEST_VIEW", [], true)])).Result;
+        await AssertLimit(CoHost(), "coHosts", 0, 0, 1, Plan.Basic);
+        await AssertLimit(await owner.PostAsJsonAsync($"{planning}/check-ins", new CheckInGuests(null, Guid.NewGuid(), [Guid.NewGuid()])), "checkin", null, 0, 1, Plan.Basic);
+        await AssertLimit(await owner.PostAsync($"{planning}/seating-plan/publish", null), "publicSeatLookup", null, 0, 1, Plan.Basic);
+        await AssertLimit(await owner.PutAsJsonAsync($"/api/weddings/{w}/rsvps/reminders/settings", new SaveRsvpReminderSettings(true)), "reminderRounds", 0, 0, 1, Plan.Basic);
+        Assert.Equal(HttpStatusCode.OK, (await owner.PutAsJsonAsync($"/api/weddings/{w}/rsvps/reminders/settings", new SaveRsvpReminderSettings(false))).StatusCode);
+        await AssertLimit(await owner.GetAsync($"/api/weddings/{w}/gifts/export"), "giftExport", null, 0, 1, Plan.Basic);
+        await AssertLimit(await owner.PostAsJsonAsync($"/api/weddings/{w}/ai/thank-you-templates/generate", new GenerateThankYouTemplate()), "aiThankYouRuns", 0, 0, 1, Plan.Basic);
+        Assert.Equal(HttpStatusCode.OK, (await owner.PatchAsJsonAsync($"{planning}/seating-plan",
+            new ChangePlanningSeating(version, "CREATE_TABLES", Capacity: 10, TableCount: 5))).StatusCode);
+        version = (await owner.GetFromJsonAsync<PlanningSeatingDto>($"{planning}/seating-plan"))!.Version;
+        await AssertLimit(await owner.PatchAsJsonAsync($"{planning}/seating-plan", new ChangePlanningSeating(version, "CREATE_TABLE", Name: "Bàn 6", Capacity: 10)),
+            "seatingTables", 5, 5, 1, Plan.Basic);
+        using var guest = factory.CreateHttpsClient();
+        Assert.False((await guest.GetFromJsonAsync<GiftPageView>($"/api/gifts/{token}"))!.QrEnabled);
+        using (var gift = new HttpRequestMessage(HttpMethod.Post, $"/api/gifts/{token}") { Content = JsonContent.Create(new { amount = 200_000 }) })
+        {
+            gift.Headers.Add("Idempotency-Key", "g1");
+            await AssertLimit(await guest.SendAsync(gift), "giftQr", null, 0, 1, Plan.Basic);
+        }
+        var usage = (await owner.GetFromJsonAsync<WeddingPlanDto>($"/api/weddings/{w}/plan"))!.Usage;
+        Assert.Equal((3, 5, 0), (usage.GuestPlaces, usage.SeatingTables, usage.CoHosts));
+
+        // BASIC opens them; quotas still count.
+        await UseBasicPlan(db, w);
+        Assert.Equal(HttpStatusCode.Accepted, CoHost().StatusCode);
+        Assert.Equal(1, (await owner.GetFromJsonAsync<WeddingPlanDto>($"/api/weddings/{w}/plan"))!.Usage.CoHosts);
+        Assert.Equal(HttpStatusCode.OK, (await owner.PatchAsJsonAsync($"{planning}/seating-plan",
+            new ChangePlanningSeating(version, "CREATE_TABLE", Name: "Bàn 6", Capacity: 10))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await owner.GetAsync($"/api/weddings/{w}/gifts/export")).StatusCode);
+        Assert.True((await guest.GetFromJsonAsync<GiftPageView>($"/api/gifts/{token}"))!.QrEnabled);
+        Assert.NotEqual(HttpStatusCode.Forbidden, (await owner.PostAsJsonAsync($"{planning}/check-ins", new CheckInGuests(null, Guid.NewGuid(), [Guid.NewGuid()]))).StatusCode);
+    });
+
+    private sealed record GiftPageView(bool QrEnabled);
 
     /// <summary>Test helper: the wedding bought the BASIC plan (the payment flow comes in a later step).</summary>
     internal static async Task UseBasicPlan(InviteMeDbContext db, Guid weddingId)

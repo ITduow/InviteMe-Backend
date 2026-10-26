@@ -37,7 +37,7 @@ public sealed class GuestPlanningStore(InviteMeDbContext db, InviteMe.Applicatio
             throw Missing("GROUP_NOT_FOUND");
         if (groupScope is not null && (groupScope.Count == 0 || input.GroupId is not { } scopedGroup || !groupScope.Contains(scopedGroup)))
             throw Missing("GROUP_NOT_FOUND");
-        await entitlements.RequireGuestPlacesAsync(weddingId, input.ExpectedPeople, ct);
+        await entitlements.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.GuestPlaces, input.ExpectedPeople, ct);
 
         var possibleDuplicate = await HasPossibleDuplicateAsync(weddingId, input.RecipientName, input.Phone,
             null, groupScope, ct);
@@ -166,7 +166,7 @@ public sealed class GuestPlanningStore(InviteMeDbContext db, InviteMe.Applicatio
         }
         if (guest.Version != expectedVersion) throw Conflict("GUEST_VERSION_CONFLICT");
         await db.Database.ExecuteSqlInterpolatedAsync($"SELECT id FROM inviteme.weddings WHERE id={weddingId} FOR UPDATE", ct);
-        await entitlements.RequireGuestPlacesAsync(weddingId, guest.ExpectedPeople, ct);
+        await entitlements.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.GuestPlaces, guest.ExpectedPeople, ct);
 
         guest.ArchivedAt = null;
         // Archival revokes the old public link. Restoring creates a fresh token; callers must share the returned link.
@@ -198,7 +198,7 @@ public sealed class GuestPlanningStore(InviteMeDbContext db, InviteMe.Applicatio
             if (row!.Group?.ExistingId is { } id && groups.All(x => x.Id != id))
                 errors.Add(new(row.RowNumber, "group", "GROUP_NOT_FOUND", "Nhóm không thuộc wedding này."));
         if (errors.Count > 0) return new(null, errors);
-        await entitlements.RequireGuestPlacesAsync(weddingId, input.Rows!.Sum(x => x!.ExpectedPeople ?? 1), ct);
+        await entitlements.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.GuestPlaces, input.Rows!.Sum(x => x!.ExpectedPeople ?? 1), ct);
         var batch = new PlanningImportBatch { Id = Guid.NewGuid(), WeddingId = weddingId, Key = key, RequestHash = hash };
         db.Add(batch);
         var createdGroups = new List<PlanningGroupDto>();

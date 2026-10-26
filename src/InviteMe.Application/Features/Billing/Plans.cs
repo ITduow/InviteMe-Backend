@@ -29,8 +29,15 @@ public sealed record PlanLimits(
 
 public sealed record PlanDto(string Code, string Name, decimal Price, string Currency, PlanLimits Limits);
 
-/// <summary>Usage counted against the plan of one wedding.</summary>
-public sealed record WeddingPlanUsage(int GuestPlaces);
+/// <summary>Counted limits. The JSON name of each is the camelCase field of PlanLimits.</summary>
+public enum PlanQuota { GuestPlaces, MediaImages, EmailInvites, SmsInvites, ReminderRounds, CoHosts, SeatingTables, AiThankYouRuns }
+
+/// <summary>On/off features.</summary>
+public enum PlanFeature { CustomSlug, Checkin, GiftQr, GiftExport, PremiumTemplates, PublicSeatLookup }
+
+/// <summary>Usage counted against the plan of one wedding (same units as PlanLimits).</summary>
+public sealed record WeddingPlanUsage(int GuestPlaces, int MediaImages = 0, int EmailInvites = 0, int SmsInvites = 0, int ReminderRounds = 0,
+    int CoHosts = 0, int SeatingTables = 0, int AiThankYouRuns = 0);
 
 /// <summary>Legacy = the wedding predates plans and keeps every feature without a subscription row.</summary>
 public sealed record WeddingPlanDto(Guid WeddingId, string PlanCode, string PlanName, bool Legacy, PlanLimits Limits,
@@ -41,10 +48,15 @@ public interface IWeddingEntitlements
 {
     Task<IReadOnlyList<PlanDto>> PlansAsync(CancellationToken ct);
     Task<WeddingPlanDto> GetAsync(Guid weddingId, CancellationToken ct);
-    /// <summary>Throws 403 PLAN_LIMIT_REACHED when adding this many expected people goes over the plan.
-    /// Call inside the transaction that holds the wedding row lock.</summary>
-    Task RequireGuestPlacesAsync(Guid weddingId, int adding, CancellationToken ct);
-    Task RequireCustomSlugAsync(Guid weddingId, CancellationToken ct);
+    /// <summary>Throws 403 PLAN_LIMIT_REACHED when adding this much goes over the plan. Inside a store, call it in the
+    /// transaction that holds the wedding row lock so two requests cannot both pass.</summary>
+    Task RequireQuotaAsync(Guid weddingId, PlanQuota quota, int adding, CancellationToken ct);
+    /// <summary>Throws 403 PLAN_LIMIT_REACHED when the plan does not include the feature.</summary>
+    Task RequireFeatureAsync(Guid weddingId, PlanFeature feature, CancellationToken ct);
+    Task<PlanLimits> LimitsAsync(Guid weddingId, CancellationToken ct);
+    /// <summary>Whether public pages of this wedding show "made with InviteMe" (free plan).</summary>
+    Task<bool> BrandingBadgeForSlugAsync(string slug, CancellationToken ct);
+    Task<bool> BrandingBadgeForGuestAsync(string invitationToken, CancellationToken ct);
     /// <summary>Null when the slug is unknown; otherwise whether the public website link is still open.</summary>
     Task<bool?> PublicLinkOpenAsync(string slug, CancellationToken ct);
 }
@@ -59,6 +71,38 @@ public static class PlanRules
 
     public static bool PublicLinkOpen(PlanLimits limits, DateTimeOffset? weddingAt, DateTimeOffset now) =>
         PublicLinkUntil(limits, weddingAt) is not { } until || now <= until;
+
+    public static int? Limit(PlanLimits l, PlanQuota quota) => quota switch
+    {
+        PlanQuota.GuestPlaces => l.GuestPlaces, PlanQuota.MediaImages => l.MediaImages, PlanQuota.EmailInvites => l.EmailInvites,
+        PlanQuota.SmsInvites => l.SmsInvites, PlanQuota.ReminderRounds => l.ReminderRounds, PlanQuota.CoHosts => l.CoHosts,
+        PlanQuota.SeatingTables => l.SeatingTables, PlanQuota.AiThankYouRuns => l.AiThankYouRuns,
+        _ => throw new ArgumentOutOfRangeException(nameof(quota))
+    };
+
+    public static bool Allows(PlanLimits l, PlanFeature feature) => feature switch
+    {
+        PlanFeature.CustomSlug => l.CustomSlug, PlanFeature.Checkin => l.Checkin, PlanFeature.GiftQr => l.GiftQr,
+        PlanFeature.GiftExport => l.GiftExport, PlanFeature.PremiumTemplates => l.PremiumTemplates,
+        PlanFeature.PublicSeatLookup => l.PublicSeatLookup, _ => throw new ArgumentOutOfRangeException(nameof(feature))
+    };
+
+    /// <summary>camelCase name used in limits_json and in the "feature" field of PLAN_LIMIT_REACHED.</summary>
+    public static string Name<T>(T value) where T : Enum => char.ToLowerInvariant(value.ToString()[0]) + value.ToString()[1..];
+
+    public static string Label(PlanQuota quota) => quota switch
+    {
+        PlanQuota.GuestPlaces => "khách mời", PlanQuota.MediaImages => "ảnh", PlanQuota.EmailInvites => "lượt gửi thiệp qua email",
+        PlanQuota.SmsInvites => "lượt gửi thiệp qua SMS", PlanQuota.ReminderRounds => "đợt nhắc RSVP", PlanQuota.CoHosts => "co-host",
+        PlanQuota.SeatingTables => "bàn tiệc", _ => "lần tạo lời cảm ơn bằng AI"
+    };
+
+    public static string Label(PlanFeature feature) => feature switch
+    {
+        PlanFeature.CustomSlug => "đổi đường dẫn website cưới", PlanFeature.Checkin => "check-in tại tiệc",
+        PlanFeature.GiftQr => "nhận quà mừng qua QR", PlanFeature.GiftExport => "xuất sổ mừng",
+        PlanFeature.PremiumTemplates => "mẫu thiệp cao cấp", _ => "tra chỗ ngồi công khai"
+    };
 
     /// <summary>The cheapest active plan that allows the request, so the app can offer the right upgrade.</summary>
     public static string? RequiredPlan(IEnumerable<PlanDto> plans, Func<PlanLimits, bool> allows) =>

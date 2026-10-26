@@ -73,7 +73,7 @@ public sealed class WeddingSetupStore(InviteMeDbContext db, InviteMe.Application
         var oldSlug = wedding.Slug;
         if (!string.Equals(oldSlug, normalizedSlug, StringComparison.OrdinalIgnoreCase))
         {
-            await entitlements.RequireCustomSlugAsync(weddingId, ct);
+            await entitlements.RequireFeatureAsync(weddingId, InviteMe.Application.Features.Billing.PlanFeature.CustomSlug, ct);
             // The old address stays with this wedding (shared links keep working); going back to it frees the history row.
             var reclaimed = await db.Set<WeddingSlugHistory>().Where(x => x.WeddingId == weddingId && x.Slug == normalizedSlug).ToListAsync(ct);
             db.RemoveRange(reclaimed);

@@ -154,16 +154,7 @@ public sealed class WeddingWebsiteValidationTests
     }
 
     private static WeddingWebsiteHandler Create(Store store, bool isOwner, bool imageRegistered = true) =>
-        new(store, new Access(isOwner), new User(), new Media(), new Catalog(imageRegistered), new Changes(), new Entitlements());
-
-    private sealed class Entitlements : InviteMe.Application.Features.Billing.IWeddingEntitlements
-    {
-        public Task<IReadOnlyList<InviteMe.Application.Features.Billing.PlanDto>> PlansAsync(CancellationToken ct) => throw new NotSupportedException();
-        public Task<InviteMe.Application.Features.Billing.WeddingPlanDto> GetAsync(Guid weddingId, CancellationToken ct) => throw new NotSupportedException();
-        public Task RequireGuestPlacesAsync(Guid weddingId, int adding, CancellationToken ct) => Task.CompletedTask;
-        public Task RequireCustomSlugAsync(Guid weddingId, CancellationToken ct) => Task.CompletedTask;
-        public Task<bool?> PublicLinkOpenAsync(string slug, CancellationToken ct) => Task.FromResult<bool?>(true);
-    }
+        new(store, new Access(isOwner), new User(), new Media(), new Catalog(imageRegistered), new Changes(), new AllowAllEntitlements());
 
     private sealed class Access(bool isOwner) : IWeddingAccessReader
     {

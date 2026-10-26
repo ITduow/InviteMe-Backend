@@ -82,6 +82,7 @@ public sealed class WeddingSetupApiTests(ApiFactory apiFactory) : IClassFixture<
         Assert.Equal("another-wedding", (await owner.GetFromJsonAsync<WeddingSetupDto>($"/api/weddings/{secondId}"))!.Slug);
 
         using var viewer = await SignIn(factory, "setup-viewer");
+        await PlanApiTests.UseBasicPlan(db, first.Id); // co-hosts need a paid plan
         await CoHostPermissionTests.AddCoHostAsync(owner, viewer, first.Id, "CHECKIN_MANAGE"); // any active co-host reads the setup, only the owner edits it
 
 

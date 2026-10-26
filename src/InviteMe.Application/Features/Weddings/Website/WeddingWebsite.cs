@@ -11,7 +11,7 @@ namespace InviteMe.Application.Features.Weddings.Website;
 public sealed record SaveWebsite(int ExpectedVersion, JsonElement Document);
 public sealed record WebsiteDto(int Version, JsonElement? Document, string Status,
     bool HasUnpublishedChanges, IReadOnlyList<string> Warnings);
-public sealed record PublicWebsiteDto(string Slug, JsonElement Document);
+public sealed record PublicWebsiteDto(string Slug, JsonElement Document, bool BrandingBadge = false);
 
 public interface IWeddingWebsiteStore
 {
@@ -83,7 +83,7 @@ public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAc
         if (await entitlements.PublicLinkOpenAsync(website.Slug, ct) == false)
             throw new ApplicationProblemException(ProblemKind.Gone, InviteMe.Application.Features.Billing.PlanRules.PublicLinkExpired,
                 "Website cưới này đã hết thời gian hiển thị công khai.");
-        return website;
+        return website with { BrandingBadge = await entitlements.BrandingBadgeForSlugAsync(website.Slug, ct) };
     }
 
     private async Task ValidateMedia(Guid id, JsonElement document, CancellationToken ct)

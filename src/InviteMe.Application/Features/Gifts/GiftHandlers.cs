@@ -51,7 +51,8 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
     RequestValidation<SaveGiftAccount> accountValidation, RequestValidation<RecordGift> recordValidation,
     RequestValidation<ConfirmGift> confirmValidation, RequestValidation<AssignGiftTransaction> assignValidation,
     RequestValidation<GiftLedgerFilter> filterValidation, RequestValidation<PageRequest> pages,
-    RequestValidation<SimulateSePayTransfer> simulateValidation, IPlanningChangePublisher changes, TimeProvider clock)
+    RequestValidation<SimulateSePayTransfer> simulateValidation, IPlanningChangePublisher changes, TimeProvider clock,
+    InviteMe.Application.Features.Billing.IWeddingEntitlements plans)
 {
     public const string NeedsReview = "NEEDS_REVIEW";
 
@@ -91,6 +92,7 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
     public async Task<GiftExportFile> ExportAsync(Guid weddingId, GiftLedgerFilter filter, CancellationToken ct)
     {
         await Require(weddingId, WeddingPermission.GIFT_VIEW, ct);
+        await plans.RequireFeatureAsync(weddingId, InviteMe.Application.Features.Billing.PlanFeature.GiftExport, ct);
         await filterValidation.ValidateAsync(filter, ct);
         return new(GiftBook.Csv(GiftBook.Filter(await store.GiftsAsync(weddingId, ct), filter)), $"so-mung-{clock.GetUtcNow():yyyyMMdd-HHmm}.csv");
     }

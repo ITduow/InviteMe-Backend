@@ -16,7 +16,7 @@ namespace InviteMe.Infrastructure.Persistence.Adapters.Gifts;
 /// notification (SePay webhook) or the couple confirms it. Writes on a gift lock its row (FOR UPDATE) so the webhook
 /// and a manual confirmation cannot both pay it.
 /// </summary>
-public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock) : IGiftStore
+public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe.Application.Features.Billing.IWeddingEntitlements plans) : IGiftStore
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -29,12 +29,13 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock) : IGiftS
         var gifts = await db.Set<PlanningGift>().AsNoTracking().Where(x => x.GuestId == guest.Id && x.Method == PlanningGift.Qr)
             .OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
         return new(guest.RecipientName, wedding.Title, accounts, GiftRules.SuggestedAmounts, PlanningGift.MinAmount, PlanningGift.MaxAmount,
-            gifts.Select(g => GuestDto(g, accounts.FirstOrDefault(a => a.Id == g.AccountId))).ToList());
+            gifts.Select(g => GuestDto(g, accounts.FirstOrDefault(a => a.Id == g.AccountId))).ToList(), (await plans.LimitsAsync(wedding.Id, ct)).GiftQr);
     }
 
     public async Task<GuestGiftResult> CreateQrGiftAsync(string token, string idempotencyKey, CreateGuestGift input, CancellationToken ct)
     {
         var (wedding, guest) = await Guest(token, ct);
+        await plans.RequireFeatureAsync(wedding.Id, InviteMe.Application.Features.Billing.PlanFeature.GiftQr, ct);
         var accounts = await Accounts(wedding.Id, ct);
         if (accounts.Count == 0)
             throw new ApplicationProblemException(ProblemKind.BusinessRule, "GIFT_ACCOUNT_NOT_SET", "Cô dâu chú rể chưa thêm tài khoản nhận mừng.");

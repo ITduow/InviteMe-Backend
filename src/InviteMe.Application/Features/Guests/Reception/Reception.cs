@@ -132,7 +132,8 @@ public sealed class CheckInGuestsValidator : AbstractValidator<CheckInGuests>
 
 public sealed partial class ReceptionHandler(IReceptionStore store, IGuestAccessStore access, IWeddingPermissionService permissions,
     ICurrentUser user, IPlanningChangePublisher changes, RequestValidation<ReceptionSearchQuery> searchValidation,
-    RequestValidation<CheckInGuests> checkInValidation, RequestValidation<AddWalkIn> walkInValidation, RequestValidation<VoidCheckIn> voidValidation)
+    RequestValidation<CheckInGuests> checkInValidation, RequestValidation<AddWalkIn> walkInValidation, RequestValidation<VoidCheckIn> voidValidation,
+    InviteMe.Application.Features.Billing.IWeddingEntitlements plans)
 {
     private const int SearchLimit = 20;
 
@@ -163,6 +164,7 @@ public sealed partial class ReceptionHandler(IReceptionStore store, IGuestAccess
     public async Task<CheckInResultDto> CheckInAsync(Guid weddingId, CheckInGuests input, CancellationToken ct)
     {
         await permissions.RequireAsync(weddingId, WeddingPermission.CHECKIN_MANAGE, ct);
+        await plans.RequireFeatureAsync(weddingId, InviteMe.Application.Features.Billing.PlanFeature.Checkin, ct);
         await checkInValidation.ValidateAsync(input, ct);
         var actor = Actor();
         var guest = await Guest(weddingId, input, ct);
@@ -190,6 +192,7 @@ public sealed partial class ReceptionHandler(IReceptionStore store, IGuestAccess
     public async Task<WalkInResultDto> WalkInAsync(Guid weddingId, string? idempotencyKey, AddWalkIn input, CancellationToken ct)
     {
         await permissions.RequireAsync(weddingId, WeddingPermission.CHECKIN_MANAGE, ct);
+        await plans.RequireFeatureAsync(weddingId, InviteMe.Application.Features.Billing.PlanFeature.Checkin, ct);
         if (!Guid.TryParse(idempotencyKey, out var key) || key == Guid.Empty)
             throw new ValidationException([new("Idempotency-Key", "Idempotency-Key must be a non-empty UUID.")]);
         await walkInValidation.ValidateAsync(input, ct);

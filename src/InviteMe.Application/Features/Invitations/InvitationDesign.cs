@@ -13,7 +13,7 @@ public sealed record InvitationDesignDto(int Version, JsonElement? Document, str
     bool HasUnpublishedChanges = false, int WordingVersion = 0, IReadOnlyList<string>? Warnings = null);
 public sealed record SaveInvitationDesign(int ExpectedVersion, JsonElement Document);
 public sealed record PublishInvitationDesign(int ExpectedVersion, int ExpectedWordingVersion);
-public sealed record PublicInvitationDto(JsonElement Document, string Content);
+public sealed record PublicInvitationDto(JsonElement Document, string Content, bool BrandingBadge = false);
 public interface IInvitationDesignStore
 {
     Task<InvitationDesignDto> GetAsync(Guid weddingId, CancellationToken ct);
@@ -24,7 +24,8 @@ public interface IInvitationDesignStore
 }
 
 public sealed class InvitationDesignHandler(IInvitationDesignStore store, IWeddingPermissionService permissions,
-    IWeddingAccessReader access, ICurrentUser user, IPlanningChangePublisher changes, IWeddingMediaStorage media, IWeddingMediaCatalog catalog)
+    IWeddingAccessReader access, ICurrentUser user, IPlanningChangePublisher changes, IWeddingMediaStorage media, IWeddingMediaCatalog catalog,
+    InviteMe.Application.Features.Billing.IWeddingEntitlements plans)
 {
     public async Task<InvitationDesignDto> GetAsync(Guid id, CancellationToken ct)
     {
@@ -76,7 +77,9 @@ public sealed class InvitationDesignHandler(IInvitationDesignStore store, IWeddi
     public async Task<PublicInvitationDto> PublicAsync(string token, CancellationToken ct)
     {
         if (token.Length != 64 || token.Any(c => !char.IsAsciiHexDigitLower(c))) throw Missing();
-        return await store.FindPublicAsync(token, ct) ?? throw Missing();
+        var invitation = await store.FindPublicAsync(token, ct) ?? throw Missing();
+        // Free plans show "made with InviteMe" on the invitation.
+        return invitation with { BrandingBadge = await plans.BrandingBadgeForGuestAsync(token, ct) };
     }
     private static ApplicationProblemException Missing() => new(ProblemKind.NotFound,
         "INVITATION_UNAVAILABLE", "Thiệp chưa được xuất bản hoặc liên kết không còn khả dụng.");

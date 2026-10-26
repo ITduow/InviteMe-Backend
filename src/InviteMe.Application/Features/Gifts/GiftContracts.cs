@@ -13,7 +13,7 @@ public sealed record GiftBankAccountDto(Guid Id, string BankBin, string BankName
 
 /// <summary>What the gift form needs: the couple's accounts, suggested amounts and the gifts this guest already started.</summary>
 public sealed record GuestGiftPageDto(string RecipientName, string WeddingTitle, IReadOnlyList<GiftBankAccountDto> Accounts,
-    IReadOnlyList<long> SuggestedAmounts, long MinAmount, long MaxAmount, IReadOnlyList<GuestGiftDto> MyGifts);
+    IReadOnlyList<long> SuggestedAmounts, long MinAmount, long MaxAmount, IReadOnlyList<GuestGiftDto> MyGifts, bool QrEnabled = true);
 
 /// <summary>Amount in VND (10,000 – 100,000,000). AccountId is required when the couple has two accounts.</summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
