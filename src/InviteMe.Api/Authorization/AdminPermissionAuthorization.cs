@@ -42,5 +42,4 @@ internal static class AdminPolicyNames
     public const string AuditView = "Admin.Audit.View";
     public const string RbacView = "Admin.Rbac.View";
     public const string RbacManage = "Admin.Rbac.Manage";
-    public const string GiftPayoutsManage = "Admin.GiftPayouts.Manage";
 }
