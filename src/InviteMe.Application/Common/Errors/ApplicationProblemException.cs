@@ -1,6 +1,6 @@
 namespace InviteMe.Application.Common.Errors;
 
-public enum ProblemKind { BadRequest, PayloadTooLarge, Unauthenticated, Forbidden, NotFound, Conflict, BusinessRule, BadGateway, Unavailable, Timeout }
+public enum ProblemKind { BadRequest, PayloadTooLarge, Unauthenticated, Forbidden, NotFound, Conflict, BusinessRule, BadGateway, Unavailable, Timeout, Gone }
 
 // Message must be safe for public responses. Never pass provider exception messages here.
 public sealed class ApplicationProblemException(ProblemKind kind, string code, string message)
@@ -8,4 +8,6 @@ public sealed class ApplicationProblemException(ProblemKind kind, string code, s
 {
     public ProblemKind Kind { get; } = kind;
     public string Code { get; } = code;
+    /// <summary>Extra public fields written next to "code" in the problem response (e.g. a plan limit and its usage).</summary>
+    public IReadOnlyDictionary<string, object?>? Extensions { get; init; }
 }

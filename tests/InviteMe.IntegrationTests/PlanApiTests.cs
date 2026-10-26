@@ -1,0 +1,144 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
+using InviteMe.Application.Features.Billing;
+using InviteMe.Application.Features.Guests.Planning;
+using InviteMe.Application.Features.Identity.Accounts;
+using InviteMe.Application.Ports.Authentication;
+using InviteMe.Application.Features.Weddings.Setup;
+using InviteMe.Domain.Billing;
+using InviteMe.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+
+namespace InviteMe.IntegrationTests;
+
+/// <summary>
+/// Plans per wedding: the seeded catalogue, FREE for new weddings, legacy (unlimited) for weddings that predate plans,
+/// the guest limit on create/import/restore, the custom slug rule and an upgrade.
+/// </summary>
+public sealed class PlanApiTests
+{
+    private const string Password = "Test-only-Pass123!";
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task NewWeddingsStartFreeAndTheGuestLimitHoldsUntilAnUpgrade() => SchemaV2MigrationTests.InDatabase(async db =>
+    {
+        await db.Database.MigrateAsync();
+        await using var factory = new DatabaseApiFactory(db.Database.GetConnectionString()!);
+        using var anonymous = factory.CreateHttpsClient();
+        var plans = (await anonymous.GetFromJsonAsync<List<PlanDto>>("/api/plans"))!;
+        Assert.Equal(new[] { (Plan.Free, 0m, (int?)50), (Plan.Basic, 299_000m, 300), (Plan.Premium, 699_000m, 1000) },
+            plans.Select(x => (x.Code, x.Price, x.Limits.GuestPlaces)).ToArray());
+        Assert.Equal((false, true, 7), (plans[0].Limits.CustomSlug, plans[0].Limits.BrandingBadge, plans[0].Limits.PublicLinkDaysAfterWedding));
+
+        using var owner = await SignIn(factory, "plan-owner");
+        var eventAt = DateTimeOffset.UtcNow.AddMonths(3);
+        var wedding = await Read<WeddingSetupDto>(await owner.PostAsJsonAsync("/api/weddings", new CreateWeddingInput("Plan wedding", "plan-wedding",
+            eventAt, "Hall", "Address", 180, eventAt.AddDays(-7))), HttpStatusCode.Created);
+        var w = wedding.Id;
+        var plan = (await owner.GetFromJsonAsync<WeddingPlanDto>($"/api/weddings/{w}/plan"))!;
+        Assert.Equal((Plan.Free, false, 0, (int?)50), (plan.PlanCode, plan.Legacy, plan.Usage.GuestPlaces, plan.Limits.GuestPlaces));
+        Assert.Equal(eventAt.AddDays(7).ToUnixTimeSeconds(), plan.PublicLinkUntil!.Value.ToUnixTimeSeconds());
+
+        // Capacity of the venue is free to set; the plan limits the expected people of the guest list.
+        Assert.Equal(HttpStatusCode.Created, (await Import(owner, w, 45)).StatusCode);
+        await AssertLimit(await Import(owner, w, 6), "guestPlaces", 50, 45, 6, Plan.Basic);
+        Assert.Equal(HttpStatusCode.Created, (await AddGuest(owner, w, 5)).StatusCode);
+        await AssertLimit(await AddGuest(owner, w, 1), "guestPlaces", 50, 50, 1, Plan.Basic);
+        Assert.Equal(50, (await owner.GetFromJsonAsync<WeddingPlanDto>($"/api/weddings/{w}/plan"))!.Usage.GuestPlaces);
+
+        // FREE keeps the slug chosen at creation.
+        await AssertLimit(await owner.PutAsJsonAsync($"/api/weddings/{w}", Update(wedding, "plan-wedding-new")), "customSlug", null, 0, 1, Plan.Basic);
+        var same = await Read<WeddingSetupDto>(await owner.PutAsJsonAsync($"/api/weddings/{w}", Update(wedding, "plan-wedding") with { Capacity = 200 }), HttpStatusCode.OK);
+
+        // After an upgrade both rules open up; a stranger cannot read the plan of the wedding.
+        await UseBasicPlan(db, w);
+        Assert.Equal(Plan.Basic, (await owner.GetFromJsonAsync<WeddingPlanDto>($"/api/weddings/{w}/plan"))!.PlanCode);
+        Assert.Equal(HttpStatusCode.Created, (await Import(owner, w, 6)).StatusCode);
+        Assert.Equal("plan-wedding-new", (await Read<WeddingSetupDto>(await owner.PutAsJsonAsync($"/api/weddings/{w}", Update(same, "plan-wedding-new")), HttpStatusCode.OK)).Slug);
+        using var stranger = await SignIn(factory, "plan-stranger");
+        Assert.Equal(HttpStatusCode.Forbidden, (await stranger.GetAsync($"/api/weddings/{w}/plan")).StatusCode);
+        Assert.Equal(1, await db.Set<Subscription>().CountAsync(x => x.WeddingId == w && x.Status == Subscription.Active));
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task WeddingsFromBeforePlansKeepEveryFeature() => SchemaV2MigrationTests.InDatabase(async db =>
+    {
+        await db.Database.MigrateAsync();
+        await using var factory = new DatabaseApiFactory(db.Database.GetConnectionString()!);
+        using var owner = await SignIn(factory, "legacy-owner");
+        var ownerId = (await owner.GetFromJsonAsync<AccountDto>("/api/auth/me"))!.Id;
+        var legacy = Domain.Weddings.Wedding.Create(ownerId, "Legacy wedding", "legacy-wedding", 500);
+        db.Weddings.Add(legacy); await db.SaveChangesAsync();
+
+        var plan = (await owner.GetFromJsonAsync<WeddingPlanDto>($"/api/weddings/{legacy.Id}/plan"))!;
+        Assert.Equal((Plan.Premium, true, (int?)null, true), (plan.PlanCode, plan.Legacy, plan.Limits.GuestPlaces, plan.Limits.CustomSlug));
+        Assert.Null(plan.PublicLinkUntil);
+        Assert.Equal(HttpStatusCode.Created, (await Import(owner, legacy.Id, 120)).StatusCode);
+    });
+
+    /// <summary>Test helper: the wedding bought the BASIC plan (the payment flow comes in a later step).</summary>
+    internal static async Task UseBasicPlan(InviteMeDbContext db, Guid weddingId)
+    {
+        var wedding = await db.Weddings.AsNoTracking().SingleAsync(x => x.Id == weddingId);
+        foreach (var old in await db.Set<Subscription>().Where(x => x.WeddingId == weddingId && x.Status == Subscription.Active).ToListAsync())
+            old.Cancel();
+        await db.SaveChangesAsync();
+        var basic = await db.Set<Plan>().Where(x => x.Code == Plan.Basic).Select(x => x.Id).SingleAsync();
+        db.Add(Subscription.ForWedding(wedding.OwnerUserId, basic, weddingId, DateTimeOffset.UtcNow));
+        await db.SaveChangesAsync();
+    }
+
+    private static UpdateWeddingInput Update(WeddingSetupDto w, string slug) => new(w.Name, slug, w.EventDateTime!.Value, w.VenueName,
+        w.VenueAddress, w.Capacity, w.RsvpDeadline!.Value, w.Version);
+
+    // Rows of one person each, the last row carries the rest so the total is exact.
+    private static async Task<HttpResponseMessage> Import(HttpClient owner, Guid weddingId, int people)
+    {
+        var rows = Enumerable.Range(0, Math.Min(people, 20)).Select(i => new PlanningRow(i + 2, $"Khách {Guid.NewGuid():N}"[..14], ExpectedPeople: 1)).ToList();
+        rows[^1] = rows[^1] with { ExpectedPeople = people - rows.Count + 1 };
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/weddings/{weddingId}/guest-planning/imports") { Content = JsonContent.Create(new PlanningImport(rows)) };
+        request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        return await owner.SendAsync(request);
+    }
+
+    private static async Task<HttpResponseMessage> AddGuest(HttpClient owner, Guid weddingId, int people)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/weddings/{weddingId}/guest-planning/guests")
+        { Content = JsonContent.Create(new CreatePlanningGuest("Gia đình " + Guid.NewGuid().ToString("N")[..6], InvitationKind: "FAMILY", ExpectedPeople: people)) };
+        request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        return await owner.SendAsync(request);
+    }
+
+    private static async Task AssertLimit(HttpResponseMessage response, string feature, int? limit, int used, int requested, string requiredPlan)
+    {
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.Forbidden, $"{response.StatusCode}: {body}");
+        var root = JsonDocument.Parse(body).RootElement;
+        Assert.Equal(PlanRules.LimitReached, root.GetProperty("code").GetString());
+        Assert.Equal(feature, root.GetProperty("feature").GetString());
+        Assert.Equal(limit, root.GetProperty("limit").ValueKind == JsonValueKind.Null ? null : root.GetProperty("limit").GetInt32());
+        Assert.Equal((used, requested, requiredPlan), (root.GetProperty("used").GetInt32(), root.GetProperty("requested").GetInt32(),
+            root.GetProperty("requiredPlan").GetString()));
+    }
+
+    private static async Task<HttpClient> SignIn(DatabaseApiFactory factory, string name)
+    {
+        var client = factory.CreateHttpsClient();
+        var email = $"{name}-{Guid.NewGuid():N}@example.test";
+        Assert.Equal(HttpStatusCode.Created, (await client.PostAsJsonAsync("/api/auth/register", new RegisterAccount(email, Password, name))).StatusCode);
+        var token = await Read<TokenDto>(await client.PostAsJsonAsync("/api/auth/login", new LoginAccount(email, Password)), HttpStatusCode.OK);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
+        return client;
+    }
+
+    private static async Task<T> Read<T>(HttpResponseMessage response, HttpStatusCode expected)
+    {
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == expected, $"{response.StatusCode}: {body}");
+        return JsonSerializer.Deserialize<T>(body, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+    }
+
+    private sealed record TokenDto(string AccessToken, int ExpiresIn);
+}

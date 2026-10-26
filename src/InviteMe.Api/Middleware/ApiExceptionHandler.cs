@@ -35,6 +35,8 @@ internal sealed class ApiExceptionHandler(IProblemDetailsService problems, ILogg
             Type = $"https://httpstatuses.io/{status}"
         };
         problemDetails.Extensions["code"] = code;
+        if (exception is ApplicationProblemException { Extensions: { } extensions })
+            foreach (var (key, value) in extensions) problemDetails.Extensions[key] = value;
         if (exception is ValidationException validation)
             problemDetails.Extensions["errors"] = validation.Errors.GroupBy(x => x.PropertyName)
                 .ToDictionary(x => x.Key, x => x.Select(f => f.ErrorMessage).Distinct().ToArray());
@@ -62,6 +64,7 @@ internal sealed class ApiExceptionHandler(IProblemDetailsService problems, ILogg
         ProblemKind.BadGateway => 502,
         ProblemKind.Unavailable => 503,
         ProblemKind.Timeout => 504,
+        ProblemKind.Gone => 410,
         _ => 500
     };
 }

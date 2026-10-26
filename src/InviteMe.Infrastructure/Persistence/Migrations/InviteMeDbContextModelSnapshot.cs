@@ -657,6 +657,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("user_id");
 
+                    b.Property<Guid?>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
                     b.HasKey("Id")
                         .HasName("subscriptions_pkey");
 
@@ -665,6 +669,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.HasIndex(new[] { "UserId" }, "ix_subscriptions_user_id")
                         .HasDatabaseName("ix_subscriptions_user_id");
+
+                    b.HasIndex(new[] { "WeddingId" }, "uq_subscriptions_wedding_active")
+                        .IsUnique()
+                        .HasDatabaseName("uq_subscriptions_wedding_active")
+                        .HasFilter("wedding_id IS NOT NULL AND status = 'ACTIVE'");
 
                     b.ToTable("subscriptions", "inviteme", t =>
                         {
@@ -4070,9 +4079,6 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.HasKey("Id")
                         .HasName("weddings_pkey");
 
-                    b.HasAlternateKey("Slug")
-                        .HasName("weddings_slug_key");
-
                     b.HasIndex("OwnerUserId")
                         .HasDatabaseName("ix_weddings_owner_user_id");
 
@@ -5152,6 +5158,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_subscriptions_user");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .HasConstraintName("fk_subscriptions_wedding");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.CheckIn.CheckInRecord", b =>

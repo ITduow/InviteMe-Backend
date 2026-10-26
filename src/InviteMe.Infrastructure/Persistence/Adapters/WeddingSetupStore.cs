@@ -8,7 +8,8 @@ using Npgsql;
 
 namespace InviteMe.Infrastructure.Persistence.Adapters;
 
-public sealed class WeddingSetupStore(InviteMeDbContext db) : IWeddingSetupStore
+public sealed class WeddingSetupStore(InviteMeDbContext db, InviteMe.Application.Features.Billing.IWeddingEntitlements entitlements)
+    : IWeddingSetupStore
 {
     private static readonly JsonSerializerOptions AuditJson = new(JsonSerializerDefaults.Web);
 
@@ -27,6 +28,10 @@ public sealed class WeddingSetupStore(InviteMeDbContext db) : IWeddingSetupStore
         db.Venues.Add(venue);
         db.WeddingEvents.Add(mainEvent);
         db.WeddingSettings.Add(settings);
+        // Every new wedding starts on the free plan; buying a plan replaces this row.
+        var freePlanId = await db.Set<InviteMe.Domain.Billing.Plan>().Where(x => x.Code == InviteMe.Domain.Billing.Plan.Free)
+            .Select(x => x.Id).SingleAsync(ct);
+        db.Add(InviteMe.Domain.Billing.Subscription.ForWedding(ownerId, freePlanId, wedding.Id, DateTimeOffset.UtcNow));
         db.AuditLogs.Add(AuditLog.ForWedding(wedding.Id, ownerId, "WEDDING_CREATED"));
 
         try { await db.SaveChangesAsync(ct); }
@@ -64,6 +69,7 @@ public sealed class WeddingSetupStore(InviteMeDbContext db) : IWeddingSetupStore
         if (await db.Weddings.AnyAsync(x => x.Id != weddingId && x.Slug.ToLower() == normalizedSlug, ct)) throw SlugConflict();
 
         var oldSlug = wedding.Slug;
+        if (!string.Equals(oldSlug, normalizedSlug, StringComparison.OrdinalIgnoreCase)) await entitlements.RequireCustomSlugAsync(weddingId, ct);
         wedding.UpdateSetup(input.Name!.Trim(), normalizedSlug, input.Capacity!.Value, NormalizeCover(input.CoverImageUrl));
         var mainEvent = await db.WeddingEvents.SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.IsMain, ct);
         var venue = mainEvent?.VenueId is { } venueId

@@ -23,7 +23,8 @@ public interface IWeddingWebsiteStore
 }
 
 public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAccessReader access,
-    ICurrentUser user, IWeddingMediaStorage media, IWeddingMediaCatalog catalog, IPlanningChangePublisher changes)
+    ICurrentUser user, IWeddingMediaStorage media, IWeddingMediaCatalog catalog, IPlanningChangePublisher changes,
+    InviteMe.Application.Features.Billing.IWeddingEntitlements entitlements)
 {
     private async Task<Guid> Owner(Guid id, CancellationToken ct)
     {
@@ -74,8 +75,16 @@ public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAc
         return result;
     }
 
-    public async Task<PublicWebsiteDto> PublicAsync(string slug, CancellationToken ct) =>
-        await store.PublicAsync(slug, ct) ?? throw new ApplicationProblemException(ProblemKind.NotFound, "WEBSITE_UNAVAILABLE", "Website is not published.");
+    public async Task<PublicWebsiteDto> PublicAsync(string slug, CancellationToken ct)
+    {
+        var website = await store.PublicAsync(slug, ct)
+            ?? throw new ApplicationProblemException(ProblemKind.NotFound, "WEBSITE_UNAVAILABLE", "Website is not published.");
+        // The plan keeps the public link open until some days after the wedding; the data itself is never removed.
+        if (await entitlements.PublicLinkOpenAsync(slug, ct) == false)
+            throw new ApplicationProblemException(ProblemKind.Gone, InviteMe.Application.Features.Billing.PlanRules.PublicLinkExpired,
+                "Website cưới này đã hết thời gian hiển thị công khai.");
+        return website;
+    }
 
     private async Task ValidateMedia(Guid id, JsonElement document, CancellationToken ct)
     {

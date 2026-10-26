@@ -74,6 +74,7 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Features.Weddings.CoHosts.ICoHostInvitationStore, CoHostInvitationStore>();
         services.AddScoped<InviteMe.Application.Features.Weddings.CoHosts.ICoHostInvitationEmailSender, SmtpCoHostInvitationEmailSender>();
         services.AddScoped<InviteMe.Application.Features.Weddings.Setup.IWeddingSetupStore, WeddingSetupStore>();
+        services.AddScoped<InviteMe.Application.Features.Billing.IWeddingEntitlements, WeddingEntitlements>();
         services.AddScoped<InviteMe.Application.Features.Weddings.Setup.IWeddingListReader, WeddingListReader>();
         services.AddOptions<WeddingMediaOptions>().BindConfiguration(WeddingMediaOptions.SectionName)
             .Validate(x => x.MaximumFileSizeBytes is > 0 and <= 5 * 1024 * 1024, "WeddingMedia:MaximumFileSizeBytes must be between 1 byte and 5 MB.")

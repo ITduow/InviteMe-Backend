@@ -19,6 +19,7 @@ public sealed class SubscriptionConfiguration : IEntityTypeConfiguration<Subscri
         builder.Property(x => x.Id).HasColumnName("id").HasColumnType("uuid").IsRequired().HasDefaultValueSql("gen_random_uuid()");
         builder.Property(x => x.UserId).HasColumnName("user_id").HasColumnType("uuid").IsRequired();
         builder.Property(x => x.PlanId).HasColumnName("plan_id").HasColumnType("uuid").IsRequired();
+        builder.Property(x => x.WeddingId).HasColumnName("wedding_id").HasColumnType("uuid");
         builder.Property(x => x.Status).HasColumnName("status").HasColumnType("varchar(20)").HasMaxLength(20).IsRequired().HasDefaultValue("ACTIVE");
         builder.Property(x => x.StartedAt).HasColumnName("started_at").HasColumnType("timestamp with time zone").IsRequired().HasDefaultValueSql("NOW()");
         builder.Property(x => x.ExpiresAt).HasColumnName("expires_at").HasColumnType("timestamp with time zone");
@@ -31,5 +32,10 @@ public sealed class SubscriptionConfiguration : IEntityTypeConfiguration<Subscri
         builder.HasOne<Plan>().WithMany().HasForeignKey(x => x.PlanId).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_subscriptions_plan");
         builder.HasIndex(x => x.UserId, "ix_subscriptions_user_id").HasDatabaseName("ix_subscriptions_user_id");
         builder.HasIndex(x => x.PlanId, "ix_subscriptions_plan_id").HasDatabaseName("ix_subscriptions_plan_id");
+        builder.HasOne<InviteMe.Domain.Weddings.Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade)
+            .HasConstraintName("fk_subscriptions_wedding");
+        // One plan in force per wedding.
+        builder.HasIndex(x => x.WeddingId, "uq_subscriptions_wedding_active").HasDatabaseName("uq_subscriptions_wedding_active").IsUnique()
+            .HasFilter("wedding_id IS NOT NULL AND status = 'ACTIVE'");
     }
 }
