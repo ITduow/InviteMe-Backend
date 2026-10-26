@@ -11,9 +11,12 @@ namespace InviteMe.Application.Features.Gifts;
 
 public sealed record GiftBankAccountDto(Guid Id, string BankBin, string BankName, string AccountNumber, string AccountName, string? Label);
 
-/// <summary>What the gift form needs: the couple's accounts, suggested amounts and the gifts this guest already started.</summary>
+/// <summary>
+/// What the gift form needs: the receiving accounts, suggested amounts and the gifts this guest already started.
+/// Sandbox = true: gifts go to InviteMe's collection account (SePay sandbox, no real money); Accounts has that one account.
+/// </summary>
 public sealed record GuestGiftPageDto(string RecipientName, string WeddingTitle, IReadOnlyList<GiftBankAccountDto> Accounts,
-    IReadOnlyList<long> SuggestedAmounts, long MinAmount, long MaxAmount, IReadOnlyList<GuestGiftDto> MyGifts);
+    IReadOnlyList<long> SuggestedAmounts, long MinAmount, long MaxAmount, IReadOnlyList<GuestGiftDto> MyGifts, bool Sandbox = false);
 
 /// <summary>Amount in VND (10,000 – 100,000,000). AccountId is required when the couple has two accounts.</summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -76,7 +79,46 @@ public sealed record SePayWebhookPayload(long Id, string? Gateway, string? Trans
 public sealed record SimulateSePayTransfer(long Amount, string Content, Guid? AccountId = null);
 
 /// <summary>Result of one webhook: Status of the stored transaction, Replayed = the same SePay id was already processed.</summary>
-public sealed record GiftWebhookResult(string Status, Guid? WeddingId, Guid? GiftId, bool Replayed, bool Paid);
+public sealed record GiftWebhookResult(string Status, Guid? WeddingId, Guid? GiftId, bool Replayed, bool Paid, Guid? PayoutId = null);
+
+// ---------- sandbox collection (InviteMe collection account + payouts by an admin) ----------
+
+/// <summary>
+/// GiftCollection:* settings. Enabled with the three account fields: guests pay this SePay sandbox account instead of the
+/// couple's, and an admin pays the couple out. Disabled (default): guests pay the couple directly, as before.
+/// </summary>
+public sealed record GiftCollectionOptions(bool Enabled, string? BankBin, string? AccountNumber, string? AccountName)
+{
+    /// <summary>Fixed id of the collection account in guest responses (it is not a row of planning_gift_accounts).</summary>
+    public static readonly Guid AccountId = Guid.Parse("6f1c0b7e-2a4d-4c59-9e0b-c011ec7ed000");
+    public static readonly GiftCollectionOptions Disabled = new(false, null, null, null);
+
+    public bool Active => Enabled && GiftBanks.Find(BankBin) is not null && !string.IsNullOrWhiteSpace(AccountNumber)
+        && !string.IsNullOrWhiteSpace(AccountName);
+
+    public GiftBankAccountDto? Account() => Active
+        ? new(AccountId, BankBin!, GiftBanks.Find(BankBin)!.Name, AccountNumber!.Trim(), GiftRules.Ascii(AccountName!), "InviteMe thu hộ (sandbox)")
+        : null;
+
+    public bool Owns(string? accountNumber) => Active && string.Equals(accountNumber?.Trim(), AccountNumber!.Trim(), StringComparison.Ordinal);
+}
+
+/// <summary>Money of a wedding in the collection account. Available = Collected − PaidOut − Reserved (pending payouts).</summary>
+public sealed record GiftBalanceDto(bool Sandbox, long Collected, long PaidOut, long Reserved, long Available);
+
+/// <summary>A payout to the couple. Transfer the amount with content = Code (money out in SePay sandbox) to mark it PAID.</summary>
+public sealed record GiftPayoutDto(Guid Id, Guid WeddingId, string Code, long Amount, string BankBin, string BankName, string AccountNumber,
+    string AccountName, string Status, string? Note, DateTimeOffset CreatedAt, DateTimeOffset? PaidAt, DateTimeOffset? CancelledAt);
+
+/// <summary>Admin: pay the couple Amount to one of their gift accounts (AccountId from the wedding's gift accounts).</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record CreateGiftPayout(long Amount, Guid AccountId, string? Note = null);
+
+/// <summary>Admin overview of a wedding holding collected money, with the couple's accounts to pay out to.</summary>
+public sealed record AdminGiftBalanceDto(Guid WeddingId, string WeddingTitle, string? OwnerEmail, GiftBalanceDto Balance,
+    IReadOnlyList<GiftBankAccountDto> Accounts);
+
+public sealed record GiftPayoutResult(GiftPayoutDto Payout, bool Created);
 
 // ---------- rules ----------
 
@@ -85,16 +127,33 @@ public static class GiftRules
     public static readonly IReadOnlyList<long> SuggestedAmounts = [200_000, 500_000, 1_000_000];
     /// <summary>"MC" + 8 characters without look-alikes (no 0/O, 1/I). SePay payment-code template: prefix MC, 6-10 letters/digits.</summary>
     public const string CodePrefix = "MC";
+    /// <summary>Payout transfer content: "PO" + 8 characters of the same alphabet.</summary>
+    public const string PayoutPrefix = "PO";
     private const string CodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     private static readonly Regex CodeInContent = new(@"(?<![A-Z0-9])MC[A-HJ-NP-Z2-9]{8}(?![A-Z0-9])", RegexOptions.CultureInvariant);
-    public const string ReceivedEvent = "GiftReceived", ChangedEvent = "GiftChanged";
+    private static readonly Regex PayoutCodeInContent = new(@"(?<![A-Z0-9])PO[A-HJ-NP-Z2-9]{8}(?![A-Z0-9])", RegexOptions.CultureInvariant);
+    public const string ReceivedEvent = "GiftReceived", ChangedEvent = "GiftChanged", PayoutEvent = "GiftPayoutChanged";
 
-    public static string NewCode()
+    public static string NewCode() => NewCode(CodePrefix);
+    public static string NewPayoutCode() => NewCode(PayoutPrefix);
+
+    private static string NewCode(string prefix)
     {
         Span<char> chars = stackalloc char[10];
-        chars[0] = 'M'; chars[1] = 'C';
+        chars[0] = prefix[0]; chars[1] = prefix[1];
         for (var i = 2; i < chars.Length; i++) chars[i] = CodeAlphabet[global::System.Security.Cryptography.RandomNumberGenerator.GetInt32(CodeAlphabet.Length)];
         return new string(chars);
+    }
+
+    /// <summary>The payout code in a money-out transfer (SePay's own code field only holds the incoming MC template).</summary>
+    public static string? FindPayoutCode(string? providerCode, string? content)
+    {
+        foreach (var text in new[] { providerCode, content })
+        {
+            var match = PayoutCodeInContent.Match((text ?? "").ToUpperInvariant());
+            if (match.Success) return match.Value;
+        }
+        return null;
     }
 
     /// <summary>The code SePay found, or one written in the transfer content (if the SePay template was not configured).</summary>
@@ -204,6 +263,16 @@ public sealed class GiftLedgerFilterValidator : AbstractValidator<GiftLedgerFilt
             .WithMessage("Status must be PENDING, CLAIMED, PAID, CANCELLED or EXPIRED.");
         RuleFor(x => x.Method).Must(x => x is null or PlanningGift.Qr or PlanningGift.Cash or PlanningGift.Transfer);
         RuleFor(x => x.Search).MaximumLength(100);
+    }
+}
+
+public sealed class CreateGiftPayoutValidator : AbstractValidator<CreateGiftPayout>
+{
+    public CreateGiftPayoutValidator()
+    {
+        RuleFor(x => x.Amount).InclusiveBetween(PlanningGiftPayout.MinAmount, 10_000_000_000).WithMessage("Số tiền rút từ 10.000đ.");
+        RuleFor(x => x.AccountId).NotEqual(Guid.Empty).WithMessage("Chọn tài khoản nhận của cô dâu chú rể.");
+        RuleFor(x => x.Note).MaximumLength(PlanningGiftPayout.NoteMaxLength);
     }
 }
 

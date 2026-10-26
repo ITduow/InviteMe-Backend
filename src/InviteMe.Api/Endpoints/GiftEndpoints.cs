@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Threading.RateLimiting;
+using InviteMe.Api.Authorization;
 using InviteMe.Application.Common.Models;
 using InviteMe.Application.Features.Gifts;
 using Microsoft.AspNetCore.RateLimiting;
@@ -91,6 +92,10 @@ internal static class GiftEndpoints
             { await h.DismissAsync(weddingId, transactionId, ct); return Results.NoContent(); })
             .WithName("DismissGiftTransaction").Produces(StatusCodes.Status204NoContent).ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+        host.MapGet("/balance", (Guid weddingId, GiftHostHandler h, CancellationToken ct) => h.BalanceAsync(weddingId, ct))
+            .WithName("GetGiftCollectionBalance").Produces<GiftBalanceDto>().ProducesProblem(StatusCodes.Status403Forbidden);
+        host.MapGet("/payouts", (Guid weddingId, GiftHostHandler h, CancellationToken ct) => h.PayoutsAsync(weddingId, ct))
+            .WithName("ListGiftPayouts").Produces<IReadOnlyList<GiftPayoutDto>>().ProducesProblem(StatusCodes.Status403Forbidden);
         if (endpoints.ServiceProvider.GetRequiredService<IWebHostEnvironment>().IsDevelopment())
             // Development only: sends the SePay webhook body of a transfer into the couple's account (no SePay account needed).
             host.MapPost("/dev/simulate-sepay", (Guid weddingId, SimulateSePayTransfer input, GiftHostHandler h, GiftWebhookHandler webhook,
@@ -114,6 +119,27 @@ internal static class GiftEndpoints
             .AllowAnonymous().WithTags("Gifts (SePay webhook)").WithName("SePayWebhook")
             .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(64 * 1024))
             .Produces(StatusCodes.Status200OK).Produces(StatusCodes.Status400BadRequest).Produces(StatusCodes.Status401Unauthorized);
+
+        // Platform admin, sandbox collection: balances per wedding and payouts to the couple's own account.
+        var admin = endpoints.MapGroup("/api/admin").RequireAuthorization("PlatformAdmin").RequireAuthorization(AdminPolicyNames.GiftPayoutsManage)
+            .WithTags("Gifts (Admin payouts)");
+        admin.MapGet("/gift-balances", (GiftPayoutAdminHandler h, CancellationToken ct, int page = 1, int pageSize = 25) =>
+                h.BalancesAsync(new PageRequest(page, pageSize), ct))
+            .WithName("ListAdminGiftBalances").Produces<PagedResult<AdminGiftBalanceDto>>().ProducesValidationProblem();
+        admin.MapGet("/gift-payouts", (GiftPayoutAdminHandler h, CancellationToken ct, string? status = null, Guid? weddingId = null, int page = 1,
+                int pageSize = 25) => h.ListAsync(status, weddingId, new PageRequest(page, pageSize), ct))
+            .WithName("ListAdminGiftPayouts").Produces<PagedResult<GiftPayoutDto>>().ProducesValidationProblem();
+        admin.MapPost("/weddings/{weddingId:guid}/gift-payouts", async (Guid weddingId, CreateGiftPayout input,
+                [Microsoft.AspNetCore.Mvc.FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, GiftPayoutAdminHandler h, CancellationToken ct) =>
+            {
+                var result = await h.CreateAsync(weddingId, input, idempotencyKey, ct);
+                return Results.Json(result.Payout, statusCode: result.Created ? StatusCodes.Status201Created : StatusCodes.Status200OK);
+            })
+            .WithName("CreateAdminGiftPayout").Produces<GiftPayoutDto>(StatusCodes.Status201Created).Produces<GiftPayoutDto>().ProducesValidationProblem()
+            .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+        admin.MapPost("/gift-payouts/{payoutId:guid}/cancel", (Guid payoutId, GiftPayoutAdminHandler h, CancellationToken ct) => h.CancelAsync(payoutId, ct))
+            .WithName("CancelAdminGiftPayout").Produces<GiftPayoutDto>().ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
         return endpoints;
     }
 }
