@@ -32,7 +32,9 @@ public sealed class GiftTests
         var validator = new RecordGiftValidator();
         Assert.True(validator.Validate(new RecordGift(PlanningGift.Item, GiverName: "A", ItemName: "Tranh")).IsValid);
         Assert.False(validator.Validate(new RecordGift(PlanningGift.Item, 100_000, GiverName: "A", ItemName: "Tranh")).IsValid);
-        Assert.False(validator.Validate(new RecordGift(PlanningGift.Cash, GiverName: "A")).IsValid); // cash needs an amount
+        Assert.True(validator.Validate(new RecordGift(PlanningGift.Cash, GiverName: "A")).IsValid); // sealed envelope: counted later
+        Assert.False(validator.Validate(new RecordGift(PlanningGift.Transfer, GiverName: "A")).IsValid); // a transfer has an amount
+        Assert.False(validator.Validate(new RecordGift(PlanningGift.Cash, GiverName: "A", ParticipantId: Guid.NewGuid())).IsValid); // person needs their invitation
         var summary = GiftBook.Summarize([new(Guid.NewGuid(), null, "A", PlanningGift.Item, PlanningGift.Paid, PlanningGift.Manual, null, null, null,
             false, null, false, null, Now, null, Now, "Tranh", 3, 2_000_000)], 0, 0);
         Assert.Equal((0L, 1, 3), (summary.TotalReceived, summary.ItemCount, summary.ItemQuantity));
