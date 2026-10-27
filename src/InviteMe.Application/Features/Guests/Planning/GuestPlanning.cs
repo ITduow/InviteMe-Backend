@@ -135,12 +135,10 @@ public sealed class GuestPlanningHandler(IGuestPlanningStore store, IWeddingPerm
         var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
         if (!scope.IsWeddingWide)
             throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.Forbidden, "GUEST_IMPORT_REQUIRES_WEDDING_SCOPE", "Guest import requires wedding-wide guest edit access.");
-        var rows = (input.Rows ?? []).Where(x => x is not null).Select(x => x!).ToList();
-        var format = new List<ImportIssue>();
+        // The format comes first (at most 500 rows, field lengths): duplicates are only looked for in a well-formed file.
         try { await imports.ValidateAsync(input, ct); }
-        catch (ValidationException error) { format.AddRange(PlanningImportValidator.Issues(input, error.Errors)); }
-        var check = PlanningImportChecks.Analyze(rows, await store.ExistingContactsAsync(weddingId, ct));
-        return check with { Errors = [.. format, .. check.Errors] };
+        catch (ValidationException error) { return new(PlanningImportValidator.Issues(input, error.Errors), [], 0, 0, []); }
+        return PlanningImportChecks.Analyze(input.Rows!.Select(x => x!).ToList(), await store.ExistingContactsAsync(weddingId, ct));
     }
 
     public async Task<PlanningImportOutcome> ImportAsync(Guid weddingId, string? idempotencyKey, PlanningImport input, CancellationToken ct)

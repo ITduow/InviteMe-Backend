@@ -118,7 +118,8 @@ public static class PlanningImportChecks
             if ((row.ExpectedPeople ?? 1) > LargePartySize)
                 warnings.Add(new(row.RowNumber, "expectedPeople", LargeParty, $"Một thiệp {row.ExpectedPeople} người, kiểm tra lại số người."));
         }
-        var imported = rows.Where(x => skipped.All(s => s.RowNumber != x.RowNumber)).ToList();
+        var skippedRows = skipped.Select(x => x.RowNumber).ToHashSet();
+        var imported = rows.Where(x => !skippedRows.Contains(x.RowNumber)).ToList();
         return new(errors, warnings, imported.Count, imported.Sum(x => x.ExpectedPeople ?? 1), skipped);
     }
 }
