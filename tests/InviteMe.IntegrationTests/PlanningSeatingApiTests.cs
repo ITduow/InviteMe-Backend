@@ -33,26 +33,26 @@ public sealed class PlanningSeatingApiTests
         await CoHostPermissionTests.AddCoHostAsync(a, viewer, wedding.Id, "SEATING_VIEW");
 
         var root = $"/api/weddings/{wedding.Id}/guest-planning";
-        using var import = new HttpRequestMessage(HttpMethod.Post, root + "/imports") { Content = JsonContent.Create(new PlanningImport([new(2, "Bác An", ExpectedPeople: 4), new(3, "Hoa", ExpectedPeople: 2)])) };
+        using var import = new HttpRequestMessage(HttpMethod.Post, root + "/imports") { Content = JsonContent.Create(new PlanningImport([new(2, "Bác An", ExpectedPeople: 11), new(3, "Hoa", ExpectedPeople: 2)])) };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
         Assert.Equal(HttpStatusCode.Created, (await a.SendAsync(import)).StatusCode);
         var url = root + "/seating-plan";
         var plan = (await a.GetFromJsonAsync<PlanningSeatingDto>(url))!;
-        Assert.Equal(0, plan.Version); Assert.Empty(plan.Assignments); Assert.Equal(6, plan.Places.Count);
+        Assert.Equal(0, plan.Version); Assert.Empty(plan.Assignments); Assert.Equal(13, plan.Places.Count);
         async Task<PlanningSeatingDto> Change(ChangePlanningSeating change, HttpClient? client = null)
         {
             var result = await (client ?? a).PatchAsJsonAsync(url, change);
             Assert.Equal(HttpStatusCode.OK, result.StatusCode);
             return (await result.Content.ReadFromJsonAsync<PlanningSeatingDto>())!;
         }
-        plan = await Change(new(0, "CREATE_TABLE", Name: "Bàn 1", Capacity: 4));
-        plan = await Change(new(plan.Version, "CREATE_TABLE", Name: "Bàn 2", Capacity: 2));
+        plan = await Change(new(0, "CREATE_TABLE", Name: "Bàn 1", Capacity: 12));
+        plan = await Change(new(plan.Version, "CREATE_TABLE", Name: "Bàn 2", Capacity: 10));
         var table1 = plan.Tables.Single(t => t.Name == "Bàn 1").Id; var table2 = plan.Tables.Single(t => t.Name == "Bàn 2").Id;
         var guest = plan.Guests.Single(g => g.RecipientName == "Bác An").Id;
         var group = plan.Places.Where(p => p.GuestId == guest).Select(p => p.Id).ToArray();
         plan = await Change(new(plan.Version, "MOVE_PLACES", table1, PlaceIds: group));
-        Assert.Equal(4, plan.Assignments.Count); Assert.Equal(3, plan.Places.Count(p => p.GuestId == guest && p.Person is null));
-        Assert.Equal(4, (await b.GetFromJsonAsync<PlanningSeatingDto>(url))!.Assignments.Count);
+        Assert.Equal(11, plan.Assignments.Count); Assert.Equal(10, plan.Places.Count(p => p.GuestId == guest && p.Person is null));
+        Assert.Equal(11, (await b.GetFromJsonAsync<PlanningSeatingDto>(url))!.Assignments.Count);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await b.PatchAsJsonAsync(url, new ChangePlanningSeating(plan.Version, "MOVE_PLACES", table2, PlaceIds: group))).StatusCode);
         Assert.Equal(plan.Version, (await a.GetFromJsonAsync<PlanningSeatingDto>(url))!.Version);
         plan = await Change(new(plan.Version, "MOVE_PLACES", table2, PlaceIds: [group[0]], SeatNumber: 2), b);
@@ -77,7 +77,7 @@ public sealed class PlanningSeatingApiTests
         Assert.Equal(HttpStatusCode.Conflict, (await b.PatchAsJsonAsync(url,
             new ChangePlanningSeating(plan.Version, "MOVE_PLACES", PlaceIds: all, DragToken: lease.Token))).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await a.PatchAsJsonAsync(url,
-            new ChangePlanningSeating(plan.Version, "UPDATE_TABLE", table1, Name: "Bàn 1", Capacity: 4))).StatusCode);
+            new ChangePlanningSeating(plan.Version, "UPDATE_TABLE", table1, Name: "Bàn 1", Capacity: 12))).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await a.PatchAsJsonAsync(url,
             new ChangePlanningSeating(plan.Version, "APPLY_SUGGESTION", Strategy: "COMPACT", SourceFingerprint: SeatingSuggestions.Fingerprint(plan)))).StatusCode);
         plan = await Change(new(plan.Version, "MOVE_PLACES", PlaceIds: all, DragToken: lease.Token));

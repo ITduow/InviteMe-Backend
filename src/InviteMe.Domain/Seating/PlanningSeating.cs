@@ -7,6 +7,12 @@ public sealed class PlanningSeatingPlan
     // Guest07: when set, guests can see their table on the invitation page. Publishing never freezes the plan.
     public DateTimeOffset? PublishedAt { get; set; }
     public Guid? PublishedBy { get; set; }
+    // Hall layout settings
+    public int GroomRows { get; set; } = 6;
+    public int GroomColumns { get; set; } = 3;
+    public int BrideRows { get; set; } = 6;
+    public int BrideColumns { get; set; } = 3;
+    public string Numbering { get; set; } = "BY_ROW";
 }
 public sealed class PlanningTable
 {
@@ -15,6 +21,12 @@ public sealed class PlanningTable
     public string Name { get; set; } = "";
     public int Capacity { get; set; }
     public Guid? GroupId { get; set; }
+    public int Number { get; set; }
+    public string? Side { get; set; }
+    public int? Row { get; set; }
+    public int? Column { get; set; }
+    public bool IsVip { get; set; }
+    public int ExtraSeats { get; set; }
 }
 public sealed class PlanningSeatAssignment
 {

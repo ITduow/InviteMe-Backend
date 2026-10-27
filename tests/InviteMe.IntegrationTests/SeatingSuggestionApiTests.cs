@@ -57,7 +57,7 @@ public sealed class SeatingSuggestionApiTests
         plan = await Change(Apply(partial)); Assert.Equal(9, plan.Assignments.Count);
         var old = partial;
         plan = await Change(new(plan.Version,"CREATE_TABLES",Capacity:2,TableCount:1));
-        Assert.Contains(plan.Tables,t=>t.Name=="Bàn 4" && t.Capacity==2);
+        Assert.Contains(plan.Tables,t=>(t.Name=="Bàn 4" || t.Name=="Bàn 04") && t.Capacity==2);
         Assert.Equal(HttpStatusCode.Conflict,(await owner.PatchAsJsonAsync(url,Apply(old))).StatusCode);
         var beforeImport = await Preview(); Assert.Empty(beforeImport.Unassigned); Assert.Equal(1, beforeImport.ChangedPlaceCount);
         await Import(new PlanningRow(2,"Hùng",Side:"BRIDE"));

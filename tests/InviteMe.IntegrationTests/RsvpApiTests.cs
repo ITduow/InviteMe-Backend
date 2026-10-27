@@ -66,7 +66,7 @@ public sealed class RsvpApiTests
         var plan = (await owner.GetFromJsonAsync<PlanningSeatingDto>(seatingUrl))!;
         Assert.Equal(70, plan.Places.Count);
         plan = await Read<PlanningSeatingDto>(await owner.PatchAsJsonAsync(seatingUrl,
-            new ChangePlanningSeating(plan.Version, "CREATE_TABLE", Name: "Bàn gia đình", Capacity: 4)));
+            new ChangePlanningSeating(plan.Version, "CREATE_TABLE", Name: "Bàn gia đình", Capacity: 10)));
         var table = Assert.Single(plan.Tables);
         var familyPlaces = plan.Places.Where(p => p.GuestId == family.GuestId).OrderBy(p => p.Position).Select(p => p.Id).ToArray();
         plan = await Read<PlanningSeatingDto>(await owner.PatchAsJsonAsync(seatingUrl,

@@ -53,7 +53,7 @@ public sealed class GuestPlanningApiTests
         var planPath = path + "/seating-plan";
         var plan = await owner.GetFromJsonAsync<PlanningSeatingDto>(planPath);
         var table = await owner.PatchAsJsonAsync(planPath, new ChangePlanningSeating(plan!.Version, "CREATE_TABLE",
-            Name: "Bàn kiểm thử", Capacity: 4));
+            Name: "Bàn kiểm thử", Capacity: 10));
         Assert.Equal(HttpStatusCode.OK, table.StatusCode);
         plan = await owner.GetFromJsonAsync<PlanningSeatingDto>(planPath);
         Assert.Equal(3, plan!.Places.Count(x => x.GuestId == guest.Id));

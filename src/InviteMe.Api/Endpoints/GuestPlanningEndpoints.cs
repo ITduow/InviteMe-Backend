@@ -61,6 +61,10 @@ internal static class GuestPlanningEndpoints
             Results.Ok(await handler.RestoreAsync(weddingId, guestId, expectedVersion, ct)))
             .WithName("RestorePlanningGuest")
             .Produces<PlanningGuestDto>().ProducesValidationProblem().ProducesProblem(403).ProducesProblem(404).ProducesProblem(409);
+        g.MapGet("/seating-layout", (Guid weddingId, PlanningSeatingHandler handler, CancellationToken ct) => handler.GetLayoutAsync(weddingId, ct))
+            .WithName("GetSeatingLayout").Produces<SeatingLayoutDto>().ProducesProblem(403);
+        g.MapPut("/seating-layout", (Guid weddingId, UpdateSeatingLayout input, PlanningSeatingHandler handler, CancellationToken ct) => handler.UpdateLayoutAsync(weddingId, input, ct))
+            .WithName("UpdateSeatingLayout").Produces<SeatingLayoutDto>().ProducesValidationProblem().ProducesProblem(403).ProducesProblem(409);
         g.MapGet("/seating-plan", (Guid weddingId, PlanningSeatingHandler handler, CancellationToken ct) => handler.GetAsync(weddingId, ct));
         g.MapPatch("/seating-plan", (Guid weddingId, ChangePlanningSeating input, PlanningSeatingHandler handler, CancellationToken ct) => handler.ChangeAsync(weddingId, input, ct));
         g.MapPost("/seating-suggestions", (Guid weddingId, SuggestPlanningSeating input, PlanningSeatingHandler handler, CancellationToken ct) => handler.SuggestAsync(weddingId, input, ct));
