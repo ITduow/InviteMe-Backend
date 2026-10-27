@@ -3,14 +3,19 @@ namespace InviteMe.Domain.Rsvps;
 /// <summary>
 /// RSVP of one Guest Planning v2 party (planning_guests row). Attendance of each person lives on
 /// planning_participants.AttendanceStatus so the planning guest list and seating read the same answer.
+/// Status = the guest's answer: ATTENDING (Có), MAYBE (Phân vân), DECLINED (Không).
+/// ConfirmedPartySize = people already counted as coming (0 when everyone waits for the couple's decision);
+/// MaybePartySize = people a MAYBE guest expects to bring (never counted against the capacity).
 /// </summary>
 public sealed class PlanningRsvp
 {
+    public const string Attending = "ATTENDING", Maybe = "MAYBE", Declined = "DECLINED";
     public Guid Id { get; private set; }
     public Guid WeddingId { get; private set; }
     public Guid GuestId { get; private set; }
-    public string Status { get; private set; } = "PENDING";
+    public string Status { get; private set; } = Attending;
     public int ConfirmedPartySize { get; private set; }
+    public int MaybePartySize { get; private set; }
     public string? Note { get; private set; }
     public int Version { get; private set; }
     public DateTimeOffset SubmittedAt { get; private set; }
@@ -19,12 +24,21 @@ public sealed class PlanningRsvp
     public static PlanningRsvp Create(Guid weddingId, Guid guestId, DateTimeOffset now) => new()
     { Id = Guid.NewGuid(), WeddingId = weddingId, GuestId = guestId, SubmittedAt = now, UpdatedAt = now };
 
-    public void Submit(string status, int size, DateTimeOffset now)
+    public void Submit(string status, int confirmed, int maybe, DateTimeOffset now)
     {
-        if (status is not ("PENDING" or "ATTENDING" or "DECLINED") || size < 0 || (status == "ATTENDING" ? size < 1 : size != 0))
-            throw new ArgumentException("Invalid RSVP state/headcount.");
-        Status = status; ConfirmedPartySize = size; UpdatedAt = now;
+        var valid = status switch
+        {
+            Attending => confirmed >= 0 && maybe == 0,
+            Maybe => confirmed == 0 && maybe >= 1,
+            Declined => confirmed == 0 && maybe == 0,
+            _ => false
+        };
+        if (!valid) throw new ArgumentException("Invalid RSVP state/headcount.");
+        Status = status; ConfirmedPartySize = confirmed; MaybePartySize = maybe; UpdatedAt = now;
     }
+
+    /// <summary>Two-number form kept for callers outside the RSVP module (reception, tests): no MAYBE people.</summary>
+    public void Submit(string status, int confirmed, DateTimeOffset now) => Submit(status, confirmed, 0, now);
 
     public void SetNote(string? note, DateTimeOffset now) { Note = string.IsNullOrWhiteSpace(note) ? null : note.Trim(); UpdatedAt = now; }
 
@@ -59,7 +73,10 @@ public sealed class PlanningRsvpHistory
     };
 }
 
-/// <summary>One party-level entry per planning guest that holds only the places that did not fit.</summary>
+/// <summary>
+/// "Chờ couple quyết": one party-level entry per planning guest holding the people the couple has not accepted yet
+/// (more people than the invitation allows, or no room left in the wedding).
+/// </summary>
 public sealed class PlanningWaitlistEntry
 {
     public Guid Id { get; private set; }
@@ -77,7 +94,7 @@ public sealed class PlanningWaitlistEntry
     public void Promote(DateTimeOffset now) { Status = "PROMOTED"; ResolvedAt = now; }
 }
 
-/// <summary>Per-person dietary note entered on the RSVP form.</summary>
+/// <summary>Dietary note of the RSVP form, stored on the invitation's main person.</summary>
 public sealed class PlanningDietaryNote
 {
     public Guid ParticipantId { get; private set; }
@@ -128,12 +145,12 @@ public sealed class PlanningRsvpLock
 }
 
 /// <summary>
-/// Wedding-wide RSVP rule set at wedding setup. PlusOneLimit = companions every invitation may bring
-/// (1 = two people in total including the recipient). An invitation imported with more people (e.g. a family of 4) overrides it.
+/// Wedding-wide RSVP rule set at wedding setup. PlusOneLimit = companions an invitation may bring by default
+/// (1 = two people in total including the recipient). An invitation imported with more places (e.g. a family of 4) gets that many.
 /// </summary>
 public sealed class PlanningRsvpSettings
 {
-    public const int MaxPlusOneLimit = 20;
+    public const int MaxPlusOneLimit = 20, MaxPartySize = 50;
     public Guid WeddingId { get; private set; }
     public int PlusOneLimit { get; private set; }
     public int Version { get; private set; }
@@ -146,6 +163,28 @@ public sealed class PlanningRsvpSettings
         if (plusOneLimit is < 0 or > MaxPlusOneLimit) throw new ArgumentOutOfRangeException(nameof(plusOneLimit));
         PlusOneLimit = plusOneLimit; Version++;
     }
-    /// <summary>People one invitation may confirm directly: its reserved places, or 1 + the wedding plus-one limit if larger.</summary>
-    public static int AllowedPeople(int reservedPlaces, int plusOneLimit) => Math.Max(reservedPlaces, 1 + plusOneLimit);
+
+    /// <summary>
+    /// Most people one invitation may confirm without asking the couple: the couple's own number for that invitation
+    /// when set, otherwise its reserved places or 1 + the wedding plus-one limit, whichever is larger.
+    /// </summary>
+    public static int MaxPeople(int? coupleLimit, int reservedPlaces, int plusOneLimit) =>
+        coupleLimit ?? Math.Max(reservedPlaces, 1 + plusOneLimit);
+}
+
+/// <summary>The couple's own "tối đa n người" for one invitation (overrides the default from places / plus-one limit).</summary>
+public sealed class PlanningRsvpLimit
+{
+    public Guid GuestId { get; private set; }
+    public Guid WeddingId { get; private set; }
+    public int MaxPeople { get; private set; }
+    public Guid UpdatedBy { get; private set; }
+    public DateTimeOffset UpdatedAt { get; private set; }
+
+    public static PlanningRsvpLimit Create(Guid weddingId, Guid guestId) => new() { WeddingId = weddingId, GuestId = guestId };
+    public void Set(int maxPeople, Guid actor, DateTimeOffset now)
+    {
+        if (maxPeople is < 1 or > PlanningRsvpSettings.MaxPartySize) throw new ArgumentOutOfRangeException(nameof(maxPeople));
+        MaxPeople = maxPeople; UpdatedBy = actor; UpdatedAt = now;
+    }
 }

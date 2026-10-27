@@ -3048,6 +3048,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("guest_id");
 
+                    b.Property<int>("MaybePartySize")
+                        .HasColumnType("integer")
+                        .HasColumnName("maybe_party_size");
+
                     b.Property<string>("Note")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)")
@@ -3087,9 +3091,9 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.ToTable("planning_rsvps", "inviteme", t =>
                         {
-                            t.HasCheckConstraint("ck_planning_rsvps_party_size", "(status IN ('PENDING','DECLINED') AND confirmed_party_size = 0) OR (status = 'ATTENDING' AND confirmed_party_size >= 1)");
+                            t.HasCheckConstraint("ck_planning_rsvps_party_size", "(status = 'ATTENDING' AND confirmed_party_size >= 0 AND maybe_party_size = 0) OR (status = 'MAYBE' AND confirmed_party_size = 0 AND maybe_party_size >= 1) OR (status = 'DECLINED' AND confirmed_party_size = 0 AND maybe_party_size = 0)");
 
-                            t.HasCheckConstraint("ck_planning_rsvps_status", "status IN ('PENDING','ATTENDING','DECLINED')");
+                            t.HasCheckConstraint("ck_planning_rsvps_status", "status IN ('ATTENDING','MAYBE','DECLINED')");
                         });
                 });
 
@@ -3165,7 +3169,40 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("ck_planning_rsvp_history_actor", "(actor_type = 'USER' AND changed_by IS NOT NULL AND actor_guest_id IS NULL) OR (actor_type = 'WEDDING_GUEST' AND actor_guest_id IS NOT NULL AND changed_by IS NULL)");
 
-                            t.HasCheckConstraint("ck_planning_rsvp_history_status", "new_status IN ('PENDING','ATTENDING','DECLINED') AND (old_status IS NULL OR old_status IN ('PENDING','ATTENDING','DECLINED'))");
+                            t.HasCheckConstraint("ck_planning_rsvp_history_status", "new_status IN ('PENDING','ATTENDING','MAYBE','DECLINED') AND (old_status IS NULL OR old_status IN ('PENDING','ATTENDING','MAYBE','DECLINED'))");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningRsvpLimit", b =>
+                {
+                    b.Property<Guid>("GuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("guest_id");
+
+                    b.Property<int>("MaxPeople")
+                        .HasColumnType("integer")
+                        .HasColumnName("max_people");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("GuestId");
+
+                    b.HasIndex("WeddingId")
+                        .HasDatabaseName("ix_planning_rsvp_limits_wedding");
+
+                    b.ToTable("planning_rsvp_limits", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_planning_rsvp_limits_max_people", "max_people BETWEEN 1 AND 50");
                         });
                 });
 
@@ -6074,6 +6111,30 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_planning_rsvp_history_rsvp");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningRsvpLimit", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Guests.PlanningGuest", null)
+                        .WithMany()
+                        .HasForeignKey("GuestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_rsvp_limits_guest");
+
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("UpdatedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_rsvp_limits_user");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_rsvp_limits_wedding");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Rsvps.PlanningRsvpLock", b =>

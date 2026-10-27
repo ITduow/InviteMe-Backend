@@ -15,9 +15,11 @@ public sealed class PlanningRsvpConfiguration : IEntityTypeConfiguration<Plannin
     {
         b.ToTable("planning_rsvps", t =>
         {
-            t.HasCheckConstraint("ck_planning_rsvps_status", "status IN ('PENDING','ATTENDING','DECLINED')");
+            t.HasCheckConstraint("ck_planning_rsvps_status", "status IN ('ATTENDING','MAYBE','DECLINED')");
             t.HasCheckConstraint("ck_planning_rsvps_party_size",
-                "(status IN ('PENDING','DECLINED') AND confirmed_party_size = 0) OR (status = 'ATTENDING' AND confirmed_party_size >= 1)");
+                "(status = 'ATTENDING' AND confirmed_party_size >= 0 AND maybe_party_size = 0) OR " +
+                "(status = 'MAYBE' AND confirmed_party_size = 0 AND maybe_party_size >= 1) OR " +
+                "(status = 'DECLINED' AND confirmed_party_size = 0 AND maybe_party_size = 0)");
         });
         b.HasKey(x => x.Id);
         b.Property(x => x.Id).HasColumnName("id");
@@ -25,6 +27,7 @@ public sealed class PlanningRsvpConfiguration : IEntityTypeConfiguration<Plannin
         b.Property(x => x.GuestId).HasColumnName("guest_id");
         b.Property(x => x.Status).HasColumnName("status").HasMaxLength(20);
         b.Property(x => x.ConfirmedPartySize).HasColumnName("confirmed_party_size");
+        b.Property(x => x.MaybePartySize).HasColumnName("maybe_party_size");
         b.Property(x => x.Note).HasColumnName("note").HasMaxLength(500);
         b.Property(x => x.Version).HasColumnName("version").IsConcurrencyToken();
         b.Property(x => x.SubmittedAt).HasColumnName("submitted_at");
@@ -40,7 +43,7 @@ public sealed class PlanningRsvpConfiguration : IEntityTypeConfiguration<Plannin
         b.ToTable("planning_rsvp_history", t =>
         {
             t.HasCheckConstraint("ck_planning_rsvp_history_status",
-                "new_status IN ('PENDING','ATTENDING','DECLINED') AND (old_status IS NULL OR old_status IN ('PENDING','ATTENDING','DECLINED'))");
+                "new_status IN ('PENDING','ATTENDING','MAYBE','DECLINED') AND (old_status IS NULL OR old_status IN ('PENDING','ATTENDING','MAYBE','DECLINED'))");
             t.HasCheckConstraint("ck_planning_rsvp_history_actor",
                 "(actor_type = 'USER' AND changed_by IS NOT NULL AND actor_guest_id IS NULL) OR (actor_type = 'WEDDING_GUEST' AND actor_guest_id IS NOT NULL AND changed_by IS NULL)");
         });
@@ -97,6 +100,7 @@ public sealed class PlanningRsvpConfiguration : IEntityTypeConfiguration<Plannin
 }
 
 public sealed class PlanningRsvpRuleConfiguration : IEntityTypeConfiguration<PlanningRsvpRequest>, IEntityTypeConfiguration<PlanningRsvpLock>,
+    IEntityTypeConfiguration<PlanningRsvpLimit>,
     IEntityTypeConfiguration<PlanningRsvpSettings>
 {
     public void Configure(EntityTypeBuilder<PlanningRsvpRequest> b)
@@ -147,5 +151,20 @@ public sealed class PlanningRsvpRuleConfiguration : IEntityTypeConfiguration<Pla
         // Sentinel true: a new row keeps the DB default (true) while an explicit false is still written.
         b.Property(x => x.AutoRemindersEnabled).HasColumnName("auto_reminders_enabled").HasDefaultValue(true).HasSentinel(true);
         b.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_planning_rsvp_settings_wedding");
+    }
+
+    public void Configure(EntityTypeBuilder<PlanningRsvpLimit> b)
+    {
+        b.ToTable("planning_rsvp_limits", t => t.HasCheckConstraint("ck_planning_rsvp_limits_max_people", "max_people BETWEEN 1 AND 50"));
+        b.HasKey(x => x.GuestId);
+        b.Property(x => x.GuestId).HasColumnName("guest_id");
+        b.Property(x => x.WeddingId).HasColumnName("wedding_id");
+        b.Property(x => x.MaxPeople).HasColumnName("max_people");
+        b.Property(x => x.UpdatedBy).HasColumnName("updated_by");
+        b.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+        b.HasIndex(x => x.WeddingId).HasDatabaseName("ix_planning_rsvp_limits_wedding");
+        b.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_planning_rsvp_limits_wedding");
+        b.HasOne<PlanningGuest>().WithMany().HasForeignKey(x => x.GuestId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_planning_rsvp_limits_guest");
+        b.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.UpdatedBy).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_planning_rsvp_limits_user");
     }
 }

@@ -40,7 +40,7 @@ public sealed class ReceptionCheckInApiTests
         // Đức answers for himself only: places 2-3 become UNUSED. Bình never answers (PENDING). Đức sits at "Bàn 1".
         var main = await db.Set<PlanningParticipant>().AsNoTracking().SingleAsync(x => x.GuestId == duc.Id);
         Assert.Equal(HttpStatusCode.Created,
-            (await anonymous.PostAsJsonAsync($"/api/rsvp/{duc.InvitationToken}", new SubmitRsvp(0, "ATTENDING", [main.Id]))).StatusCode);
+            (await anonymous.PostAsJsonAsync($"/api/rsvp/{duc.InvitationToken}", new SubmitRsvp(0, "ATTENDING", 1))).StatusCode);
         var plan = await Read<PlanningSeatingDto>(await owner.PatchAsJsonAsync(path + "/seating-plan",
             new ChangePlanningSeating(0, "CREATE_TABLE", Name: "Bàn 1", Capacity: 10)));
         var ducPlaces = plan.Places.Where(x => x.GuestId == duc.Id).OrderBy(x => x.Position).Select(x => x.Id).ToList();

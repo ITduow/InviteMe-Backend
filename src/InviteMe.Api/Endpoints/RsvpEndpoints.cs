@@ -89,6 +89,11 @@ internal static class RsvpEndpoints
             .WithName("SubmitGuestRsvp")
             .Produces<RsvpDto>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+        host.MapPut("/rsvps/{guestId:guid}/limit", (Guid weddingId, Guid guestId, SetRsvpLimit input, RsvpHandler h, CancellationToken ct) =>
+                h.SetLimitAsync(weddingId, guestId, input, ct))
+            .WithName("SetRsvpInvitationLimit")
+            .Produces<RsvpDto>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
         host.MapGet("/rsvps/waitlist", (Guid weddingId, RsvpHandler h, CancellationToken ct, int page = 1, int pageSize = 25) => h.WaitlistAsync(weddingId, new PageRequest(page, pageSize), ct))
             .WithName("ListRsvpWaitlist")
             .Produces<PagedResult<WaitlistDto>>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden);
@@ -104,7 +109,7 @@ internal static class RsvpEndpoints
         return endpoints;
     }
 
-    // 202 = stored as a change request for the hosts (RSVP locked); otherwise 201 for the first answer, 200 for a change.
+    // 202 = stored as a change request for the couple (RSVP locked); otherwise 201 for the first answer, 200 for a change.
     private static IResult Written(RsvpWriteResult result, bool created) =>
         result.Queued ? Results.Json(result.Rsvp, statusCode: StatusCodes.Status202Accepted)
         : created ? Results.Json(result.Rsvp, statusCode: StatusCodes.Status201Created) : Results.Ok(result.Rsvp);

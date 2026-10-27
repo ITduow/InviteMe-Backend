@@ -18,15 +18,16 @@ namespace InviteMe.Application.Features.Rsvps;
 
 /// <summary>A reminder already queued or sent to a guest. At = when it was sent, or when it is planned to go out.</summary>
 public sealed record RsvpReminderMark(string Kind, string Status, DateTimeOffset At);
+/// <summary>Responded = a firm answer (ATTENDING / DECLINED). A MAYBE guest is not "responded": it is reminded like a guest who has not answered.</summary>
 public sealed record RsvpReminderGuest(Guid Id, string RecipientName, string? Email, string? Token, bool Responded, bool Locked,
-    bool InvitationEmailSent, IReadOnlyList<RsvpReminderMark> Reminders);
+    bool InvitationEmailSent, IReadOnlyList<RsvpReminderMark> Reminders, bool Maybe = false);
 public sealed record RsvpReminderContext(Guid WeddingId, string Title, bool CanEdit, DateTimeOffset? RsvpDeadline, string Timezone,
     bool AutoEnabled, IReadOnlyList<RsvpReminderGuest> Guests);
 public sealed record RsvpReminderEnqueue(Guid GuestId, string Kind, string Recipient, DateTimeOffset SendAt, Guid? RequestedBy);
 /// <summary>A leased reminder plus the current state of its guest and wedding, re-checked right before sending.</summary>
 public sealed record RsvpReminderJob(Guid Id, Guid WeddingId, Guid GuestId, string Kind, string WeddingTitle, bool CanEdit,
     DateTimeOffset? RsvpDeadline, string Timezone, bool AutoEnabled, string RecipientName, string? Email, string? Token,
-    bool Responded, bool Locked);
+    bool Responded, bool Locked, bool Maybe = false);
 
 // ---------- API contracts ----------
 
@@ -44,7 +45,7 @@ public sealed record RsvpReminderRoundDto(string Kind, DateTimeOffset? At, strin
 public sealed record RsvpReminderCountsDto(int Pending, int Sent, int Failed, int Cancelled);
 public sealed record RsvpReminderSummaryDto(Guid WeddingId, bool AutoEnabled, DateTimeOffset? RsvpDeadline, string Timezone,
     int NotResponded, int CanRemindNow, IReadOnlyList<RsvpReminderRoundDto> AutoRounds, RsvpReminderCountsDto Counts,
-    int MaxRemindersPerGuest, string SendingHours, bool EmailConfigured = true);
+    int MaxRemindersPerGuest, string SendingHours, bool EmailConfigured = true, int Maybe = 0);
 
 public sealed record RsvpReminderCandidateDto(Guid GuestId, string RecipientName, string Email, int RemindersSent);
 /// <summary>Reason: DEADLINE_PASSED, ALREADY_RESPONDED, LOCKED, NO_EMAIL, INVITATION_NOT_SENT, MANUAL_ALREADY_USED, RECENTLY_REMINDED, GUEST_NOT_FOUND.</summary>
@@ -86,7 +87,7 @@ public sealed class RsvpReminderHistoryFilterValidator : AbstractValidator<RsvpR
 /// Guest05 rules. Times are counted back from the RSVP deadline (not the wedding day):
 /// - AUTO_3D from 3 days before, AUTO_1D from 1 day before. Once the 1-day mark is reached only AUTO_1D is sent.
 /// - Plus one MANUAL reminder the hosts send whenever they like before the deadline: three per guest at most.
-/// - Only guests that have not answered, are not locked, have an e-mail and already got the invitation by e-mail.
+/// - Only guests that have not answered (or answered MAYBE: meeting 26/10), are not locked, have an e-mail and already got the invitation by e-mail.
 /// - Two reminders to the same guest are at least 24 hours apart; e-mails go out only between 08:00 and 21:00 wedding time.
 /// </summary>
 public static class RsvpReminderRules
@@ -153,11 +154,16 @@ public static class RsvpReminderRules
 
     private static bool Active(RsvpReminderMark r) => r.Status is not (PlanningRsvpReminder.Failed or PlanningRsvpReminder.Cancelled);
 
-    public static (string Subject, string Content) Message(string recipientName, string weddingTitle, DateTimeOffset? deadline, TimeZoneInfo zone)
+    public static (string Subject, string Content) Message(string recipientName, string weddingTitle, DateTimeOffset? deadline, TimeZoneInfo zone,
+        bool maybe = false)
     {
         var until = deadline is { } d
             ? $" trước {TimeZoneInfo.ConvertTime(d, zone).ToString("HH:mm 'ngày' dd/MM/yyyy", CultureInfo.InvariantCulture)}"
             : "";
+        if (maybe)
+            return ($"Nhắc xác nhận tham dự: {weddingTitle}",
+                $"Chào {recipientName},\n\nBạn đang trả lời \"Phân vân\" cho đám cưới \"{weddingTitle}\". " +
+                $"Khi đã sắp xếp được, bạn vui lòng bấm nút bên dưới để chọn Có hoặc Không{until} để cô dâu chú rể chuẩn bị chu đáo nhé.\n\nCảm ơn bạn!");
         return ($"Nhắc xác nhận tham dự: {weddingTitle}",
             $"Chào {recipientName},\n\nBạn chưa xác nhận tham dự đám cưới \"{weddingTitle}\". " +
             $"Bạn vui lòng bấm nút bên dưới để trả lời{until} để cô dâu chú rể chuẩn bị chu đáo nhé.\n\nCảm ơn bạn!");
@@ -289,7 +295,8 @@ public sealed class RsvpReminderHandler(IRsvpReminderStore store, IWeddingPermis
             rounds, new(marks.Count(m => m.Status is PlanningRsvpReminder.Pending or PlanningRsvpReminder.Sending),
                 marks.Count(m => m.Status == PlanningRsvpReminder.Sent), marks.Count(m => m.Status == PlanningRsvpReminder.Failed),
                 marks.Count(m => m.Status == PlanningRsvpReminder.Cancelled)),
-            RsvpReminderRules.MaxPerGuest, $"{RsvpReminderRules.StartHour:00}:00-{RsvpReminderRules.EndHour:00}:00");
+            RsvpReminderRules.MaxPerGuest, $"{RsvpReminderRules.StartHour:00}:00-{RsvpReminderRules.EndHour:00}:00",
+            Maybe: context.Guests.Count(g => g.Maybe));
     }
 }
 
@@ -358,7 +365,7 @@ public sealed class RsvpReminderProcessor(IRsvpReminderStore store, IInvitationC
                 if (!RsvpReminderRules.InSendingHours(now, zone))
                 { await store.PostponeAsync(job.Id, lease, RsvpReminderRules.NextSendingTime(now, zone), ct); postponed++; continue; }
 
-                var (subject, content) = RsvpReminderRules.Message(job.RecipientName, job.WeddingTitle, job.RsvpDeadline, zone);
+                var (subject, content) = RsvpReminderRules.Message(job.RecipientName, job.WeddingTitle, job.RsvpDeadline, zone, job.Maybe);
                 var rsvpLink = links.FrontendUrl.TrimEnd('/') + "/invite/" + job.Token;
                 var qrLink = links.PublicApiUrl.TrimEnd('/') + "/api/guest-invitations/" + job.Token + "/qr?format=png";
                 try

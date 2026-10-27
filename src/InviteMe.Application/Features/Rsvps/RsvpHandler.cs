@@ -16,10 +16,12 @@ namespace InviteMe.Application.Features.Rsvps;
 /// </summary>
 public sealed class RsvpHandler(IRsvpStore store, IWeddingPermissionService permissions, ICurrentUser user,
     RequestValidation<SubmitRsvp> validation, RequestValidation<PageRequest> pageValidation,
-    RequestValidation<SaveRsvpSettings> settingsValidation, RequestValidation<LockRsvps> lockValidation, IPlanningChangePublisher changes)
+    RequestValidation<SaveRsvpSettings> settingsValidation, RequestValidation<LockRsvps> lockValidation,
+    RequestValidation<SetRsvpLimit> limitValidation, IPlanningChangePublisher changes)
 {
     public const string RsvpChanged = "RsvpChanged", RsvpRequested = "RsvpChangeRequested", RsvpLocksChanged = "RsvpLocksChanged",
-        RsvpSettingsChanged = "RsvpSettingsChanged", SeatingNeedsAttention = "PlanningSeatingNeedsAttention";
+        RsvpSettingsChanged = "RsvpSettingsChanged", SeatingNeedsAttention = "PlanningSeatingNeedsAttention",
+        RsvpDecisionNeeded = "RsvpDecisionNeeded";
 
     public Task<RsvpDto> PublicGetAsync(string token, CancellationToken ct) => store.PublicGetAsync(token, ct);
 
@@ -104,10 +106,22 @@ public sealed class RsvpHandler(IRsvpStore store, IWeddingPermissionService perm
         return result;
     }
 
+    /// <summary>The couple sets "tối đa n người" of one invitation (null = default). Needs GUEST_EDIT for that guest.</summary>
+    public async Task<RsvpDto> SetLimitAsync(Guid weddingId, Guid guestId, SetRsvpLimit input, CancellationToken ct)
+    {
+        await permissions.RequireGuestAsync(weddingId, WeddingPermission.GUEST_EDIT, guestId, ct);
+        await limitValidation.ValidateAsync(input, ct);
+        var result = await store.SetLimitAsync(weddingId, guestId, user.UserId!.Value, input, ct);
+        await changes.PublishAsync(weddingId, new(RsvpChanged, guestId, result.Version), ct);
+        return result;
+    }
+
     // Called after commit; the publisher swallows delivery failures so a saved RSVP is never reported as failed.
     private async Task<RsvpWriteResult> Notify(RsvpWriteResult result, CancellationToken ct)
     {
         await changes.PublishAsync(result.WeddingId, new(result.Queued ? RsvpRequested : RsvpChanged, result.Rsvp.GuestId, result.Rsvp.Version), ct);
+        if (result.NeedsDecision) // someone now waits for the couple ("Chờ couple quyết")
+            await changes.PublishAsync(result.WeddingId, new(RsvpDecisionNeeded, result.Rsvp.GuestId, result.Rsvp.Version), ct);
         if (result.SeatsNeedAttention)
             await changes.PublishAsync(result.WeddingId, new(SeatingNeedsAttention, result.WeddingId), ct);
         return result;

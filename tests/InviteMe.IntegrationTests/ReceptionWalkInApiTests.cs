@@ -35,7 +35,7 @@ public sealed class ReceptionWalkInApiTests
         var main = await db.Set<PlanningParticipant>().AsNoTracking().SingleAsync(x => x.GuestId == cuong.Id);
         using var anonymous = factory.CreateHttpsClient();
         Assert.Equal(HttpStatusCode.Created,
-            (await anonymous.PostAsJsonAsync($"/api/rsvp/{cuong.InvitationToken}", new SubmitRsvp(0, "ATTENDING", [main.Id]))).StatusCode);
+            (await anonymous.PostAsJsonAsync($"/api/rsvp/{cuong.InvitationToken}", new SubmitRsvp(0, "ATTENDING", 1))).StatusCode);
         // Capacity 3, 1 person attending.
 
         var stranger = new AddWalkIn(null, "Phạm Thị Dung", 2, "Chị", "BRIDE", ["Bé Na"]);
@@ -114,7 +114,7 @@ public sealed class ReceptionWalkInApiTests
         var main = await db.Set<PlanningParticipant>().AsNoTracking().SingleAsync(x => x.GuestId == tam.Id);
         using var anonymous = factory.CreateHttpsClient();
         Assert.Equal(HttpStatusCode.Created,
-            (await anonymous.PostAsJsonAsync($"/api/rsvp/{tam.InvitationToken}", new SubmitRsvp(0, "ATTENDING", [main.Id]))).StatusCode);
+            (await anonymous.PostAsJsonAsync($"/api/rsvp/{tam.InvitationToken}", new SubmitRsvp(0, "ATTENDING", 1))).StatusCode);
         var version = (await db.Set<PlanningGuest>().AsNoTracking().SingleAsync(x => x.Id == tam.Id)).Version;
         Assert.True((await owner.DeleteAsync(path + $"/guests/{tam.Id}?expectedVersion={version}")).IsSuccessStatusCode);
 
