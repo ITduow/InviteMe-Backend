@@ -35,6 +35,15 @@ public sealed class GiftGuestHandler(IGiftStore store, RequestValidation<CreateG
 
     public Task<GuestGiftDto> GetAsync(string token, Guid giftId, CancellationToken ct) => store.GuestGiftAsync(token, giftId, ct);
 
+    /// <summary>"Đã chuyển" with a photo of the bank receipt (JPEG/PNG/WebP, at most 5 MB): the couple sees it before confirming.</summary>
+    public async Task<GuestGiftDto> SendProofAsync(string token, Guid giftId, Stream content, long length, CancellationToken ct)
+    {
+        var (type, bytes) = await GiftProofImage.ReadAsync(content, length, ct);
+        var result = await store.AttachGuestProofAsync(token, giftId, type, bytes, ct);
+        if (result.Created) await changes.PublishAsync(result.WeddingId, new(GiftRules.ChangedEvent, giftId), ct);
+        return result.Gift;
+    }
+
     public async Task<GuestGiftDto> ClaimAsync(string token, Guid giftId, CancellationToken ct)
     {
         var result = await store.ClaimAsync(token, giftId, ct);
@@ -97,17 +106,37 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
         return new(GiftBook.Csv(GiftBook.Filter(await store.GiftsAsync(weddingId, ct), filter)), $"so-mung-{clock.GetUtcNow():yyyyMMdd-HHmm}.csv");
     }
 
-    /// <summary>The owner records any gift; a co-host with GIFT_RECORD records what is handed over at the wedding (cash, presents).</summary>
+    /// <summary>
+    /// The owner records any gift. A co-host with GIFT_RECORD records what is handed over at the wedding: cash, presents, and
+    /// transfers shown on a phone with a photo of the screen (ProofId); only the couple confirms that such money arrived.
+    /// </summary>
     public async Task<GiftDto> RecordAsync(Guid weddingId, RecordGift input, string? idempotencyKey, CancellationToken ct)
     {
         var owner = await RequireRecorder(weddingId, ct);
         await recordValidation.ValidateAsync(input, ct);
-        if (!owner && input.Method is not (PlanningGift.Cash or PlanningGift.Item))
-            throw new ApplicationProblemException(ProblemKind.Forbidden, "GIFT_RECORD_CASH_OR_ITEM_ONLY",
-                "Co-host chỉ ghi nhận tiền mặt và quà hiện vật trao tại tiệc.");
+        if (!owner && input.Method == PlanningGift.Transfer && input.ProofId is null)
+            throw new ApplicationProblemException(ProblemKind.BusinessRule, "GIFT_PROOF_REQUIRED",
+                "Chụp hoặc tải ảnh màn hình chuyển khoản của khách trước khi ghi nhận.");
         if (idempotencyKey is { Length: > 100 })
             throw new ValidationException([new FluentValidation.Results.ValidationFailure("Idempotency-Key", "At most 100 characters.")]);
-        return await Received(weddingId, await store.RecordAsync(weddingId, input, user.UserId!.Value, idempotencyKey?.Trim(), ct), ct);
+        return await Received(weddingId, await store.RecordAsync(weddingId, input, user.UserId!.Value, idempotencyKey?.Trim(), ct, atReception: !owner), ct);
+    }
+
+    /// <summary>Photo of a transfer screen (JPEG/PNG/WebP, at most 5 MB), owner or co-host with GIFT_RECORD.</summary>
+    public async Task<GiftProofDto> UploadProofAsync(Guid weddingId, Stream content, long length, CancellationToken ct)
+    {
+        await RequireRecorder(weddingId, ct);
+        var (type, bytes) = await GiftProofImage.ReadAsync(content, length, ct);
+        return await store.SaveProofAsync(weddingId, type, bytes, user.UserId!.Value, ct);
+    }
+
+    /// <summary>The couple checks the photo before confirming; the co-host who records can look at it again.</summary>
+    public async Task<GiftProofFile> ProofAsync(Guid weddingId, Guid giftId, CancellationToken ct)
+    {
+        var owner = await permissions.HasPermissionAsync(weddingId, WeddingPermission.GIFT_VIEW, ct);
+        await Require(weddingId, owner ? WeddingPermission.GIFT_VIEW : WeddingPermission.GIFT_RECORD, ct);
+        return await store.ProofAsync(weddingId, giftId, ct)
+            ?? throw new ApplicationProblemException(ProblemKind.NotFound, "GIFT_PROOF_NOT_FOUND", "Quà mừng này không có ảnh chuyển khoản.");
     }
 
     public async Task<GiftDto> ConfirmAsync(Guid weddingId, Guid giftId, ConfirmGift input, CancellationToken ct)
@@ -177,7 +206,7 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
     {
         var owner = await permissions.HasPermissionAsync(weddingId, WeddingPermission.GIFT_VIEW, ct);
         await Require(weddingId, owner ? WeddingPermission.GIFT_VIEW : WeddingPermission.GIFT_RECORD, ct);
-        var gifts = (await store.GiftsAsync(weddingId, ct)).Where(g => g.Method is PlanningGift.Cash or PlanningGift.Item);
+        var gifts = (await store.GiftsAsync(weddingId, ct)).Where(g => g.Method is PlanningGift.Cash or PlanningGift.Item || g.HasProof);
         return (owner ? gifts : gifts.Select(g => g with { AmountExpected = null, AmountReceived = null, AmountMismatch = false, Message = null,
             ItemValue = null })).ToList();
     }
@@ -225,6 +254,20 @@ public sealed class GiftWebhookHandler(IGiftStore store, GiftWebhookOptions opti
         if (!result.Replayed && result.WeddingId is { } weddingId)
             await changes.PublishAsync(weddingId, new(result.Paid ? GiftRules.ReceivedEvent : GiftRules.ChangedEvent, result.GiftId ?? weddingId), ct);
         return result;
+    }
+}
+
+/// <summary>A transfer photo: only real JPEG/PNG/WebP content of at most 5 MB is kept.</summary>
+internal static class GiftProofImage
+{
+    public static async Task<(string ContentType, byte[] Content)> ReadAsync(Stream content, long length, CancellationToken ct)
+    {
+        if (length is <= 0 or > PlanningGiftProof.MaxBytes)
+            throw new ApplicationProblemException(ProblemKind.PayloadTooLarge, "GIFT_PROOF_SIZE_INVALID", "Ảnh tối đa 5 MB.");
+        var image = await InviteMe.Application.Features.Weddings.Setup.WeddingCoverImage.DetectAsync(content, ct);
+        using var buffer = new MemoryStream();
+        await image.Content.CopyToAsync(buffer, ct);
+        return (image.Extension switch { ".png" => "image/png", ".webp" => "image/webp", _ => "image/jpeg" }, buffer.ToArray());
     }
 }
 

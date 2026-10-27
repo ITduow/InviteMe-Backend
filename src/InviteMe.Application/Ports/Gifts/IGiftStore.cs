@@ -22,7 +22,12 @@ public interface IGiftStore
     /// <summary>Every gift of the wedding, newest first (a wedding has a few hundred at most).</summary>
     Task<IReadOnlyList<GiftDto>> GiftsAsync(Guid weddingId, CancellationToken ct);
     Task<int> NeedsReviewAsync(Guid weddingId, CancellationToken ct);
-    Task<GiftDto> RecordAsync(Guid weddingId, RecordGift input, Guid actor, string? idempotencyKey, CancellationToken ct);
+    /// <summary>atReception = recorded by a co-host: a TRANSFER is then a claim with a photo, confirmed later by the couple.</summary>
+    Task<GiftDto> RecordAsync(Guid weddingId, RecordGift input, Guid actor, string? idempotencyKey, CancellationToken ct, bool atReception = false);
+    Task<GiftProofDto> SaveProofAsync(Guid weddingId, string contentType, byte[] content, Guid actor, CancellationToken ct);
+    Task<GiftProofFile?> ProofAsync(Guid weddingId, Guid giftId, CancellationToken ct);
+    /// <summary>The guest sends the photo of their transfer for their QR gift; the gift becomes CLAIMED (Created = changed).</summary>
+    Task<GuestGiftResult> AttachGuestProofAsync(string token, Guid giftId, string contentType, byte[] content, CancellationToken ct);
     Task<GiftDto> ConfirmAsync(Guid weddingId, Guid giftId, long? amount, Guid actor, CancellationToken ct);
     Task<GiftDto> CancelAsync(Guid weddingId, Guid giftId, Guid actor, CancellationToken ct);
 

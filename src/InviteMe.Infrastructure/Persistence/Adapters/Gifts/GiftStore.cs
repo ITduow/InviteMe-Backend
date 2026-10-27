@@ -139,29 +139,77 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         db.Set<PlanningGiftTransaction>().CountAsync(x => x.WeddingId == weddingId
             && (x.Status == PlanningGiftTransaction.Unmatched || x.Status == PlanningGiftTransaction.Duplicate), ct);
 
-    public async Task<GiftDto> RecordAsync(Guid weddingId, RecordGift input, Guid actor, string? idempotencyKey, CancellationToken ct)
+    public async Task<GiftDto> RecordAsync(Guid weddingId, RecordGift input, Guid actor, string? idempotencyKey, CancellationToken ct,
+        bool atReception = false)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await LockWedding(weddingId, ct);
         var key = string.IsNullOrWhiteSpace(idempotencyKey) ? null : "H:" + idempotencyKey;
         var itemName = input.Method == PlanningGift.Item ? GiftRules.Clean(input.ItemName) : null;
         if (key is not null && await db.Set<PlanningGift>().AsNoTracking().SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.IdempotencyKey == key, ct) is { } prior)
-            return prior.Method == input.Method && prior.AmountReceived == input.Amount && prior.ItemName == itemName
+            return prior.Method == input.Method && (prior.AmountReceived ?? prior.AmountExpected) == input.Amount && prior.ItemName == itemName
+                   && prior.ProofId == input.ProofId
                    && prior.ItemQuantity == (itemName is null ? null : input.Quantity ?? 1) ? Dto(prior, clock.GetUtcNow())
                 : throw new ApplicationProblemException(ProblemKind.Conflict, "IDEMPOTENCY_KEY_REUSED", "This Idempotency-Key was used for a different gift.");
         var giver = await GiverName(weddingId, input.GuestId, input.GiverName, ct);
         var now = clock.GetUtcNow();
-        // A present is handed over at the wedding: it is received when recorded.
+        // The photo must be one this person uploaded for this wedding and not used yet.
+        var proof = input.ProofId is not { } proofId ? null : await db.Set<PlanningGiftProof>()
+            .FromSqlInterpolated($"SELECT * FROM inviteme.planning_gift_proofs WHERE id = {proofId} AND wedding_id = {weddingId} FOR UPDATE")
+            .SingleOrDefaultAsync(ct) is { GiftId: null } found && found.UploadedBy == actor ? found : throw Missing("GIFT_PROOF_NOT_FOUND");
+        var message = GiftRules.Clean(input.Message);
+        // A present is handed over at the wedding: it is received when recorded. A transfer shown to a co-host waits for the couple.
         var gift = itemName is not null
-            ? PlanningGift.ForItem(weddingId, input.GuestId, giver, itemName, input.Quantity ?? 1, input.EstimatedValue, GiftRules.Clean(input.Message),
-                actor, input.ReceivedAt ?? now, now, key)
-            : PlanningGift.Recorded(weddingId, input.GuestId, giver, input.Method, input.Amount!.Value, GiftRules.Clean(input.Message), actor,
-                input.ReceivedAt ?? now, now, key);
+            ? PlanningGift.ForItem(weddingId, input.GuestId, giver, itemName, input.Quantity ?? 1, input.EstimatedValue, message, actor,
+                input.ReceivedAt ?? now, now, key)
+            : atReception && proof is not null
+                ? PlanningGift.FromHallTransfer(weddingId, input.GuestId, giver, input.Amount!.Value, message, proof.Id, actor, now, key)
+                : PlanningGift.Recorded(weddingId, input.GuestId, giver, input.Method, input.Amount!.Value, message, actor, input.ReceivedAt ?? now, now, key);
+        if (proof is not null)
+        {
+            if (!atReception) gift.AttachProof(proof.Id);
+            proof.AttachTo(gift.Id);
+        }
         db.Add(gift);
         db.AuditLogs.Add(Audit(gift, "GIFT_RECORDED", actor));
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
         return Dto(gift, now);
     }
+
+    public async Task<GiftProofDto> SaveProofAsync(Guid weddingId, string contentType, byte[] content, Guid actor, CancellationToken ct)
+    {
+        await RequireWedding(weddingId, ct);
+        var proof = PlanningGiftProof.Create(weddingId, contentType, content, actor, clock.GetUtcNow());
+        db.Add(proof);
+        await db.SaveChangesAsync(ct);
+        return new(proof.Id);
+    }
+
+    public async Task<GuestGiftResult> AttachGuestProofAsync(string token, Guid giftId, string contentType, byte[] content, CancellationToken ct)
+    {
+        var (wedding, guest) = await Guest(token, ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var gift = await LockGift(wedding.Id, giftId, ct);
+        if (gift is null || gift.GuestId != guest.Id || gift.Method != PlanningGift.Qr) throw Missing("GIFT_NOT_FOUND");
+        if (gift.Status is PlanningGift.Paid or PlanningGift.Cancelled) throw Rule("GIFT_CLOSED", "Quà mừng này đã được ghi nhận hoặc đã huỷ.");
+        if (gift.ProofId is not null) throw new ApplicationProblemException(ProblemKind.Conflict, "GIFT_PROOF_EXISTS", "Bạn đã gửi ảnh chuyển khoản cho quà mừng này.");
+        var now = clock.GetUtcNow();
+        var proof = PlanningGiftProof.FromGuest(wedding.Id, guest.Id, gift.Id, contentType, content, now);
+        db.Add(proof);
+        gift.AttachProof(proof.Id);
+        gift.Claim(now);
+        // audit_logs.actor_guest_id points to the legacy guests table: the planning guest goes in the metadata.
+        db.AuditLogs.Add(AuditLog.ForEntity(wedding.Id, "planning_gifts", gift.Id, "GIFT_PROOF_SENT", null, null,
+            JsonSerializer.Serialize(new { guestId = guest.Id, proofId = proof.Id }, Json)));
+        await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
+        return new(GuestDto(gift, (await Accounts(wedding.Id, ct)).FirstOrDefault(a => a.Id == gift.AccountId)), true, wedding.Id);
+    }
+
+    public async Task<GiftProofFile?> ProofAsync(Guid weddingId, Guid giftId, CancellationToken ct) =>
+        await (from g in db.Set<PlanningGift>().AsNoTracking()
+               join p in db.Set<PlanningGiftProof>().AsNoTracking() on g.ProofId equals (Guid?)p.Id
+               where g.Id == giftId && g.WeddingId == weddingId && p.WeddingId == weddingId
+               select new GiftProofFile(p.Content, p.ContentType)).SingleOrDefaultAsync(ct);
 
     public async Task<GiftDto> ConfirmAsync(Guid weddingId, Guid giftId, long? amount, Guid actor, CancellationToken ct)
     {
@@ -325,7 +373,7 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
 
     private static GiftDto Dto(PlanningGift g, DateTimeOffset now) => new(g.Id, g.GuestId, g.GiverName, g.Method, g.DisplayStatus(now),
         g.Confirmation, g.Code, g.AmountExpected, g.AmountReceived, g.AmountMismatch, g.Message, g.MessagePublic, g.AccountId, g.CreatedAt,
-        g.ClaimedAt, g.PaidAt, g.ItemName, g.ItemQuantity, g.ItemValue);
+        g.ClaimedAt, g.PaidAt, g.ItemName, g.ItemQuantity, g.ItemValue, g.ProofId is not null);
 
     private static GiftBankAccountDto Dto(PlanningGiftAccount a) => new(a.Id, a.BankBin, a.BankName, a.AccountNumber, a.AccountName, a.Label);
 

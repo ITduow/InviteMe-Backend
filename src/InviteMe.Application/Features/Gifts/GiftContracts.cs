@@ -36,12 +36,18 @@ public sealed record GuestGiftResult(GuestGiftDto Gift, bool Created, Guid Weddi
 public sealed record SaveGiftAccount(string BankBin, string AccountNumber, string AccountName, string? Label = null);
 
 /// <summary>
-/// Method CASH (envelope), TRANSFER (a transfer seen in the bank app, owner only) or ITEM (a present handed over at the wedding:
-/// ItemName and Quantity, optional EstimatedValue, no Amount). GiverName is required without GuestId.
+/// Method CASH (envelope), TRANSFER or ITEM (a present handed over at the wedding: ItemName and Quantity, optional EstimatedValue,
+/// no Amount). GiverName is required without GuestId. TRANSFER by the owner = seen in the bank app (received); TRANSFER by a
+/// co-host = shown at the reception desk, needs ProofId (photo uploaded first) and waits for the couple to confirm the money.
 /// </summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record RecordGift(string Method, long? Amount = null, Guid? GuestId = null, string? GiverName = null, string? Message = null,
-    DateTimeOffset? ReceivedAt = null, string? ItemName = null, int? Quantity = null, long? EstimatedValue = null);
+    DateTimeOffset? ReceivedAt = null, string? ItemName = null, int? Quantity = null, long? EstimatedValue = null, Guid? ProofId = null);
+
+/// <summary>A transfer photo uploaded at the reception desk, to put in RecordGift.ProofId.</summary>
+public sealed record GiftProofDto(Guid Id);
+
+public sealed record GiftProofFile(byte[] Content, string ContentType);
 
 /// <summary>Amount really received; defaults to the amount the guest chose.</summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -56,7 +62,7 @@ public sealed record GiftLedgerFilter(string? Status = null, string? Method = nu
 public sealed record GiftDto(Guid Id, Guid? GuestId, string GiverName, string Method, string Status, string? Confirmation, string? Code,
     long? AmountExpected, long? AmountReceived, bool AmountMismatch, string? Message, bool MessagePublic, Guid? AccountId,
     DateTimeOffset CreatedAt, DateTimeOffset? ClaimedAt, DateTimeOffset? PaidAt, string? ItemName = null, int? ItemQuantity = null,
-    long? ItemValue = null);
+    long? ItemValue = null, bool HasProof = false);
 
 /// <summary>
 /// Gift book totals. Received = PAID gifts. Waiting = QR gifts not paid yet (PENDING/CLAIMED, not expired);
@@ -189,6 +195,8 @@ public sealed class RecordGiftValidator : AbstractValidator<RecordGift>
             RuleFor(x => x).Must(x => x.ItemName is null && x.Quantity is null && x.EstimatedValue is null)
                 .WithMessage("ItemName, Quantity and EstimatedValue are only for ITEM.");
         });
+        RuleFor(x => x.ProofId).Must(x => x is null || x != Guid.Empty);
+        RuleFor(x => x).Must(x => x.ProofId is null || x.Method == PlanningGift.Transfer).WithMessage("Ảnh chuyển khoản chỉ dùng cho TRANSFER.");
         RuleFor(x => x.GuestId).Must(x => x is null || x != Guid.Empty);
         RuleFor(x => x).Must(x => x.GuestId is not null || !string.IsNullOrWhiteSpace(x.GiverName)).WithMessage("Choose a guest or enter the giver name.");
         RuleFor(x => x.GiverName).MaximumLength(PlanningGift.GiverNameMaxLength);

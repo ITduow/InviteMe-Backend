@@ -187,11 +187,27 @@ public sealed class GiftApiTests
         Assert.Equal(("Lan", PlanningGift.Paid), (envelope.GiverName, envelope.Status));
         await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Item, GiverName: "Nhóm bạn đại học", ItemName: "Tranh cưới"), "desk-2"),
             HttpStatusCode.Created);
-        await AssertProblem(HttpStatusCode.Forbidden, "GIFT_RECORD_CASH_OR_ITEM_ONLY",
-            await Send(desk, path, new RecordGift(PlanningGift.Transfer, 300_000, GiverName: "X"), "desk-3"));
+        // A transfer shown on the guest's phone: the desk takes a photo, records it, and only the couple confirms the money.
+        await AssertProblem(HttpStatusCode.UnprocessableEntity, "GIFT_PROOF_REQUIRED",
+            await Send(desk, path, new RecordGift(PlanningGift.Transfer, 300_000, GiverName: "Anh Tú"), "desk-3"));
+        Assert.Equal(HttpStatusCode.BadRequest, (await UploadProof(desk, path + "/proofs", Encoding.UTF8.GetBytes("not an image"))).StatusCode);
+        var proof = await Read<GiftProofDto>(await UploadProof(desk, path + "/proofs", Png), HttpStatusCode.Created);
+        var shown = await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Transfer, 300_000, GiverName: "Anh Tú", ProofId: proof.Id), "desk-3"),
+            HttpStatusCode.Created);
+        Assert.Equal((PlanningGift.Claimed, true, (long?)null), (shown.Status, shown.HasProof, shown.AmountReceived));
+        await AssertProblem(HttpStatusCode.NotFound, "GIFT_PROOF_NOT_FOUND", await Send(desk, path,
+            new RecordGift(PlanningGift.Transfer, 200_000, GiverName: "Lại ảnh cũ", ProofId: proof.Id), "desk-4")); // one photo, one gift
+        foreach (var viewer in new[] { desk, owner })
+        {
+            var photo = await viewer.GetAsync($"{path}/{shown.Id}/proof");
+            Assert.Equal((HttpStatusCode.OK, "image/png"), (photo.StatusCode, photo.Content.Headers.ContentType!.MediaType));
+        }
+        Assert.Equal(HttpStatusCode.Forbidden, (await desk.PostAsJsonAsync($"{path}/{shown.Id}/confirm", new ConfirmGift())).StatusCode);
+        var confirmed = await Read<GiftDto>(await owner.PostAsJsonAsync($"{path}/{shown.Id}/confirm", new ConfirmGift()), HttpStatusCode.OK);
+        Assert.Equal((PlanningGift.Paid, (long?)300_000), (confirmed.Status, confirmed.AmountReceived));
         var reception = (await desk.GetFromJsonAsync<List<GiftDto>>(path + "/reception"))!;
-        Assert.Equal(4, reception.Count); // the present and envelope of the owner, the envelope and present of the desk
-        Assert.All(reception, g => Assert.Contains(g.Method, new[] { PlanningGift.Cash, PlanningGift.Item }));
+        Assert.Equal(5, reception.Count); // owner: present + envelope; desk: envelope + present + shown transfer
+        Assert.All(reception, g => Assert.True(g.Method is PlanningGift.Cash or PlanningGift.Item || g.HasProof));
         Assert.All(reception, g => Assert.Equal(((long?)null, (long?)null, (string?)null), (g.AmountReceived, g.ItemValue, g.Message))); // no totals for co-hosts
         Assert.Contains(reception, g => g.ItemName == "Nồi chiên không dầu");
         Assert.Contains(1_000_000L, (await owner.GetFromJsonAsync<List<GiftDto>>(path + "/reception"))!.Select(g => g.AmountReceived ?? 0));
@@ -207,7 +223,42 @@ public sealed class GiftApiTests
         Assert.Equal(HttpStatusCode.Forbidden, (await helper.GetAsync(path + "/reception")).StatusCode);
     });
 
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task GuestSendsTheBankReceiptAndTheCoupleChecksItBeforeConfirming() => WithApi(async (db, factory, owner, ownerId) =>
+    {
+        var w = await Wedding(db, ownerId, "gift-receipt");
+        var path = $"/api/weddings/{w}/gifts";
+        await Read<GiftBankAccountDto>(await owner.PostAsJsonAsync(path + "/accounts", new SaveGiftAccount("970422", "0000000001", "Kiệt")), HttpStatusCode.Created);
+        var guests = await Import(db, owner, w, "An", "Bình");
+        using var guest = Client(factory);
+        var an = "/api/gifts/" + guests["An"].Token;
+        var gift = await Read<GuestGiftDto>(await Send(guest, an, new CreateGuestGift(500_000), "r1"), HttpStatusCode.Created);
+
+        var sent = await Read<GuestGiftDto>(await UploadProof(guest, $"{an}/{gift.Id}/proof", Png), HttpStatusCode.OK);
+        Assert.Equal(PlanningGift.Claimed, sent.Status);
+        await AssertProblem(HttpStatusCode.Conflict, "GIFT_PROOF_EXISTS", await UploadProof(guest, $"{an}/{gift.Id}/proof", Png));
+        Assert.Equal(HttpStatusCode.NotFound, (await UploadProof(guest, $"/api/gifts/{guests["Bình"].Token}/{gift.Id}/proof", Png)).StatusCode); // not Bình's gift
+
+        var listed = (await owner.GetFromJsonAsync<PagedResult<GiftDto>>(path))!.Items.Single();
+        Assert.Equal((PlanningGift.Claimed, true), (listed.Status, listed.HasProof));
+        Assert.Equal(Png, await (await owner.GetAsync($"{path}/{gift.Id}/proof")).Content.ReadAsByteArrayAsync());
+        Assert.Equal(PlanningGift.Paid, (await Read<GiftDto>(await owner.PostAsJsonAsync($"{path}/{gift.Id}/confirm", new ConfirmGift()), HttpStatusCode.OK)).Status);
+        await AssertProblem(HttpStatusCode.UnprocessableEntity, "GIFT_CLOSED", await UploadProof(guest, $"{an}/{gift.Id}/proof", Png)); // money confirmed
+        Assert.Equal(1, await db.Set<PlanningGiftProof>().CountAsync(x => x.GuestId == guests["An"].Id));
+    });
+
     // ---------------- helpers ----------------
+
+    private static readonly byte[] Png = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82];
+
+    private static async Task<HttpResponseMessage> UploadProof(HttpClient client, string url, byte[] content)
+    {
+        using var form = new MultipartFormDataContent();
+        var file = new ByteArrayContent(content);
+        file.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+        form.Add(file, "image", "receipt.png");
+        return await client.PostAsync(url, form);
+    }
 
     private static async Task<HttpResponseMessage> Webhook(HttpClient sepay, long id, string? code, long amount, string key = WebhookKey,
         string? content = null, string transferType = "in")

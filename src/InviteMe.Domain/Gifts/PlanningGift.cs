@@ -33,6 +33,8 @@ public sealed class PlanningGiftAccount
 /// Cash and manually recorded transfers are created PAID by the couple.
 /// ITEM = a present handed over at the wedding: the couple or a co-host records it there, already received. It has no
 /// amount; ItemValue is only informative and never counted in money totals.
+/// A TRANSFER shown at the reception desk is recorded by a co-host with a photo of the transfer: it stays CLAIMED until the
+/// couple sees the money in their account and confirms it.
 /// </summary>
 public sealed class PlanningGift
 {
@@ -70,6 +72,8 @@ public sealed class PlanningGift
     public string? ItemName { get; private set; }
     public int? ItemQuantity { get; private set; }
     public long? ItemValue { get; private set; }
+    /// <summary>Photo of the transfer taken at the reception desk (PlanningGiftProof).</summary>
+    public Guid? ProofId { get; private set; }
 
     public static PlanningGift ForQr(Guid weddingId, Guid guestId, string giverName, Guid accountId, string code, long amount,
         string? message, bool messagePublic, string idempotencyKey, DateTimeOffset now) => new()
@@ -103,6 +107,22 @@ public sealed class PlanningGift
         }
         : throw new ArgumentOutOfRangeException(nameof(amount));
 
+    /// <summary>A transfer a guest shows at the reception desk: the couple still has to see the money and confirm it.</summary>
+    public static PlanningGift FromHallTransfer(Guid weddingId, Guid? guestId, string giverName, long amount, string? message, Guid proofId,
+        Guid actor, DateTimeOffset now, string? idempotencyKey = null) => new()
+    {
+        Id = Guid.NewGuid(), WeddingId = weddingId, GuestId = guestId, GiverName = giverName, Method = Transfer,
+        AmountExpected = CheckAmount(amount), Message = message, Status = Claimed, ClaimedAt = now, ProofId = proofId, RecordedBy = actor,
+        CreatedAt = now, ExpiresAt = now, IdempotencyKey = idempotencyKey
+    };
+
+    /// <summary>A transfer photo: attached by the owner to a received transfer, or sent by the guest with a QR gift.</summary>
+    public void AttachProof(Guid proofId)
+    {
+        if (ProofId is not null) throw new InvalidOperationException("Gift already has a transfer photo.");
+        ProofId = proofId;
+    }
+
     /// <summary>A present handed over at the wedding: received when recorded.</summary>
     public static PlanningGift ForItem(Guid weddingId, Guid? guestId, string giverName, string itemName, int quantity, long? estimatedValue,
         string? message, Guid actor, DateTimeOffset receivedAt, DateTimeOffset now, string? idempotencyKey = null)
@@ -120,8 +140,8 @@ public sealed class PlanningGift
     public static long CheckAmount(long amount) =>
         amount is >= MinAmount and <= MaxAmount ? amount : throw new ArgumentOutOfRangeException(nameof(amount));
 
-    /// <summary>Status shown to people: PENDING/CLAIMED past the code lifetime read as EXPIRED.</summary>
-    public string DisplayStatus(DateTimeOffset now) => Status is Pending or Claimed && now >= ExpiresAt ? Expired : Status;
+    /// <summary>Status shown to people: QR gifts PENDING/CLAIMED past the code lifetime read as EXPIRED.</summary>
+    public string DisplayStatus(DateTimeOffset now) => Method == Qr && Status is Pending or Claimed && now >= ExpiresAt ? Expired : Status;
 
     /// <summary>The guest says "I have transferred": waits for the bank or the couple.</summary>
     public bool Claim(DateTimeOffset now)
