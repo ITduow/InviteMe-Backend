@@ -29,7 +29,8 @@ public sealed record GuestSeatDto(
     string? TableSide = null,
     int? TableRow = null,
     int? TableColumn = null,
-    bool? IsVip = null);
+    bool? IsVip = null,
+    string? TableHalf = null);
 public sealed record GuestSeatsDto(string RecipientName, string? Honorific, bool Published, IReadOnlyList<GuestSeatDto> Seats);
 // Reception view of a place: the place id to confirm check-in (Cohost04), when it was checked in and how
 // (CheckInKind INVITED, or WALK_IN for a place added at the counter).
@@ -47,7 +48,8 @@ public sealed record ReceptionSeatDto(
     string? TableSide = null,
     int? TableRow = null,
     int? TableColumn = null,
-    bool? IsVip = null);
+    bool? IsVip = null,
+    string? TableHalf = null);
 public sealed record SeatLookupDto(Guid GuestId, string RecipientName, string? Honorific, bool Published, IReadOnlyList<ReceptionSeatDto> Seats);
 public sealed record SeatingPublicationDto(bool Published, DateTimeOffset? PublishedAt, Guid? PublishedBy);
 public sealed record SeatLookupQuery(string Code);
@@ -102,7 +104,7 @@ public sealed partial class GuestAccessHandler(IGuestAccessStore store, IQrCodeR
         var seats = await store.SeatsAsync(guest.GuestId, ct);
         return new(guest.RecipientName, guest.Honorific, true, seats.Select(x => x.Status == RsvpPlaceStatus.Unused
             ? new GuestSeatDto(x.Position, x.PersonName, x.Status, null, null)
-            : new GuestSeatDto(x.Position, x.PersonName, x.Status, x.Table, x.SeatNumber, x.TableNumber, x.TableSide, x.TableRow, x.TableColumn, x.IsVip)).ToList());
+            : new GuestSeatDto(x.Position, x.PersonName, x.Status, x.Table, x.SeatNumber, x.TableNumber, x.TableSide, x.TableRow, x.TableColumn, x.IsVip, x.TableHalf)).ToList());
     }
 
     // Reception counter (Cohost05): staff see the table right after scanning, published or not, also for an

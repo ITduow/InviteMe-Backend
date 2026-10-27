@@ -39,18 +39,20 @@ public sealed class PlanningSeatingConfiguration : IEntityTypeConfiguration<Plan
         {
             t.HasCheckConstraint("ck_planning_table_capacity", "\"Capacity\" BETWEEN 1 AND 20");
             t.HasCheckConstraint("ck_planning_table_extra_seats", "\"ExtraSeats\" BETWEEN 0 AND 2");
-            t.HasCheckConstraint("ck_planning_table_coordinates", "(\"Row\" IS NULL AND \"Column\" IS NULL) OR (\"Row\" IS NOT NULL AND \"Column\" IS NOT NULL)");
+            t.HasCheckConstraint("ck_planning_table_coordinates", "(\"Half\" IS NULL AND \"Row\" IS NULL AND \"Column\" IS NULL) OR (\"Half\" IS NOT NULL AND \"Row\" IS NOT NULL AND \"Column\" IS NOT NULL)");
             t.HasCheckConstraint("ck_planning_table_side", "\"Side\" IS NULL OR \"Side\" IN ('GROOM', 'BRIDE', 'MUTUAL')");
+            t.HasCheckConstraint("ck_planning_table_half", "\"Half\" IS NULL OR \"Half\" IN ('GROOM', 'BRIDE')");
         });
         b.HasKey(x => x.Id);
         b.Property(x => x.Name).HasMaxLength(100);
+        b.Property(x => x.Half).HasMaxLength(20);
         b.Property(x => x.Side).HasMaxLength(20);
         b.Property(x => x.IsVip).HasDefaultValue(false);
         b.Property(x => x.ExtraSeats).HasDefaultValue(0);
         b.HasIndex(x => x.WeddingId);
         b.HasIndex(x => new { x.WeddingId, x.GroupId });
         b.HasIndex(x => new { x.WeddingId, x.Number }).IsUnique();
-        b.HasIndex(x => new { x.WeddingId, x.Side, x.Row, x.Column }).IsUnique().HasFilter("\"Row\" IS NOT NULL");
+        b.HasIndex(x => new { x.WeddingId, x.Half, x.Row, x.Column }).IsUnique().HasFilter("\"Row\" IS NOT NULL");
         b.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade);
         b.HasOne<PlanningGroup>().WithMany().HasForeignKey(x => x.GroupId).OnDelete(DeleteBehavior.Restrict);
     }

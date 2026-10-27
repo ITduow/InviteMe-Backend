@@ -3793,6 +3793,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("GroupId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("Half")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
                     b.Property<bool>("IsVip")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
@@ -3825,7 +3829,7 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.HasIndex("WeddingId", "Number")
                         .IsUnique();
 
-                    b.HasIndex("WeddingId", "Side", "Row", "Column")
+                    b.HasIndex("WeddingId", "Half", "Row", "Column")
                         .IsUnique()
                         .HasFilter("\"Row\" IS NOT NULL");
 
@@ -3833,9 +3837,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("ck_planning_table_capacity", "\"Capacity\" BETWEEN 1 AND 20");
 
-                            t.HasCheckConstraint("ck_planning_table_coordinates", "(\"Row\" IS NULL AND \"Column\" IS NULL) OR (\"Row\" IS NOT NULL AND \"Column\" IS NOT NULL)");
+                            t.HasCheckConstraint("ck_planning_table_coordinates", "(\"Half\" IS NULL AND \"Row\" IS NULL AND \"Column\" IS NULL) OR (\"Half\" IS NOT NULL AND \"Row\" IS NOT NULL AND \"Column\" IS NOT NULL)");
 
                             t.HasCheckConstraint("ck_planning_table_extra_seats", "\"ExtraSeats\" BETWEEN 0 AND 2");
+
+                            t.HasCheckConstraint("ck_planning_table_half", "\"Half\" IS NULL OR \"Half\" IN ('GROOM', 'BRIDE')");
 
                             t.HasCheckConstraint("ck_planning_table_side", "\"Side\" IS NULL OR \"Side\" IN ('GROOM', 'BRIDE', 'MUTUAL')");
                         });

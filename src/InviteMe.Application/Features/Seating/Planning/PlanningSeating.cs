@@ -48,7 +48,8 @@ public sealed record SeatingSummaryTableDto(
     int Capacity,
     int ExtraSeats,
     int SeatedCount,
-    int CheckedInCount);
+    int CheckedInCount,
+    string? Half = null);
 
 public sealed record SeatingSummaryDto(
     Guid WeddingId,
@@ -78,7 +79,8 @@ public sealed record PlanningTableDto(
     int? Row = null,
     int? Column = null,
     bool IsVip = false,
-    int ExtraSeats = 0);
+    int ExtraSeats = 0,
+    string? Half = null);
 
 public sealed record SeatingWarningDto(
     string Code,
@@ -139,7 +141,9 @@ public sealed record ChangePlanningSeating(
     Guid? PlaceId = null,
     Guid? TargetPlaceId = null,
     Guid? TargetGuestId = null,
-    string? Reason = null);
+    string? Reason = null,
+    string? Half = null,
+    string? Plan = null);
 
 public interface IPlanningSeatingStore
 {
@@ -151,7 +155,7 @@ public interface IPlanningSeatingStore
         Task.FromResult(new SeatingLayoutDto(6, 3, 6, 3, "BY_ROW", 0));
     Task<SeatingLayoutDto> UpdateLayoutAsync(Guid weddingId, UpdateSeatingLayout input, CancellationToken ct) =>
         Task.FromResult(new SeatingLayoutDto(input.GroomRows, input.GroomColumns, input.BrideRows, input.BrideColumns, input.Numbering, input.ExpectedVersion + 1));
-    Task<IReadOnlyList<UnattendedGuestDto>> GetUnattendedGuestsAsync(Guid weddingId, Guid tableId, CancellationToken ct) =>
+    Task<IReadOnlyList<UnattendedGuestDto>> GetUnattendedGuestsAsync(Guid weddingId, Guid tableId, CancellationToken ct, IReadOnlySet<Guid>? groupScope = null) =>
         Task.FromResult<IReadOnlyList<UnattendedGuestDto>>([]);
     Task<IReadOnlyList<SeatingAuditLogDto>> GetSeatingAuditLogsAsync(Guid weddingId, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<SeatingAuditLogDto>>([]);
@@ -240,9 +244,16 @@ public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePla
                 return p1 != p2 && p1 != Guid.Empty && p2 != Guid.Empty;
             }).WithMessage("Không thể đổi chỗ một người với chính mình.");
         });
+        When(x => x.Action == "OPERATIONAL_MOVE", () =>
+        {
+            RuleFor(x => x).Must(x => x.PlaceId.HasValue || (x.PlaceIds != null && x.PlaceIds.Count >= 1 && x.PlaceIds.Count <= 500))
+                .WithMessage("Cần chọn khách cần chuyển chỗ.");
+            RuleFor(x => x.SeatNumber).GreaterThan(0).When(x => x.SeatNumber.HasValue);
+            RuleFor(x => x).Must(x => x.SeatNumber is null || x.TableId.HasValue);
+        });
         When(x => x.Action == "APPLY_SUGGESTION", () =>
         {
-            RuleFor(x => x.Strategy).Must(SeatingSuggestions.KnownStrategy);
+            RuleFor(x => x.Strategy ?? x.Plan).Must(SeatingSuggestions.KnownStrategy);
             RuleFor(x => x.Mode).Must(SeatingSuggestions.KnownMode);
             RuleFor(x => x.SourceFingerprint).NotNull().Matches("^[A-Fa-f0-9]{64}$");
             RuleFor(x => x).Must(x => x.Mode != "REPLACE_ALL" || x.ConfirmReplace)
@@ -268,7 +279,7 @@ public sealed class PlanningSeatingHandler(
 
     public async Task<SeatingLayoutDto> GetLayoutAsync(Guid weddingId, CancellationToken ct)
     {
-        await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
+        var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
         return await store.GetLayoutAsync(weddingId, ct);
     }
 
@@ -296,7 +307,7 @@ public sealed class PlanningSeatingHandler(
                 "SEATING_SCOPE_MISMATCH",
                 "Seating edit scope must be contained in the assigned view scope.");
         var groupScope = editScope.IsWeddingWide ? null : editScope.GroupIds;
-        if (groupScope is not null && (input.Action is "APPLY_SUGGESTION" or "RENUMBER_TABLES" or "TAG_TABLES" or "SWAP_TABLES" or "LOCK_PLAN" or "UNLOCK_PLAN" or "START_EVENT"))
+        if (groupScope is not null && (input.Action is "APPLY_SUGGESTION" or "RENUMBER_TABLES" or "TAG_TABLES" or "SWAP_TABLES" or "LOCK_PLAN" or "UNLOCK_PLAN" or "START_EVENT" or "RELEASE_DECLINED_SEATS"))
             throw new InviteMe.Application.Common.Errors.ApplicationProblemException(
                 InviteMe.Application.Common.Errors.ProblemKind.Forbidden,
                 "SEATING_SUGGESTION_REQUIRES_WEDDING_SCOPE",
@@ -323,19 +334,19 @@ public sealed class PlanningSeatingHandler(
 
     public async Task<IReadOnlyList<UnattendedGuestDto>> GetUnattendedGuestsAsync(Guid weddingId, Guid tableId, CancellationToken ct)
     {
-        await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
-        return await store.GetUnattendedGuestsAsync(weddingId, tableId, ct);
+        var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
+        return await store.GetUnattendedGuestsAsync(weddingId, tableId, ct, scope.IsWeddingWide ? null : scope.GroupIds);
     }
 
     public async Task<IReadOnlyList<SeatingAuditLogDto>> GetSeatingAuditLogsAsync(Guid weddingId, CancellationToken ct)
     {
-        await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
+        var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
         return await store.GetSeatingAuditLogsAsync(weddingId, ct);
     }
 
     public async Task<SeatingSummaryDto> GetSummaryAsync(Guid weddingId, CancellationToken ct)
     {
-        await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
+        var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
         return await store.GetSummaryAsync(weddingId, ct);
     }
 }

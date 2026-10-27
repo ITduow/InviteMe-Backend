@@ -28,6 +28,7 @@ public sealed class PlanningTable
     public int Capacity { get; set; }
     public Guid? GroupId { get; set; }
     public int Number { get; set; }
+    public string? Half { get; set; }
     public string? Side { get; set; }
     public int? Row { get; set; }
     public int? Column { get; set; }

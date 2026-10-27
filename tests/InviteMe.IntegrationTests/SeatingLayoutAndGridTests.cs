@@ -33,7 +33,7 @@ public sealed class SeatingLayoutAndGridTests
         await CoHostPermissionTests.AddCoHostAsync(owner, cohost, wedding.Id, "SEATING_VIEW", "SEATING_EDIT");
 
         var root = $"/api/weddings/{wedding.Id}/guest-planning";
-        var layoutUrl = root + "/seating-layout";
+        var layoutUrl = $"/api/weddings/{wedding.Id}/seating-layout";
         var planUrl = root + "/seating-plan";
 
         // 1. GET Layout returns default 6x3

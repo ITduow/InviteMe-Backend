@@ -35,7 +35,7 @@ public sealed class SeatingLockAndDataChangeTests
 
         var root = $"/api/weddings/{wedding.Id}/guest-planning";
         var planUrl = root + "/seating-plan";
-        var layoutUrl = root + "/seating-layout";
+        var layoutUrl = $"/api/weddings/{wedding.Id}/seating-layout";
 
         // 1. Import guests
         using var importReq = new HttpRequestMessage(HttpMethod.Post, root + "/imports")
