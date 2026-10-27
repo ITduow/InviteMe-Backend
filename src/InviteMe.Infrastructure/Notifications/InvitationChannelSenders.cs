@@ -30,7 +30,7 @@ public sealed class InvitationChannelSender(IEnumerable<IInvitationChannelProvid
     }
 }
 
-public sealed class SmtpInvitationChannelProvider(IOptions<SmtpOptions> options, IQrCodeRenderer qrCodeRenderer) : IInvitationChannelProvider
+public sealed class SmtpInvitationChannelProvider(IOptions<SmtpOptions> options) : IInvitationChannelProvider
 {
     public string Channel => "EMAIL";
     public bool IsConfigured => options.Value.IsConfigured;
@@ -60,7 +60,6 @@ public sealed class SmtpInvitationChannelProvider(IOptions<SmtpOptions> options,
             }
             var plainText = InvitationEmailFormatter.BuildPlainText(item);
             var html = InvitationEmailFormatter.BuildHtml(item);
-            using var qrStream = new MemoryStream(qrCodeRenderer.RenderPng(item.RsvpLink));
             using var mail = new MailMessage(smtp.From!, item.Recipient)
             {
                 Subject = item.Subject,
@@ -69,12 +68,6 @@ public sealed class SmtpInvitationChannelProvider(IOptions<SmtpOptions> options,
             };
             mail.AlternateViews.Add(AlternateView.CreateAlternateViewFromString(plainText, Encoding.UTF8, "text/plain"));
             var htmlView = AlternateView.CreateAlternateViewFromString(html, Encoding.UTF8, "text/html");
-            var qr = new LinkedResource(qrStream, "image/png")
-            {
-                ContentId = "invitation-qr",
-                TransferEncoding = System.Net.Mime.TransferEncoding.Base64
-            };
-            htmlView.LinkedResources.Add(qr);
             mail.AlternateViews.Add(htmlView);
             using var client = new SmtpClient(smtp.Host!, smtp.Port)
             { EnableSsl = smtp.EnableSsl, DeliveryMethod = SmtpDeliveryMethod.Network };
@@ -97,11 +90,9 @@ public static class InvitationEmailFormatter
         .Replace("\r\n", "\n", StringComparison.Ordinal)
         .Replace('\r', '\n');
 
-    public static string BuildPlainText(InvitationOutboundMessage item)
-    {
-        var message = NormalizeNewlines(item.Content);
-        return $"{message}\n\nXác nhận tham dự: {item.RsvpLink}\nMở hoặc tải mã QR: {item.QrLink}";
-    }
+    public static string BuildPlainText(InvitationOutboundMessage item) => item.EmailPlainTextContent ??
+        InvitationEmailRenderer.Render(item.WeddingId, "", "", item.Content, null, null, null, "Asia/Ho_Chi_Minh", null,
+            "", item.RsvpLink, item.QrLink).PlainText;
 
     public static string BuildThankYouPlainText(InvitationOutboundMessage item) =>
         $"{NormalizeNewlines(item.Content)}\n\nXem lại thư cảm ơn: {item.PublicLink}";
@@ -120,24 +111,8 @@ public static class InvitationEmailFormatter
     }
 
     public static string BuildHtml(InvitationOutboundMessage item)
-    {
-        var message = NormalizeNewlines(item.Content)
-            .Replace(item.RsvpLink, "[liên kết xác nhận bên dưới]", StringComparison.Ordinal)
-            .Replace(item.QrLink, "[mã QR bên dưới]", StringComparison.Ordinal);
-        var formattedMessage = string.Join("<br>\n", message.Split('\n').Select(HtmlEncoder.Default.Encode));
-        var rsvp = HtmlEncoder.Default.Encode(item.RsvpLink);
-        var qrLink = HtmlEncoder.Default.Encode(item.QrLink);
-        return new StringBuilder("<!doctype html><html><body style=\"margin:0;background:#f7f4ef;font-family:Arial,sans-serif;color:#332b27\">")
-            .Append("<div style=\"max-width:600px;margin:24px auto;padding:32px 24px;background:#fff;border:1px solid #eee5dc;border-radius:16px;text-align:center\">")
-            .Append("<div style=\"font-size:24px;color:#9a6b52;margin-bottom:20px\">Thiệp mời</div>")
-            .Append("<div style=\"font-size:16px;line-height:1.8;text-align:left\">").Append(formattedMessage).Append("</div>")
-            .Append("<p style=\"margin:28px 0 20px\"><a href=\"").Append(rsvp)
-            .Append("\" style=\"display:inline-block;padding:13px 24px;background:#9a6b52;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold\">Xác nhận tham dự</a></p>")
-            .Append("<div style=\"margin:24px auto 8px\"><img alt=\"Mã QR thiệp mời\" width=\"220\" height=\"220\" src=\"cid:invitation-qr\" style=\"display:block;width:220px;height:220px;margin:auto;border:8px solid #fff;box-shadow:0 2px 12px #0002\"></div>")
-            .Append("<p style=\"font-size:13px;color:#6b625d\">Quét mã QR để mở trang xác nhận tham dự.</p>")
-            .Append("<p style=\"font-size:13px\"><a href=\"").Append(qrLink).Append("\">Mở hoặc tải mã QR</a></p>")
-            .Append("</div></body></html>").ToString();
-    }
+        => item.EmailHtmlContent ?? InvitationEmailRenderer.Render(item.WeddingId, "", "", item.Content, null, null, null,
+            "Asia/Ho_Chi_Minh", null, "", item.RsvpLink, item.QrLink).Html;
 }
 
 public sealed class SpeedSmsOptions

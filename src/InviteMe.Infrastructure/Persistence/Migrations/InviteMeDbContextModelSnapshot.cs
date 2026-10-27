@@ -2674,6 +2674,16 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnName("created_at")
                         .HasDefaultValueSql("NOW()");
 
+                    b.Property<string>("EmailHtmlContent")
+                        .HasMaxLength(64000)
+                        .HasColumnType("character varying(64000)")
+                        .HasColumnName("email_html_content");
+
+                    b.Property<string>("EmailPlainTextContent")
+                        .HasMaxLength(12000)
+                        .HasColumnType("character varying(12000)")
+                        .HasColumnName("email_plain_text_content");
+
                     b.Property<string>("LastErrorCode")
                         .HasMaxLength(80)
                         .HasColumnType("character varying(80)")

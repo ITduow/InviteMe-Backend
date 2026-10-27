@@ -12,7 +12,7 @@ using InviteMe.Domain.AI;
 namespace InviteMe.Application.Features.AI.ThankYouTemplates;
 
 public sealed record GenerateThankYouTemplate(string Tone = "WARM", string Language = "vi", string? AdditionalInstructions = null, bool IncludeGiftAmount = false);
-public sealed record GenerateThankYouTemplateOptions(IReadOnlyList<Guid> GuestIds, int VariantCount = 3,
+public sealed record GenerateThankYouTemplateOptions(IReadOnlyList<Guid> GuestIds, int VariantCount = 1,
     string Tone = "WARM", bool IncludeGiftAmount = false, string? AdditionalInstructions = null);
 public sealed record UpdateThankYouTemplate(string Content, int ExpectedVersion, bool IncludeGiftAmount = false);
 public sealed record ApproveThankYouTemplate(int ExpectedVersion);
@@ -38,8 +38,8 @@ public sealed class GenerateThankYouTemplateOptionsValidator : AbstractValidator
 {
     public GenerateThankYouTemplateOptionsValidator()
     {
-        RuleFor(x => x.GuestIds).NotNull().Must(x => x is { Count: > 0 and <= 180 })
-            .WithMessage("Select 1–180 recipients to set the shared template context.");
+        RuleFor(x => x.GuestIds).NotNull().Must(x => x is { Count: > 0 } && x.Count <= MessageRecipientLimits.Maximum)
+            .WithMessage($"Select 1–{MessageRecipientLimits.Maximum} recipients to set the shared template context.");
         RuleFor(x => x.GuestIds).Must(x => x is not null && x.Distinct().Count() == x.Count)
             .WithMessage("Guest IDs must be unique.");
         RuleFor(x => x.VariantCount).InclusiveBetween(1, 3);
