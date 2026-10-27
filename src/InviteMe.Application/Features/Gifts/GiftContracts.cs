@@ -35,10 +35,13 @@ public sealed record GuestGiftResult(GuestGiftDto Gift, bool Created, Guid Weddi
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SaveGiftAccount(string BankBin, string AccountNumber, string AccountName, string? Label = null);
 
-/// <summary>Method CASH (envelope) or TRANSFER (a transfer seen in the bank app). GiverName is required without GuestId.</summary>
+/// <summary>
+/// Method CASH (envelope), TRANSFER (a transfer seen in the bank app, owner only) or ITEM (a present handed over at the wedding:
+/// ItemName and Quantity, optional EstimatedValue, no Amount). GiverName is required without GuestId.
+/// </summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-public sealed record RecordGift(string Method, long Amount, Guid? GuestId = null, string? GiverName = null, string? Message = null,
-    DateTimeOffset? ReceivedAt = null);
+public sealed record RecordGift(string Method, long? Amount = null, Guid? GuestId = null, string? GiverName = null, string? Message = null,
+    DateTimeOffset? ReceivedAt = null, string? ItemName = null, int? Quantity = null, long? EstimatedValue = null);
 
 /// <summary>Amount really received; defaults to the amount the guest chose.</summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -52,14 +55,16 @@ public sealed record GiftLedgerFilter(string? Status = null, string? Method = nu
 
 public sealed record GiftDto(Guid Id, Guid? GuestId, string GiverName, string Method, string Status, string? Confirmation, string? Code,
     long? AmountExpected, long? AmountReceived, bool AmountMismatch, string? Message, bool MessagePublic, Guid? AccountId,
-    DateTimeOffset CreatedAt, DateTimeOffset? ClaimedAt, DateTimeOffset? PaidAt);
+    DateTimeOffset CreatedAt, DateTimeOffset? ClaimedAt, DateTimeOffset? PaidAt, string? ItemName = null, int? ItemQuantity = null,
+    long? ItemValue = null);
 
 /// <summary>
 /// Gift book totals. Received = PAID gifts. Waiting = QR gifts not paid yet (PENDING/CLAIMED, not expired);
 /// Claimed = guests who said they transferred and wait for the couple; NeedsReview = bank transfers to assign.
 /// </summary>
 public sealed record GiftSummaryDto(long TotalReceived, int ReceivedCount, long QrTotal, int QrCount, long CashTotal, int CashCount,
-    long TransferTotal, int TransferCount, int Waiting, int Claimed, int Expired, int AmountMismatches, int NeedsReview, int Accounts);
+    long TransferTotal, int TransferCount, int Waiting, int Claimed, int Expired, int AmountMismatches, int NeedsReview, int Accounts,
+    int ItemCount = 0, int ItemQuantity = 0);
 
 /// <summary>A bank notification. Status: MATCHED, UNMATCHED (no known code), DUPLICATE (gift already paid), IGNORED.</summary>
 public sealed record GiftTransactionDto(Guid Id, string Status, long Amount, string? Code, string Content, string Gateway,
@@ -170,8 +175,20 @@ public sealed class RecordGiftValidator : AbstractValidator<RecordGift>
 {
     public RecordGiftValidator()
     {
-        RuleFor(x => x.Method).Must(x => x is PlanningGift.Cash or PlanningGift.Transfer).WithMessage("Method must be CASH or TRANSFER.");
-        RuleFor(x => x.Amount).InclusiveBetween(PlanningGift.MinAmount, PlanningGift.MaxAmount);
+        RuleFor(x => x.Method).Must(x => x is PlanningGift.Cash or PlanningGift.Transfer or PlanningGift.Item)
+            .WithMessage("Method must be CASH, TRANSFER or ITEM.");
+        When(x => x.Method == PlanningGift.Item, () =>
+        {
+            RuleFor(x => x.ItemName).Must(x => !string.IsNullOrWhiteSpace(x)).WithMessage("Nhập tên món quà.").MaximumLength(PlanningGift.ItemNameMaxLength);
+            RuleFor(x => x.Quantity).InclusiveBetween(1, PlanningGift.MaxItemQuantity).When(x => x.Quantity is not null);
+            RuleFor(x => x.EstimatedValue).InclusiveBetween(0, PlanningGift.MaxAmount).When(x => x.EstimatedValue is not null);
+            RuleFor(x => x.Amount).Null().WithMessage("Quà hiện vật không có số tiền; dùng EstimatedValue nếu muốn ghi giá trị.");
+        }).Otherwise(() =>
+        {
+            RuleFor(x => x.Amount).NotNull().InclusiveBetween(PlanningGift.MinAmount, PlanningGift.MaxAmount);
+            RuleFor(x => x).Must(x => x.ItemName is null && x.Quantity is null && x.EstimatedValue is null)
+                .WithMessage("ItemName, Quantity and EstimatedValue are only for ITEM.");
+        });
         RuleFor(x => x.GuestId).Must(x => x is null || x != Guid.Empty);
         RuleFor(x => x).Must(x => x.GuestId is not null || !string.IsNullOrWhiteSpace(x.GiverName)).WithMessage("Choose a guest or enter the giver name.");
         RuleFor(x => x.GiverName).MaximumLength(PlanningGift.GiverNameMaxLength);
@@ -202,7 +219,7 @@ public sealed class GiftLedgerFilterValidator : AbstractValidator<GiftLedgerFilt
     {
         RuleFor(x => x.Status).Must(x => x is null || x == PlanningGift.Expired || PlanningGift.Statuses.Contains(x))
             .WithMessage("Status must be PENDING, CLAIMED, PAID, CANCELLED or EXPIRED.");
-        RuleFor(x => x.Method).Must(x => x is null or PlanningGift.Qr or PlanningGift.Cash or PlanningGift.Transfer);
+        RuleFor(x => x.Method).Must(x => x is null or PlanningGift.Qr or PlanningGift.Cash or PlanningGift.Transfer or PlanningGift.Item);
         RuleFor(x => x.Search).MaximumLength(100);
     }
 }

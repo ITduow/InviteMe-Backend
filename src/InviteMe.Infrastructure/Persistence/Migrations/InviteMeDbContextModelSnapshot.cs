@@ -1331,6 +1331,19 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(150)")
                         .HasColumnName("idempotency_key");
 
+                    b.Property<string>("ItemName")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("item_name");
+
+                    b.Property<int?>("ItemQuantity")
+                        .HasColumnType("integer")
+                        .HasColumnName("item_quantity");
+
+                    b.Property<long?>("ItemValue")
+                        .HasColumnType("bigint")
+                        .HasColumnName("item_value");
+
                     b.Property<string>("Message")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)")
@@ -1388,9 +1401,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_planning_gifts_confirmation", "confirmation IS NULL OR confirmation IN ('AUTO','MANUAL')");
 
-                            t.HasCheckConstraint("ck_planning_gifts_method", "method IN ('QR','CASH','TRANSFER')");
+                            t.HasCheckConstraint("ck_planning_gifts_item", "(method = 'ITEM') = (item_name IS NOT NULL) AND (method <> 'ITEM' OR (status = 'PAID' AND amount_expected IS NULL AND amount_received IS NULL AND item_quantity BETWEEN 1 AND 1000 AND (item_value IS NULL OR item_value >= 0)))");
 
-                            t.HasCheckConstraint("ck_planning_gifts_paid", "(status = 'PAID') = (amount_received IS NOT NULL AND paid_at IS NOT NULL)");
+                            t.HasCheckConstraint("ck_planning_gifts_method", "method IN ('QR','CASH','TRANSFER','ITEM')");
+
+                            t.HasCheckConstraint("ck_planning_gifts_paid", "(status = 'PAID') = (paid_at IS NOT NULL AND (method = 'ITEM' OR amount_received IS NOT NULL))");
 
                             t.HasCheckConstraint("ck_planning_gifts_qr_code", "(method = 'QR') = (code IS NOT NULL)");
 

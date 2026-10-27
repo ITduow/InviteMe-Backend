@@ -146,6 +146,64 @@ public sealed class GiftApiTests
         Assert.Equal(PlanningGift.Paid, (await db.Set<PlanningGift>().AsNoTracking().SingleAsync(x => x.Id == toGroom.Id)).Status); // gift kept
     });
 
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task PresentsAndCashAreRecordedAtTheWeddingByTheOwnerOrAGiftRecorder() => WithApi(async (db, factory, owner, ownerId) =>
+    {
+        var w = await Wedding(db, ownerId, "gift-items");
+        var path = $"/api/weddings/{w}/gifts";
+
+        // A present handed over at the wedding is received when recorded; it has no amount.
+        var present = await Read<GiftDto>(await Send(owner, path, new RecordGift(PlanningGift.Item, GiverName: "Cô Lan",
+            ItemName: "Nồi chiên không dầu", Quantity: 1, EstimatedValue: 1_500_000), "item-1"), HttpStatusCode.Created);
+        Assert.Equal((PlanningGift.Item, PlanningGift.Paid, (long?)null, "Nồi chiên không dầu", (int?)1, (long?)1_500_000),
+            (present.Method, present.Status, present.AmountReceived, present.ItemName, present.ItemQuantity, present.ItemValue));
+        Assert.Equal(present.Id, (await Read<GiftDto>(await Send(owner, path, new RecordGift(PlanningGift.Item, GiverName: "Cô Lan",
+            ItemName: "Nồi chiên không dầu", Quantity: 1, EstimatedValue: 1_500_000), "item-1"), HttpStatusCode.Created)).Id);
+        foreach (var invalid in new[]
+                 {
+                     new RecordGift(PlanningGift.Item, 500_000, GiverName: "A", ItemName: "Bộ ấm chén"), // a present has no amount
+                     new RecordGift(PlanningGift.Item, GiverName: "A"),                                  // name required
+                     new RecordGift(PlanningGift.Cash, 500_000, GiverName: "A", ItemName: "x"),         // item fields only for ITEM
+                     new RecordGift(PlanningGift.Item, GiverName: "A", ItemName: "Ly", Quantity: 0)
+                 })
+            Assert.Equal(HttpStatusCode.BadRequest, (await Send(owner, path, invalid, Guid.NewGuid().ToString())).StatusCode);
+        await Read<GiftDto>(await Send(owner, path, new RecordGift(PlanningGift.Cash, 1_000_000, GiverName: "Bác Ba"), "cash-1"), HttpStatusCode.Created);
+
+        // Presents are listed and exported, never added to money totals.
+        var summary = (await owner.GetFromJsonAsync<GiftSummaryDto>(path + "/summary"))!;
+        Assert.Equal((1_000_000L, 2, 1, 1), (summary.TotalReceived, summary.ReceivedCount, summary.ItemCount, summary.ItemQuantity));
+        Assert.Equal(present.Id, (await owner.GetFromJsonAsync<PagedResult<GiftDto>>(path + "?method=ITEM"))!.Items.Single().Id);
+        Assert.Single((await owner.GetFromJsonAsync<PagedResult<GiftDto>>(path + "?search=nồi chiên"))!.Items);
+        Assert.Contains("Nồi chiên không dầu", Encoding.UTF8.GetString((await (await owner.GetAsync(path + "/export")).Content.ReadAsByteArrayAsync())[3..]));
+
+        // A co-host with GIFT_RECORD (wedding-wide only) records cash and presents at the reception, sees no totals.
+        using var desk = await SignIn(factory, "gift-desk");
+        var deskEmail = (await desk.GetFromJsonAsync<AccountDto>("/api/auth/me"))!.Email;
+        var guests = await Import(db, owner, w, "Lan");
+        Assert.Equal(HttpStatusCode.BadRequest, (await owner.PostAsJsonAsync($"/api/weddings/{w}/co-host-invitations",
+            new CreateCoHostInvitationInput(deskEmail, [new("GIFT_RECORD", [Guid.NewGuid()], false)]))).StatusCode);
+        await CoHostPermissionTests.AddCoHostAsync(owner, desk, w, "GIFT_RECORD");
+        var envelope = await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Cash, 500_000, guests["Lan"].Id), "desk-1"), HttpStatusCode.Created);
+        Assert.Equal(("Lan", PlanningGift.Paid), (envelope.GiverName, envelope.Status));
+        await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Item, GiverName: "Nhóm bạn đại học", ItemName: "Tranh cưới"), "desk-2"),
+            HttpStatusCode.Created);
+        await AssertProblem(HttpStatusCode.Forbidden, "GIFT_RECORD_CASH_OR_ITEM_ONLY",
+            await Send(desk, path, new RecordGift(PlanningGift.Transfer, 300_000, GiverName: "X"), "desk-3"));
+        var reception = (await desk.GetFromJsonAsync<List<GiftDto>>(path + "/reception"))!;
+        Assert.Equal(4, reception.Count); // the present and envelope of the owner, the envelope and present of the desk
+        Assert.All(reception, g => Assert.Contains(g.Method, new[] { PlanningGift.Cash, PlanningGift.Item }));
+        foreach (var hidden in new[] { path, path + "/summary", path + "/export", path + "/transactions" })
+            Assert.Equal(HttpStatusCode.Forbidden, (await desk.GetAsync(hidden)).StatusCode);
+        var deskId = (await desk.GetFromJsonAsync<AccountDto>("/api/auth/me"))!.Id;
+        Assert.Equal(deskId, (await db.Set<PlanningGift>().AsNoTracking().SingleAsync(x => x.Id == envelope.Id)).RecordedBy);
+
+        // Without GIFT_RECORD a co-host records nothing.
+        using var helper = await SignIn(factory, "gift-helper");
+        await CoHostPermissionTests.AddCoHostAsync(owner, helper, w, "RSVP_VIEW");
+        Assert.Equal(HttpStatusCode.Forbidden, (await Send(helper, path, new RecordGift(PlanningGift.Cash, 500_000, GiverName: "Y"), "h-1")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await helper.GetAsync(path + "/reception")).StatusCode);
+    });
+
     // ---------------- helpers ----------------
 
     private static async Task<HttpResponseMessage> Webhook(HttpClient sepay, long id, string? code, long amount, string key = WebhookKey,

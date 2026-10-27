@@ -97,10 +97,14 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
         return new(GiftBook.Csv(GiftBook.Filter(await store.GiftsAsync(weddingId, ct), filter)), $"so-mung-{clock.GetUtcNow():yyyyMMdd-HHmm}.csv");
     }
 
+    /// <summary>The owner records any gift; a co-host with GIFT_RECORD records what is handed over at the wedding (cash, presents).</summary>
     public async Task<GiftDto> RecordAsync(Guid weddingId, RecordGift input, string? idempotencyKey, CancellationToken ct)
     {
-        await Require(weddingId, WeddingPermission.GIFT_EDIT, ct);
+        var owner = await RequireRecorder(weddingId, ct);
         await recordValidation.ValidateAsync(input, ct);
+        if (!owner && input.Method is not (PlanningGift.Cash or PlanningGift.Item))
+            throw new ApplicationProblemException(ProblemKind.Forbidden, "GIFT_RECORD_CASH_OR_ITEM_ONLY",
+                "Co-host chỉ ghi nhận tiền mặt và quà hiện vật trao tại tiệc.");
         if (idempotencyKey is { Length: > 100 })
             throw new ValidationException([new FluentValidation.Results.ValidationFailure("Idempotency-Key", "At most 100 characters.")]);
         return await Received(weddingId, await store.RecordAsync(weddingId, input, user.UserId!.Value, idempotencyKey?.Trim(), ct), ct);
@@ -166,6 +170,27 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
         return gift;
     }
 
+    /// <summary>What was handed over at the wedding (cash envelopes and presents), newest first: the reception desk checks it
+    /// before recording to avoid entering the same gift twice. Owner (GIFT_VIEW) or co-host with GIFT_RECORD.</summary>
+    public async Task<IReadOnlyList<GiftDto>> ReceptionAsync(Guid weddingId, CancellationToken ct)
+    {
+        if (await permissions.HasPermissionAsync(weddingId, WeddingPermission.GIFT_VIEW, ct)) await Require(weddingId, WeddingPermission.GIFT_VIEW, ct);
+        else await Require(weddingId, WeddingPermission.GIFT_RECORD, ct);
+        return (await store.GiftsAsync(weddingId, ct)).Where(g => g.Method is PlanningGift.Cash or PlanningGift.Item).ToList();
+    }
+
+    /// <summary>True for the owner (GIFT_EDIT); false for a co-host who may only record at the reception (GIFT_RECORD).</summary>
+    private async Task<bool> RequireRecorder(Guid weddingId, CancellationToken ct)
+    {
+        if (await permissions.HasPermissionAsync(weddingId, WeddingPermission.GIFT_EDIT, ct))
+        {
+            await Require(weddingId, WeddingPermission.GIFT_EDIT, ct);
+            return true;
+        }
+        await Require(weddingId, WeddingPermission.GIFT_RECORD, ct);
+        return false;
+    }
+
     // Money is only for the couple: the permission must cover the whole wedding (a group-scoped grant is not enough).
     private async Task Require(Guid weddingId, WeddingPermission permission, CancellationToken ct)
     {
@@ -211,7 +236,8 @@ public static class GiftBook
             .Where(g => filter.Method is null || g.Method == filter.Method)
             .Where(g => filter.GuestId is null || g.GuestId == filter.GuestId)
             .Where(g => string.IsNullOrEmpty(search) || g.GiverName.Contains(search, StringComparison.OrdinalIgnoreCase)
-                        || (g.Code?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false))
+                        || (g.Code?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false)
+                        || (g.ItemName?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false))
             .ToList();
     }
 
@@ -220,10 +246,12 @@ public static class GiftBook
         var paid = gifts.Where(g => g.Status == PlanningGift.Paid).ToList();
         long Total(string method) => paid.Where(g => g.Method == method).Sum(g => g.AmountReceived ?? 0);
         int Count(string method) => paid.Count(g => g.Method == method);
+        var items = paid.Where(g => g.Method == PlanningGift.Item).ToList();
         return new(paid.Sum(g => g.AmountReceived ?? 0), paid.Count, Total(PlanningGift.Qr), Count(PlanningGift.Qr),
             Total(PlanningGift.Cash), Count(PlanningGift.Cash), Total(PlanningGift.Transfer), Count(PlanningGift.Transfer),
             gifts.Count(g => g.Status is PlanningGift.Pending or PlanningGift.Claimed), gifts.Count(g => g.Status == PlanningGift.Claimed),
-            gifts.Count(g => g.Status == PlanningGift.Expired), paid.Count(g => g.AmountMismatch), needsReview, accounts);
+            gifts.Count(g => g.Status == PlanningGift.Expired), paid.Count(g => g.AmountMismatch), needsReview, accounts,
+            items.Count, items.Sum(g => g.ItemQuantity ?? 1));
     }
 
     /// <summary>UTF-8 with BOM so Excel shows Vietnamese; cells are protected against formula injection.</summary>
@@ -231,12 +259,13 @@ public static class GiftBook
     {
         var sb = new StringBuilder();
         Line(sb, ["Người mừng", "Hình thức", "Trạng thái", "Xác nhận", "Số tiền nhận", "Số tiền đã chọn", "Lệch tiền", "Mã chuyển khoản",
-            "Lời chúc", "Tạo lúc (UTC)", "Nhận lúc (UTC)"]);
+            "Lời chúc", "Tạo lúc (UTC)", "Nhận lúc (UTC)", "Quà hiện vật", "Số lượng", "Giá trị ước tính"]);
         foreach (var g in gifts)
             Line(sb, [g.GiverName, g.Method, g.Status, g.Confirmation, g.AmountReceived?.ToString(CultureInfo.InvariantCulture),
                 g.AmountExpected?.ToString(CultureInfo.InvariantCulture), g.AmountMismatch ? "Có" : "", g.Code, g.Message,
                 g.CreatedAt.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
-                g.PaidAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)]);
+                g.PaidAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture), g.ItemName,
+                g.ItemQuantity?.ToString(CultureInfo.InvariantCulture), g.ItemValue?.ToString(CultureInfo.InvariantCulture)]);
         return [.. Encoding.UTF8.GetPreamble(), .. Encoding.UTF8.GetBytes(sb.ToString())];
     }
 

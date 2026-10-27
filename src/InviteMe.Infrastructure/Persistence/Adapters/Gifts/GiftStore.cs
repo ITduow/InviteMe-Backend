@@ -144,13 +144,19 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await LockWedding(weddingId, ct);
         var key = string.IsNullOrWhiteSpace(idempotencyKey) ? null : "H:" + idempotencyKey;
+        var itemName = input.Method == PlanningGift.Item ? GiftRules.Clean(input.ItemName) : null;
         if (key is not null && await db.Set<PlanningGift>().AsNoTracking().SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.IdempotencyKey == key, ct) is { } prior)
-            return prior.AmountReceived == input.Amount && prior.Method == input.Method ? Dto(prior, clock.GetUtcNow())
+            return prior.Method == input.Method && prior.AmountReceived == input.Amount && prior.ItemName == itemName
+                   && prior.ItemQuantity == (itemName is null ? null : input.Quantity ?? 1) ? Dto(prior, clock.GetUtcNow())
                 : throw new ApplicationProblemException(ProblemKind.Conflict, "IDEMPOTENCY_KEY_REUSED", "This Idempotency-Key was used for a different gift.");
         var giver = await GiverName(weddingId, input.GuestId, input.GiverName, ct);
         var now = clock.GetUtcNow();
-        var gift = PlanningGift.Recorded(weddingId, input.GuestId, giver, input.Method, input.Amount, GiftRules.Clean(input.Message), actor,
-            input.ReceivedAt ?? now, now, key);
+        // A present is handed over at the wedding: it is received when recorded.
+        var gift = itemName is not null
+            ? PlanningGift.ForItem(weddingId, input.GuestId, giver, itemName, input.Quantity ?? 1, input.EstimatedValue, GiftRules.Clean(input.Message),
+                actor, input.ReceivedAt ?? now, now, key)
+            : PlanningGift.Recorded(weddingId, input.GuestId, giver, input.Method, input.Amount!.Value, GiftRules.Clean(input.Message), actor,
+                input.ReceivedAt ?? now, now, key);
         db.Add(gift);
         db.AuditLogs.Add(Audit(gift, "GIFT_RECORDED", actor));
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
@@ -319,7 +325,7 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
 
     private static GiftDto Dto(PlanningGift g, DateTimeOffset now) => new(g.Id, g.GuestId, g.GiverName, g.Method, g.DisplayStatus(now),
         g.Confirmation, g.Code, g.AmountExpected, g.AmountReceived, g.AmountMismatch, g.Message, g.MessagePublic, g.AccountId, g.CreatedAt,
-        g.ClaimedAt, g.PaidAt);
+        g.ClaimedAt, g.PaidAt, g.ItemName, g.ItemQuantity, g.ItemValue);
 
     private static GiftBankAccountDto Dto(PlanningGiftAccount a) => new(a.Id, a.BankBin, a.BankName, a.AccountNumber, a.AccountName, a.Label);
 
@@ -329,7 +335,7 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
     private static AuditLog Audit(PlanningGift gift, string action, Guid? actor, Guid? transactionId = null) =>
         AuditLog.ForEntity(gift.WeddingId, "planning_gifts", gift.Id, action, actor, null, JsonSerializer.Serialize(new
         {
-            gift.Method, gift.Status, gift.AmountExpected, gift.AmountReceived, gift.Code, transactionId
+            gift.Method, gift.Status, gift.AmountExpected, gift.AmountReceived, gift.Code, gift.ItemName, gift.ItemQuantity, transactionId
         }, Json));
 
     private Task<PlanningGift?> LockGift(Guid weddingId, Guid giftId, CancellationToken ct) =>

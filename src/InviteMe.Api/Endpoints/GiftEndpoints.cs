@@ -58,6 +58,9 @@ internal static class GiftEndpoints
                 Guid? guestId = null, int page = 1, int pageSize = 25) =>
                 h.LedgerAsync(weddingId, new GiftLedgerFilter(status, method, search, guestId), new PageRequest(page, pageSize), ct))
             .WithName("ListGifts").Produces<PagedResult<GiftDto>>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden);
+        // Reception desk (owner or co-host with GIFT_RECORD): cash envelopes and presents handed over at the wedding.
+        host.MapGet("/reception", (Guid weddingId, GiftHostHandler h, CancellationToken ct) => h.ReceptionAsync(weddingId, ct))
+            .WithName("ListReceptionGifts").Produces<IReadOnlyList<GiftDto>>().ProducesProblem(StatusCodes.Status403Forbidden);
         host.MapGet("/summary", (Guid weddingId, GiftHostHandler h, CancellationToken ct) => h.SummaryAsync(weddingId, ct))
             .WithName("GetGiftSummary").Produces<GiftSummaryDto>().ProducesProblem(StatusCodes.Status403Forbidden);
         host.MapGet("/export", async (Guid weddingId, GiftHostHandler h, HttpContext http, CancellationToken ct, string? status = null,

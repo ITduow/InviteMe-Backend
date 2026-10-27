@@ -31,16 +31,18 @@ public sealed class PlanningGiftAccount
 /// Guest08 / Couple08: one wedding gift in the gift book.
 /// QR gifts start PENDING with a unique transfer code; the bank webhook (AUTO) or the couple (MANUAL) marks them PAID.
 /// Cash and manually recorded transfers are created PAID by the couple.
+/// ITEM = a present handed over at the wedding: the couple or a co-host records it there, already received. It has no
+/// amount; ItemValue is only informative and never counted in money totals.
 /// </summary>
 public sealed class PlanningGift
 {
     public const string Pending = "PENDING", Claimed = "CLAIMED", Paid = "PAID", Cancelled = "CANCELLED";
     /// <summary>Shown instead of PENDING/CLAIMED after <see cref="CodeLifetime"/>; not stored, a late transfer still matches.</summary>
     public const string Expired = "EXPIRED";
-    public const string Qr = "QR", Cash = "CASH", Transfer = "TRANSFER";
+    public const string Qr = "QR", Cash = "CASH", Transfer = "TRANSFER", Item = "ITEM";
     public const string Auto = "AUTO", Manual = "MANUAL";
     public const long MinAmount = 10_000, MaxAmount = 100_000_000;
-    public const int MessageMaxLength = 500, GiverNameMaxLength = 150;
+    public const int MessageMaxLength = 500, GiverNameMaxLength = 150, ItemNameMaxLength = 150, MaxItemQuantity = 1000;
     public static readonly TimeSpan CodeLifetime = TimeSpan.FromHours(24);
     public static readonly IReadOnlyList<string> Statuses = [Pending, Claimed, Paid, Cancelled];
 
@@ -64,6 +66,10 @@ public sealed class PlanningGift
     public DateTimeOffset ExpiresAt { get; private set; }
     public DateTimeOffset? ClaimedAt { get; private set; }
     public DateTimeOffset? PaidAt { get; private set; }
+    /// <summary>ITEM gifts: what the present is, how many and an optional estimated value (not counted in money totals).</summary>
+    public string? ItemName { get; private set; }
+    public int? ItemQuantity { get; private set; }
+    public long? ItemValue { get; private set; }
 
     public static PlanningGift ForQr(Guid weddingId, Guid guestId, string giverName, Guid accountId, string code, long amount,
         string? message, bool messagePublic, string idempotencyKey, DateTimeOffset now) => new()
@@ -96,6 +102,20 @@ public sealed class PlanningGift
             CreatedAt = now, ExpiresAt = now, PaidAt = paidAt
         }
         : throw new ArgumentOutOfRangeException(nameof(amount));
+
+    /// <summary>A present handed over at the wedding: received when recorded.</summary>
+    public static PlanningGift ForItem(Guid weddingId, Guid? guestId, string giverName, string itemName, int quantity, long? estimatedValue,
+        string? message, Guid actor, DateTimeOffset receivedAt, DateTimeOffset now, string? idempotencyKey = null)
+    {
+        if (string.IsNullOrWhiteSpace(itemName) || quantity is < 1 or > MaxItemQuantity || estimatedValue is < 0)
+            throw new ArgumentOutOfRangeException(nameof(itemName));
+        return new()
+        {
+            Id = Guid.NewGuid(), WeddingId = weddingId, GuestId = guestId, GiverName = giverName, Method = Item, ItemName = itemName,
+            ItemQuantity = quantity, ItemValue = estimatedValue, Message = message, Status = Paid, Confirmation = Manual,
+            RecordedBy = actor, CreatedAt = now, ExpiresAt = now, PaidAt = receivedAt, IdempotencyKey = idempotencyKey
+        };
+    }
 
     public static long CheckAmount(long amount) =>
         amount is >= MinAmount and <= MaxAmount ? amount : throw new ArgumentOutOfRangeException(nameof(amount));

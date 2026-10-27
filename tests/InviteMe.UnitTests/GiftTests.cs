@@ -21,6 +21,24 @@ public sealed class GiftTests
     }
 
     [Fact]
+    public void PresentsAreReceivedWhenRecordedAndCarryNoAmount()
+    {
+        var present = PlanningGift.ForItem(Guid.NewGuid(), null, "Cô Lan", "Bộ chăn ga", 2, 800_000, null, Guid.NewGuid(), Now, Now);
+        Assert.Equal((PlanningGift.Paid, PlanningGift.Manual, (long?)null, false), (present.Status, present.Confirmation, present.AmountReceived, present.AmountMismatch));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PlanningGift.ForItem(Guid.NewGuid(), null, "A", " ", 1, null, null, Guid.NewGuid(), Now, Now));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PlanningGift.ForItem(Guid.NewGuid(), null, "A", "Ly", 0, null, null, Guid.NewGuid(), Now, Now));
+        Assert.Throws<InvalidOperationException>(() => present.Cancel(Guid.NewGuid()));
+
+        var validator = new RecordGiftValidator();
+        Assert.True(validator.Validate(new RecordGift(PlanningGift.Item, GiverName: "A", ItemName: "Tranh")).IsValid);
+        Assert.False(validator.Validate(new RecordGift(PlanningGift.Item, 100_000, GiverName: "A", ItemName: "Tranh")).IsValid);
+        Assert.False(validator.Validate(new RecordGift(PlanningGift.Cash, GiverName: "A")).IsValid); // cash needs an amount
+        var summary = GiftBook.Summarize([new(Guid.NewGuid(), null, "A", PlanningGift.Item, PlanningGift.Paid, PlanningGift.Manual, null, null, null,
+            false, null, false, null, Now, null, Now, "Tranh", 3, 2_000_000)], 0, 0);
+        Assert.Equal((0L, 1, 3), (summary.TotalReceived, summary.ItemCount, summary.ItemQuantity));
+    }
+
+    [Fact]
     public void VietQrLinkCarriesAmountCodeAndHolderWithoutDiacritics()
     {
         var url = GiftRules.QrImageUrl("970422", "0000000001", "Nguyễn Tuấn  Kiệt", 500_000, "MC7K2Q9PXA");

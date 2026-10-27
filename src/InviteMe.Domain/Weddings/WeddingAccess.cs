@@ -33,7 +33,7 @@ public sealed record WeddingAccess(
 
         // Reception access is deliberately wedding-wide. Even legacy group grants must not authorize check-in,
         // counter lookup, walk-ins, or voids for only part of the guest list.
-        if (permission == WeddingPermission.CHECKIN_MANAGE)
+        if (permission is WeddingPermission.CHECKIN_MANAGE or WeddingPermission.GIFT_RECORD)
             return IsWeddingWide(userId, permission);
 
         return IsWeddingWide(userId, permission) || GroupPermissions?.ContainsKey(permission) == true;

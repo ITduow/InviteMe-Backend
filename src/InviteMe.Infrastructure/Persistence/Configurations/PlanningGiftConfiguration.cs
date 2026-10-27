@@ -33,12 +33,17 @@ public sealed class PlanningGiftConfiguration : IEntityTypeConfiguration<Plannin
         b.ToTable("planning_gifts", t =>
         {
             t.HasCheckConstraint("ck_planning_gifts_status", "status IN ('PENDING','CLAIMED','PAID','CANCELLED')");
-            t.HasCheckConstraint("ck_planning_gifts_method", "method IN ('QR','CASH','TRANSFER')");
+            t.HasCheckConstraint("ck_planning_gifts_method", "method IN ('QR','CASH','TRANSFER','ITEM')");
             t.HasCheckConstraint("ck_planning_gifts_confirmation", "confirmation IS NULL OR confirmation IN ('AUTO','MANUAL')");
             t.HasCheckConstraint("ck_planning_gifts_qr_code", "(method = 'QR') = (code IS NOT NULL)");
             t.HasCheckConstraint("ck_planning_gifts_amounts",
                 "(amount_expected IS NULL OR amount_expected BETWEEN 10000 AND 100000000) AND (amount_received IS NULL OR amount_received > 0)");
-            t.HasCheckConstraint("ck_planning_gifts_paid", "(status = 'PAID') = (amount_received IS NOT NULL AND paid_at IS NOT NULL)");
+            // A received present has no amount; every other received gift has one.
+            t.HasCheckConstraint("ck_planning_gifts_paid",
+                "(status = 'PAID') = (paid_at IS NOT NULL AND (method = 'ITEM' OR amount_received IS NOT NULL))");
+            t.HasCheckConstraint("ck_planning_gifts_item",
+                "(method = 'ITEM') = (item_name IS NOT NULL) AND (method <> 'ITEM' OR (status = 'PAID' AND amount_expected IS NULL AND amount_received IS NULL " +
+                "AND item_quantity BETWEEN 1 AND 1000 AND (item_value IS NULL OR item_value >= 0)))");
         });
         b.HasKey(x => x.Id);
         b.Property(x => x.Id).HasColumnName("id");
@@ -60,6 +65,9 @@ public sealed class PlanningGiftConfiguration : IEntityTypeConfiguration<Plannin
         b.Property(x => x.ExpiresAt).HasColumnName("expires_at");
         b.Property(x => x.ClaimedAt).HasColumnName("claimed_at");
         b.Property(x => x.PaidAt).HasColumnName("paid_at");
+        b.Property(x => x.ItemName).HasColumnName("item_name").HasMaxLength(PlanningGift.ItemNameMaxLength);
+        b.Property(x => x.ItemQuantity).HasColumnName("item_quantity");
+        b.Property(x => x.ItemValue).HasColumnName("item_value");
         b.Ignore(x => x.AmountMismatch);
         b.HasIndex(x => x.Code).IsUnique().HasFilter("code IS NOT NULL").HasDatabaseName("uq_planning_gifts_code");
         b.HasIndex(x => new { x.WeddingId, x.IdempotencyKey }).IsUnique().HasFilter("idempotency_key IS NOT NULL")
