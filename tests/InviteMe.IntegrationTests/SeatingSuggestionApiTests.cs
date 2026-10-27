@@ -81,5 +81,16 @@ public sealed class SeatingSuggestionApiTests
         plan = await Change(Apply(replacement,true));
         Assert.Equal(replacement.Assignments,plan.Assignments.OrderBy(a=>a.PlaceId));
         Assert.Equal(HttpStatusCode.Conflict,(await owner.PatchAsJsonAsync(url,Apply(replacement,true))).StatusCode);
+
+        // Test Apply via dedicated POST /seating-suggestions/apply endpoint
+        var unseatedOne = plan.Assignments.Last().PlaceId;
+        plan = await Change(new(plan.Version, "MOVE_PLACES", PlaceIds: [unseatedOne]));
+        var applyEndpointPreview = await Preview("AFFINITY", "UNASSIGNED");
+        var applyReq = new ApplySeatingSuggestionRequest(plan.Version, applyEndpointPreview.Strategy, applyEndpointPreview.Mode, applyEndpointPreview.SourceFingerprint, ConfirmReplace: false);
+        var applyRes = await owner.PostAsJsonAsync(root + "/seating-suggestions/apply", applyReq);
+        Assert.Equal(HttpStatusCode.OK, applyRes.StatusCode);
+        var appliedPlan = (await applyRes.Content.ReadFromJsonAsync<PlanningSeatingDto>())!;
+        Assert.Equal(plan.Version + 1, appliedPlan.Version);
+        Assert.Equal(applyEndpointPreview.Assignments, appliedPlan.Assignments.OrderBy(a => a.PlaceId));
     });
 }
