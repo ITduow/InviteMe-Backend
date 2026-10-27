@@ -82,7 +82,7 @@ public sealed class InvitationDesignTests
         Assert.Equal(0, store.Reads);
     }
     private static InvitationDesignHandler Create(Store store, bool canSend, bool registered = true) =>
-        new(store, new Permissions(canSend), new Access(), new User(), new Changes(), new Media(), new Catalog(registered));
+        new(store, new Permissions(canSend), new Access(), new User(), new Changes(), new Media(), new Catalog(registered), new AllowAllEntitlements());
     private sealed class Media : IWeddingMediaStorage
     {
         public Task<StoredWeddingImage> SaveAsync(Guid id, Stream content, string extension, CancellationToken ct) => throw new NotSupportedException();

@@ -9,7 +9,7 @@ namespace InviteMe.Infrastructure.Persistence.Configurations;
 
 /// <summary>Guest08 / Couple08 gift tables on Guest Planning v2. The legacy gifts table (old guests) is not used.</summary>
 public sealed class PlanningGiftConfiguration : IEntityTypeConfiguration<PlanningGiftAccount>, IEntityTypeConfiguration<PlanningGift>,
-    IEntityTypeConfiguration<PlanningGiftTransaction>
+    IEntityTypeConfiguration<PlanningGiftTransaction>, IEntityTypeConfiguration<PlanningGiftProof>
 {
     public void Configure(EntityTypeBuilder<PlanningGiftAccount> b)
     {
@@ -33,12 +33,17 @@ public sealed class PlanningGiftConfiguration : IEntityTypeConfiguration<Plannin
         b.ToTable("planning_gifts", t =>
         {
             t.HasCheckConstraint("ck_planning_gifts_status", "status IN ('PENDING','CLAIMED','PAID','CANCELLED')");
-            t.HasCheckConstraint("ck_planning_gifts_method", "method IN ('QR','CASH','TRANSFER')");
+            t.HasCheckConstraint("ck_planning_gifts_method", "method IN ('QR','CASH','TRANSFER','ITEM')");
             t.HasCheckConstraint("ck_planning_gifts_confirmation", "confirmation IS NULL OR confirmation IN ('AUTO','MANUAL')");
             t.HasCheckConstraint("ck_planning_gifts_qr_code", "(method = 'QR') = (code IS NOT NULL)");
             t.HasCheckConstraint("ck_planning_gifts_amounts",
                 "(amount_expected IS NULL OR amount_expected BETWEEN 10000 AND 100000000) AND (amount_received IS NULL OR amount_received > 0)");
-            t.HasCheckConstraint("ck_planning_gifts_paid", "(status = 'PAID') = (amount_received IS NOT NULL AND paid_at IS NOT NULL)");
+            // A received present has no amount; every other received gift has one.
+            t.HasCheckConstraint("ck_planning_gifts_paid",
+                "(status = 'PAID') = (paid_at IS NOT NULL AND (method = 'ITEM' OR amount_received IS NOT NULL))");
+            t.HasCheckConstraint("ck_planning_gifts_item",
+                "(method = 'ITEM') = (item_name IS NOT NULL) AND (method <> 'ITEM' OR (status = 'PAID' AND amount_expected IS NULL AND amount_received IS NULL " +
+                "AND item_quantity BETWEEN 1 AND 1000 AND (item_value IS NULL OR item_value >= 0)))");
         });
         b.HasKey(x => x.Id);
         b.Property(x => x.Id).HasColumnName("id");
@@ -60,6 +65,13 @@ public sealed class PlanningGiftConfiguration : IEntityTypeConfiguration<Plannin
         b.Property(x => x.ExpiresAt).HasColumnName("expires_at");
         b.Property(x => x.ClaimedAt).HasColumnName("claimed_at");
         b.Property(x => x.PaidAt).HasColumnName("paid_at");
+        b.Property(x => x.ItemName).HasColumnName("item_name").HasMaxLength(PlanningGift.ItemNameMaxLength);
+        b.Property(x => x.ItemQuantity).HasColumnName("item_quantity");
+        b.Property(x => x.ItemValue).HasColumnName("item_value");
+        b.Property(x => x.ProofId).HasColumnName("proof_id");
+        b.Property(x => x.ParticipantId).HasColumnName("participant_id");
+        b.HasOne<PlanningParticipant>().WithMany().HasForeignKey(x => x.ParticipantId).OnDelete(DeleteBehavior.SetNull).HasConstraintName("fk_planning_gifts_participant");
+        b.HasOne<PlanningGiftProof>().WithMany().HasForeignKey(x => x.ProofId).OnDelete(DeleteBehavior.SetNull).HasConstraintName("fk_planning_gifts_proof");
         b.Ignore(x => x.AmountMismatch);
         b.HasIndex(x => x.Code).IsUnique().HasFilter("code IS NOT NULL").HasDatabaseName("uq_planning_gifts_code");
         b.HasIndex(x => new { x.WeddingId, x.IdempotencyKey }).IsUnique().HasFilter("idempotency_key IS NOT NULL")
@@ -71,6 +83,27 @@ public sealed class PlanningGiftConfiguration : IEntityTypeConfiguration<Plannin
         b.HasOne<PlanningGuest>().WithMany().HasForeignKey(x => x.GuestId).OnDelete(DeleteBehavior.SetNull).HasConstraintName("fk_planning_gifts_guest");
         b.HasOne<PlanningGiftAccount>().WithMany().HasForeignKey(x => x.AccountId).OnDelete(DeleteBehavior.SetNull).HasConstraintName("fk_planning_gifts_account");
         b.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.RecordedBy).OnDelete(DeleteBehavior.SetNull).HasConstraintName("fk_planning_gifts_user");
+    }
+
+    public void Configure(EntityTypeBuilder<PlanningGiftProof> b)
+    {
+        b.ToTable("planning_gift_proofs", t => t.HasCheckConstraint("ck_planning_gift_proofs_size", $"size BETWEEN 1 AND {PlanningGiftProof.MaxBytes}"));
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Id).HasColumnName("id");
+        b.Property(x => x.WeddingId).HasColumnName("wedding_id");
+        b.Property(x => x.GiftId).HasColumnName("gift_id");
+        b.Property(x => x.ContentType).HasColumnName("content_type").HasMaxLength(30);
+        b.Property(x => x.StorageKey).HasColumnName("storage_key").HasMaxLength(60);
+        b.Property(x => x.Size).HasColumnName("size");
+        b.Property(x => x.UploadedBy).HasColumnName("uploaded_by");
+        b.Property(x => x.GuestId).HasColumnName("guest_id");
+        b.Property(x => x.CreatedAt).HasColumnName("created_at");
+        // One photo proves one gift.
+        b.HasIndex(x => x.GiftId).IsUnique().HasFilter("gift_id IS NOT NULL").HasDatabaseName("uq_planning_gift_proofs_gift");
+        b.HasIndex(x => x.WeddingId).HasDatabaseName("ix_planning_gift_proofs_wedding");
+        b.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_planning_gift_proofs_wedding");
+        b.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.UploadedBy).OnDelete(DeleteBehavior.SetNull).HasConstraintName("fk_planning_gift_proofs_user");
+        b.HasOne<PlanningGuest>().WithMany().HasForeignKey(x => x.GuestId).OnDelete(DeleteBehavior.SetNull).HasConstraintName("fk_planning_gift_proofs_guest");
     }
 
     public void Configure(EntityTypeBuilder<PlanningGiftTransaction> b)

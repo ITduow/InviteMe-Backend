@@ -611,6 +611,185 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Billing.PlanOrder", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<long>("Amount")
+                        .HasColumnType("bigint")
+                        .HasColumnName("amount");
+
+                    b.Property<Guid?>("BasePlanId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("base_plan_id");
+
+                    b.Property<DateTimeOffset?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("cancelled_at");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("code");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("note");
+
+                    b.Property<long>("PaidAmount")
+                        .HasColumnType("bigint")
+                        .HasColumnName("paid_amount");
+
+                    b.Property<DateTimeOffset?>("PaidAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("paid_at");
+
+                    b.Property<Guid>("PlanId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("plan_id");
+
+                    b.Property<Guid?>("ResolvedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resolved_by");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<Guid?>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique()
+                        .HasDatabaseName("uq_plan_orders_code");
+
+                    b.HasIndex("Status", "CreatedAt")
+                        .HasDatabaseName("ix_plan_orders_status");
+
+                    b.HasIndex("WeddingId", "CreatedAt")
+                        .HasDatabaseName("ix_plan_orders_wedding");
+
+                    b.ToTable("plan_orders", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_plan_orders_amounts", "amount > 0 AND paid_amount >= 0");
+
+                            t.HasCheckConstraint("ck_plan_orders_paid", "(status = 'PAID') = (paid_at IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_plan_orders_status", "status IN ('PENDING','UNDERPAID','PAID','CANCELLED')");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Billing.PlanPayment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AccountNumber")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("account_number");
+
+                    b.Property<long>("Amount")
+                        .HasColumnType("bigint")
+                        .HasColumnName("amount");
+
+                    b.Property<string>("Code")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("code");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("content");
+
+                    b.Property<Guid?>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("provider");
+
+                    b.Property<long>("ProviderTransactionId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("provider_transaction_id");
+
+                    b.Property<string>("RawPayload")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("raw_payload");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("reason");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("received_at");
+
+                    b.Property<string>("ReferenceCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("reference_code");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("TransactionAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("transaction_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId")
+                        .HasDatabaseName("ix_plan_payments_order");
+
+                    b.HasIndex("Provider", "ProviderTransactionId")
+                        .IsUnique()
+                        .HasDatabaseName("uq_plan_payments_provider_id");
+
+                    b.HasIndex("Status", "ReceivedAt")
+                        .HasDatabaseName("ix_plan_payments_status");
+
+                    b.ToTable("plan_payments", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_plan_payments_status", "status IN ('APPLIED','REVIEW')");
+                        });
+                });
+
             modelBuilder.Entity("InviteMe.Domain.Billing.Subscription", b =>
                 {
                     b.Property<Guid>("Id")
@@ -628,6 +807,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("ExpiresAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("expires_at");
+
+                    b.Property<Guid?>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
 
                     b.Property<Guid>("PlanId")
                         .HasColumnType("uuid")
@@ -657,6 +840,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("user_id");
 
+                    b.Property<Guid?>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
                     b.HasKey("Id")
                         .HasName("subscriptions_pkey");
 
@@ -665,6 +852,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.HasIndex(new[] { "UserId" }, "ix_subscriptions_user_id")
                         .HasDatabaseName("ix_subscriptions_user_id");
+
+                    b.HasIndex(new[] { "WeddingId" }, "uq_subscriptions_wedding_active")
+                        .IsUnique()
+                        .HasDatabaseName("uq_subscriptions_wedding_active")
+                        .HasFilter("wedding_id IS NOT NULL AND status = 'ACTIVE'");
 
                     b.ToTable("subscriptions", "inviteme", t =>
                         {
@@ -1139,6 +1331,19 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(150)")
                         .HasColumnName("idempotency_key");
 
+                    b.Property<string>("ItemName")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("item_name");
+
+                    b.Property<int?>("ItemQuantity")
+                        .HasColumnType("integer")
+                        .HasColumnName("item_quantity");
+
+                    b.Property<long?>("ItemValue")
+                        .HasColumnType("bigint")
+                        .HasColumnName("item_value");
+
                     b.Property<string>("Message")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)")
@@ -1157,6 +1362,14 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("PaidAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("paid_at");
+
+                    b.Property<Guid?>("ParticipantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("participant_id");
+
+                    b.Property<Guid?>("ProofId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("proof_id");
 
                     b.Property<Guid?>("RecordedBy")
                         .HasColumnType("uuid")
@@ -1196,9 +1409,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_planning_gifts_confirmation", "confirmation IS NULL OR confirmation IN ('AUTO','MANUAL')");
 
-                            t.HasCheckConstraint("ck_planning_gifts_method", "method IN ('QR','CASH','TRANSFER')");
+                            t.HasCheckConstraint("ck_planning_gifts_item", "(method = 'ITEM') = (item_name IS NOT NULL) AND (method <> 'ITEM' OR (status = 'PAID' AND amount_expected IS NULL AND amount_received IS NULL AND item_quantity BETWEEN 1 AND 1000 AND (item_value IS NULL OR item_value >= 0)))");
 
-                            t.HasCheckConstraint("ck_planning_gifts_paid", "(status = 'PAID') = (amount_received IS NOT NULL AND paid_at IS NOT NULL)");
+                            t.HasCheckConstraint("ck_planning_gifts_method", "method IN ('QR','CASH','TRANSFER','ITEM')");
+
+                            t.HasCheckConstraint("ck_planning_gifts_paid", "(status = 'PAID') = (paid_at IS NOT NULL AND (method = 'ITEM' OR amount_received IS NOT NULL))");
 
                             t.HasCheckConstraint("ck_planning_gifts_qr_code", "(method = 'QR') = (code IS NOT NULL)");
 
@@ -1262,6 +1477,65 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.ToTable("planning_gift_accounts", "inviteme", t =>
                         {
                             t.HasCheckConstraint("ck_planning_gift_accounts_bin", "bank_bin ~ '^[0-9]{6}$'");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Gifts.PlanningGiftProof", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("content_type");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("GiftId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("gift_id");
+
+                    b.Property<Guid?>("GuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("guest_id");
+
+                    b.Property<int>("Size")
+                        .HasColumnType("integer")
+                        .HasColumnName("size");
+
+                    b.Property<string>("StorageKey")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("storage_key");
+
+                    b.Property<Guid?>("UploadedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("uploaded_by");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GiftId")
+                        .IsUnique()
+                        .HasDatabaseName("uq_planning_gift_proofs_gift")
+                        .HasFilter("gift_id IS NOT NULL");
+
+                    b.HasIndex("WeddingId")
+                        .HasDatabaseName("ix_planning_gift_proofs_wedding");
+
+                    b.ToTable("planning_gift_proofs", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_planning_gift_proofs_size", "size BETWEEN 1 AND 5242880");
                         });
                 });
 
@@ -4070,9 +4344,6 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.HasKey("Id")
                         .HasName("weddings_pkey");
 
-                    b.HasAlternateKey("Slug")
-                        .HasName("weddings_slug_key");
-
                     b.HasIndex("OwnerUserId")
                         .HasDatabaseName("ix_weddings_owner_user_id");
 
@@ -4501,6 +4772,40 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_wedding_settings_visibility", "visibility IN ('PRIVATE', 'UNLISTED', 'PUBLIC')");
                         });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Weddings.WeddingSlugHistory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("ReleasedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("released_at");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)")
+                        .HasColumnName("slug");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Slug")
+                        .IsUnique()
+                        .HasDatabaseName("uq_wedding_slug_history_lower")
+                        .HasAnnotation("Npgsql:IndexExpression", "lower(slug)");
+
+                    b.HasIndex("WeddingId")
+                        .HasDatabaseName("ix_wedding_slug_history_wedding");
+
+                    b.ToTable("wedding_slug_history", "inviteme");
                 });
 
             modelBuilder.Entity("InviteMe.Infrastructure.Identity.ApplicationRole", b =>
@@ -5137,8 +5442,57 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_audit_logs_wedding");
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Billing.PlanOrder", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Billing.Plan", null)
+                        .WithMany()
+                        .HasForeignKey("BasePlanId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_plan_orders_base_plan");
+
+                    b.HasOne("InviteMe.Domain.Billing.Plan", null)
+                        .WithMany()
+                        .HasForeignKey("PlanId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_plan_orders_plan");
+
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ResolvedBy")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_plan_orders_resolver");
+
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_plan_orders_user");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_plan_orders_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Billing.PlanPayment", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Billing.PlanOrder", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_plan_payments_order");
+                });
+
             modelBuilder.Entity("InviteMe.Domain.Billing.Subscription", b =>
                 {
+                    b.HasOne("InviteMe.Domain.Billing.PlanOrder", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_subscriptions_order");
+
                     b.HasOne("InviteMe.Domain.Billing.Plan", null)
                         .WithMany()
                         .HasForeignKey("PlanId")
@@ -5152,6 +5506,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_subscriptions_user");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .HasConstraintName("fk_subscriptions_wedding");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.CheckIn.CheckInRecord", b =>
@@ -5307,6 +5667,18 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.SetNull)
                         .HasConstraintName("fk_planning_gifts_guest");
 
+                    b.HasOne("InviteMe.Domain.Guests.PlanningParticipant", null)
+                        .WithMany()
+                        .HasForeignKey("ParticipantId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_planning_gifts_participant");
+
+                    b.HasOne("InviteMe.Domain.Gifts.PlanningGiftProof", null)
+                        .WithMany()
+                        .HasForeignKey("ProofId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_planning_gifts_proof");
+
                     b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("RecordedBy")
@@ -5329,6 +5701,28 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_planning_gift_accounts_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Gifts.PlanningGiftProof", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Guests.PlanningGuest", null)
+                        .WithMany()
+                        .HasForeignKey("GuestId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_planning_gift_proofs_guest");
+
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("UploadedBy")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_planning_gift_proofs_user");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_gift_proofs_wedding");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Gifts.PlanningGiftTransaction", b =>
@@ -6161,6 +6555,16 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_wedding_settings_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Weddings.WeddingSlugHistory", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_wedding_slug_history_wedding");
                 });
 
             modelBuilder.Entity("InviteMe.Infrastructure.Notifications.AccountConfirmationEmailJob", b =>

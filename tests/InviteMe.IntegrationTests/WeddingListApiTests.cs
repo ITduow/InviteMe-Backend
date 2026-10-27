@@ -51,6 +51,7 @@ public sealed class WeddingListApiTests(ApiFactory apiFactory) : IClassFixture<A
             var aprilTen = await Create(owner, "wedding-april-ten", "2027-04-10T10:00:00+07:00",
                 "https://cdn.example.test/weddings/april-ten-cover.webp");
             var aprilThirteen = await Create(owner, "wedding-april-thirteen", "2027-04-13T10:00:00+07:00");
+            foreach (var paid in new[] { aprilTwelve.Id, aprilTen.Id, aprilThirteen.Id }) await PlanApiTests.UseBasicPlan(db, paid); // co-hosts need a paid plan
             var coHostAccount = (await coHost.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
             var guestAccount = (await guestOnly.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
             var revokedAccount = (await revoked.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;

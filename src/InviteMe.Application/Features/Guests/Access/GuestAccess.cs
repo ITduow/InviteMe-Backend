@@ -51,7 +51,8 @@ public sealed class SeatLookupQueryValidator : AbstractValidator<SeatLookupQuery
 
 public sealed partial class GuestAccessHandler(IGuestAccessStore store, IQrCodeRenderer renderer, GuestLinkOptions options,
     IWeddingPermissionService permissions, ICurrentUser user, IPlanningChangePublisher changes,
-    RequestValidation<PersonalQrQuery> qrValidation, RequestValidation<SeatLookupQuery> lookupValidation)
+    RequestValidation<PersonalQrQuery> qrValidation, RequestValidation<SeatLookupQuery> lookupValidation,
+    InviteMe.Application.Features.Billing.IWeddingEntitlements plans)
 {
     public const string InvitationPath = "/invite/";
 
@@ -105,6 +106,7 @@ public sealed partial class GuestAccessHandler(IGuestAccessStore store, IQrCodeR
         if (!(await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_EDIT, ct)).IsWeddingWide)
             throw new ApplicationProblemException(ProblemKind.Forbidden, "WEDDING_SCOPE_REQUIRED",
                 "Publishing the seating plan requires wedding-wide seating permission.");
+        if (published) await plans.RequireFeatureAsync(weddingId, InviteMe.Application.Features.Billing.PlanFeature.PublicSeatLookup, ct);
         var result = await store.SetPublishedAsync(weddingId, user.UserId, published, ct);
         await changes.PublishAsync(weddingId, new(published ? "PlanningSeatingPublished" : "PlanningSeatingUnpublished", weddingId), ct);
         return result;

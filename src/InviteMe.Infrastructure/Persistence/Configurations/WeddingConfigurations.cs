@@ -20,7 +20,7 @@ public sealed class WeddingConfiguration : IEntityTypeConfiguration<Wedding>
         builder.Property(x => x.OwnerUserId).HasColumnName("owner_user_id");
         builder.Property(x => x.Title).HasColumnName("title").HasMaxLength(200).IsRequired();
         builder.Property(x => x.Slug).HasColumnName("slug").HasMaxLength(180).IsRequired();
-        builder.HasAlternateKey(x => x.Slug).HasName("weddings_slug_key");
+        // Unique through uq_weddings_slug_lower; not a key, so the owner can change it.
         builder.HasIndex(x => x.Slug).IsUnique().HasDatabaseName("uq_weddings_slug_lower")
             .HasAnnotation("Npgsql:IndexExpression", "lower(slug)");
         builder.Property(x => x.Status).HasColumnName("status").HasMaxLength(20).HasDefaultValue("DRAFT").IsRequired();

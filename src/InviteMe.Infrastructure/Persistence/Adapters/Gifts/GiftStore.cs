@@ -16,7 +16,7 @@ namespace InviteMe.Infrastructure.Persistence.Adapters.Gifts;
 /// notification (SePay webhook) or the couple confirms it. Writes on a gift lock its row (FOR UPDATE) so the webhook
 /// and a manual confirmation cannot both pay it.
 /// </summary>
-public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock) : IGiftStore
+public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe.Application.Features.Billing.IWeddingEntitlements plans) : IGiftStore
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -29,12 +29,13 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock) : IGiftS
         var gifts = await db.Set<PlanningGift>().AsNoTracking().Where(x => x.GuestId == guest.Id && x.Method == PlanningGift.Qr)
             .OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
         return new(guest.RecipientName, wedding.Title, accounts, GiftRules.SuggestedAmounts, PlanningGift.MinAmount, PlanningGift.MaxAmount,
-            gifts.Select(g => GuestDto(g, accounts.FirstOrDefault(a => a.Id == g.AccountId))).ToList());
+            gifts.Select(g => GuestDto(g, accounts.FirstOrDefault(a => a.Id == g.AccountId))).ToList(), (await plans.LimitsAsync(wedding.Id, ct)).GiftQr);
     }
 
     public async Task<GuestGiftResult> CreateQrGiftAsync(string token, string idempotencyKey, CreateGuestGift input, CancellationToken ct)
     {
         var (wedding, guest) = await Guest(token, ct);
+        await plans.RequireFeatureAsync(wedding.Id, InviteMe.Application.Features.Billing.PlanFeature.GiftQr, ct);
         var accounts = await Accounts(wedding.Id, ct);
         if (accounts.Count == 0)
             throw new ApplicationProblemException(ProblemKind.BusinessRule, "GIFT_ACCOUNT_NOT_SET", "Cô dâu chú rể chưa thêm tài khoản nhận mừng.");
@@ -138,23 +139,81 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock) : IGiftS
         db.Set<PlanningGiftTransaction>().CountAsync(x => x.WeddingId == weddingId
             && (x.Status == PlanningGiftTransaction.Unmatched || x.Status == PlanningGiftTransaction.Duplicate), ct);
 
-    public async Task<GiftDto> RecordAsync(Guid weddingId, RecordGift input, Guid actor, string? idempotencyKey, CancellationToken ct)
+    public async Task<GiftDto> RecordAsync(Guid weddingId, RecordGift input, Guid actor, string? idempotencyKey, CancellationToken ct,
+        bool atReception = false)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await LockWedding(weddingId, ct);
         var key = string.IsNullOrWhiteSpace(idempotencyKey) ? null : "H:" + idempotencyKey;
+        var itemName = input.Method == PlanningGift.Item ? GiftRules.Clean(input.ItemName) : null;
         if (key is not null && await db.Set<PlanningGift>().AsNoTracking().SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.IdempotencyKey == key, ct) is { } prior)
-            return prior.AmountReceived == input.Amount && prior.Method == input.Method ? Dto(prior, clock.GetUtcNow())
+            return prior.Method == input.Method && (prior.AmountReceived ?? prior.AmountExpected) == input.Amount && prior.ItemName == itemName
+                   && prior.ProofId == input.ProofId
+                   && prior.ItemQuantity == (itemName is null ? null : input.Quantity ?? 1) ? Dto(prior, clock.GetUtcNow())
                 : throw new ApplicationProblemException(ProblemKind.Conflict, "IDEMPOTENCY_KEY_REUSED", "This Idempotency-Key was used for a different gift.");
-        var giver = await GiverName(weddingId, input.GuestId, input.GiverName, ct);
+        var giver = await GiverName(weddingId, input.GuestId, input.GiverName, ct, input.ParticipantId);
         var now = clock.GetUtcNow();
-        var gift = PlanningGift.Recorded(weddingId, input.GuestId, giver, input.Method, input.Amount, GiftRules.Clean(input.Message), actor,
-            input.ReceivedAt ?? now, now, key);
+        // The photo must be one this person uploaded for this wedding and not used yet.
+        var proof = input.ProofId is not { } proofId ? null : await db.Set<PlanningGiftProof>()
+            .FromSqlInterpolated($"SELECT * FROM inviteme.planning_gift_proofs WHERE id = {proofId} AND wedding_id = {weddingId} FOR UPDATE")
+            .SingleOrDefaultAsync(ct) is { GiftId: null } found && found.UploadedBy == actor ? found : throw Missing("GIFT_PROOF_NOT_FOUND");
+        var message = GiftRules.Clean(input.Message);
+        // A present is handed over at the wedding: it is received when recorded. A transfer shown to a co-host waits for the couple.
+        var gift = itemName is not null
+            ? PlanningGift.ForItem(weddingId, input.GuestId, giver, itemName, input.Quantity ?? 1, input.EstimatedValue, message, actor,
+                input.ReceivedAt ?? now, now, key)
+            : input.Method == PlanningGift.Cash && input.Amount is null
+                ? PlanningGift.Envelope(weddingId, input.GuestId, giver, message, actor, now, key)
+            : atReception && proof is not null
+                ? PlanningGift.FromHallTransfer(weddingId, input.GuestId, giver, input.Amount!.Value, message, proof.Id, actor, now, key)
+                : PlanningGift.Recorded(weddingId, input.GuestId, giver, input.Method, input.Amount!.Value, message, actor, input.ReceivedAt ?? now, now, key);
+        gift.GivenBy(input.ParticipantId);
+        if (proof is not null)
+        {
+            if (!atReception) gift.AttachProof(proof.Id);
+            proof.AttachTo(gift.Id);
+        }
         db.Add(gift);
         db.AuditLogs.Add(Audit(gift, "GIFT_RECORDED", actor));
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
         return Dto(gift, now);
     }
+
+    public async Task<GiftProofDto> SaveProofAsync(Guid weddingId, string storageKey, string contentType, int size, Guid actor, CancellationToken ct)
+    {
+        await RequireWedding(weddingId, ct);
+        var proof = PlanningGiftProof.Create(weddingId, storageKey, contentType, size, actor, clock.GetUtcNow());
+        db.Add(proof);
+        await db.SaveChangesAsync(ct);
+        return new(proof.Id);
+    }
+
+    public async Task<GuestGiftResult> AttachGuestProofAsync(string token, Guid giftId, string storageKey, string contentType, int size,
+        CancellationToken ct)
+    {
+        var (wedding, guest) = await Guest(token, ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var gift = await LockGift(wedding.Id, giftId, ct);
+        if (gift is null || gift.GuestId != guest.Id || gift.Method != PlanningGift.Qr) throw Missing("GIFT_NOT_FOUND");
+        if (gift.Status is PlanningGift.Paid or PlanningGift.Cancelled) throw Rule("GIFT_CLOSED", "Quà mừng này đã được ghi nhận hoặc đã huỷ.");
+        if (gift.ProofId is not null) throw new ApplicationProblemException(ProblemKind.Conflict, "GIFT_PROOF_EXISTS", "Bạn đã gửi ảnh chuyển khoản cho quà mừng này.");
+        var now = clock.GetUtcNow();
+        var proof = PlanningGiftProof.FromGuest(wedding.Id, guest.Id, gift.Id, storageKey, contentType, size, now);
+        db.Add(proof);
+        gift.AttachProof(proof.Id);
+        gift.Claim(now);
+        // audit_logs.actor_guest_id points to the legacy guests table: the planning guest goes in the metadata.
+        db.AuditLogs.Add(AuditLog.ForEntity(wedding.Id, "planning_gifts", gift.Id, "GIFT_PROOF_SENT", null, null,
+            JsonSerializer.Serialize(new { guestId = guest.Id, proofId = proof.Id }, Json)));
+        await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
+        return new(GuestDto(gift, (await Accounts(wedding.Id, ct)).FirstOrDefault(a => a.Id == gift.AccountId)), true, wedding.Id);
+    }
+
+    public async Task<GiftProofRef?> ProofAsync(Guid weddingId, Guid giftId, Guid? uploadedBy, CancellationToken ct) =>
+        await (from g in db.Set<PlanningGift>().AsNoTracking()
+               join p in db.Set<PlanningGiftProof>().AsNoTracking() on g.ProofId equals (Guid?)p.Id
+               where g.Id == giftId && g.WeddingId == weddingId && p.WeddingId == weddingId && (uploadedBy == null || p.UploadedBy == uploadedBy)
+               select new GiftProofRef(p.StorageKey, p.ContentType)).SingleOrDefaultAsync(ct);
 
     public async Task<GiftDto> ConfirmAsync(Guid weddingId, Guid giftId, long? amount, Guid actor, CancellationToken ct)
     {
@@ -162,7 +221,10 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock) : IGiftS
         var gift = await LockGift(weddingId, giftId, ct) ?? throw Missing("GIFT_NOT_FOUND");
         if (gift.Status is PlanningGift.Paid or PlanningGift.Cancelled) throw Rule("GIFT_CLOSED", "Quà mừng này đã được ghi nhận hoặc đã huỷ.");
         var now = clock.GetUtcNow();
-        gift.MarkPaid(amount ?? gift.AmountExpected!.Value, PlanningGift.Manual, actor, now);
+        // A sealed envelope has no amount until the couple counts it.
+        var received = amount ?? gift.AmountExpected
+            ?? throw Rule("GIFT_AMOUNT_REQUIRED", "Nhập số tiền trong phong bì để xác nhận.");
+        gift.MarkPaid(received, PlanningGift.Manual, actor, now);
         db.AuditLogs.Add(Audit(gift, "GIFT_CONFIRMED", actor));
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
         return Dto(gift, now);
@@ -284,8 +346,17 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock) : IGiftS
             .Where(x => x.Provider == PlanningGiftTransaction.SePay && x.ProviderTransactionId == providerId)
             .Select(x => new GiftWebhookResult(x.Status, x.WeddingId, x.GiftId, true, false)).SingleOrDefaultAsync(ct);
 
-    private async Task<string> GiverName(Guid weddingId, Guid? guestId, string? giverName, CancellationToken ct)
+    private async Task<string> GiverName(Guid weddingId, Guid? guestId, string? giverName, CancellationToken ct, Guid? participantId = null)
     {
+        // A companion gives in their own name: the person must belong to the chosen invitation of this wedding.
+        if (participantId is { } personId)
+        {
+            var person = await (from p in db.Set<PlanningParticipant>().AsNoTracking()
+                                join g in db.Set<PlanningGuest>().AsNoTracking() on p.GuestId equals g.Id
+                                where p.Id == personId && p.GuestId == guestId && g.WeddingId == weddingId
+                                select p.FullName).SingleOrDefaultAsync(ct) ?? throw Missing("PARTICIPANT_NOT_FOUND");
+            return !string.IsNullOrWhiteSpace(giverName) ? GiftRules.Clean(giverName)! : person;
+        }
         // A guest id must belong to this wedding even when a giver name is typed as well.
         var guestName = guestId is null ? null
             : await db.Set<PlanningGuest>().Where(x => x.Id == guestId && x.WeddingId == weddingId).Select(x => x.RecipientName).SingleOrDefaultAsync(ct)
@@ -318,7 +389,7 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock) : IGiftS
 
     private static GiftDto Dto(PlanningGift g, DateTimeOffset now) => new(g.Id, g.GuestId, g.GiverName, g.Method, g.DisplayStatus(now),
         g.Confirmation, g.Code, g.AmountExpected, g.AmountReceived, g.AmountMismatch, g.Message, g.MessagePublic, g.AccountId, g.CreatedAt,
-        g.ClaimedAt, g.PaidAt);
+        g.ClaimedAt, g.PaidAt, g.ItemName, g.ItemQuantity, g.ItemValue, g.ProofId is not null, g.ParticipantId);
 
     private static GiftBankAccountDto Dto(PlanningGiftAccount a) => new(a.Id, a.BankBin, a.BankName, a.AccountNumber, a.AccountName, a.Label);
 
@@ -328,7 +399,7 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock) : IGiftS
     private static AuditLog Audit(PlanningGift gift, string action, Guid? actor, Guid? transactionId = null) =>
         AuditLog.ForEntity(gift.WeddingId, "planning_gifts", gift.Id, action, actor, null, JsonSerializer.Serialize(new
         {
-            gift.Method, gift.Status, gift.AmountExpected, gift.AmountReceived, gift.Code, transactionId
+            gift.Method, gift.Status, gift.AmountExpected, gift.AmountReceived, gift.Code, gift.ItemName, gift.ItemQuantity, transactionId
         }, Json));
 
     private Task<PlanningGift?> LockGift(Guid weddingId, Guid giftId, CancellationToken ct) =>

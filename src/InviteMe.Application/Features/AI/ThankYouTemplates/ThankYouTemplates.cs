@@ -118,7 +118,7 @@ public static class ThankYouGenerationPolicy
     }
 }
 
-public sealed class ThankYouTemplateHandler(IThankYouTemplateStore store, IAiTextGenerator ai,
+public sealed class ThankYouTemplateHandler(InviteMe.Application.Features.Billing.IWeddingEntitlements plans, IThankYouTemplateStore store, IAiTextGenerator ai,
     IThankYouGuestReader guests, IThankYouTemplateRenderer renderer, IWeddingAccessReader access, ICurrentUser current,
     TimeProvider clock, RequestValidation<GenerateThankYouTemplate> generateValidation,
     RequestValidation<GenerateThankYouTemplateOptions> optionsValidation,
@@ -140,6 +140,7 @@ public sealed class ThankYouTemplateHandler(IThankYouTemplateStore store, IAiTex
         var actor = await Owner(weddingId, ct);
         await generateValidation.ValidateAsync(input, ct);
         await store.EnsureEditableAsync(weddingId, actor, ct);
+        await plans.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.AiThankYouRuns, 1, ct);
         // Only this operation depends on AI; the adapter never receives a guest name or a guest list.
         var result = await ai.GenerateAsync(new(input.Tone, input.Language, input.AdditionalInstructions?.Trim(),
             input.IncludeGiftAmount ? "THANK_YOU_TEMPLATE_WITH_GIFT" : "THANK_YOU_TEMPLATE"), ct);
@@ -154,6 +155,7 @@ public sealed class ThankYouTemplateHandler(IThankYouTemplateStore store, IAiTex
         var actor = await Owner(weddingId, ct);
         await optionsValidation.ValidateAsync(input, ct);
         await store.EnsureEditableAsync(weddingId, actor, ct);
+        await plans.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.AiThankYouRuns, 1, ct);
         var audience = await guests.AudienceAsync(weddingId, input.GuestIds, ct)
             ?? throw new ApplicationProblemException(ProblemKind.NotFound, "GUEST_NOT_FOUND", "One or more selected guests are unavailable in this wedding.");
         var context = JsonSerializer.Serialize(audience);

@@ -37,7 +37,8 @@ public interface ICoHostInvitationEmailSender
 public sealed class CreateCoHostInvitationValidator : AbstractValidator<CreateCoHostInvitationInput>
 {
     private static readonly HashSet<WeddingPermission> Assignable = [WeddingPermission.GUEST_VIEW, WeddingPermission.GUEST_EDIT,
-        WeddingPermission.RSVP_VIEW, WeddingPermission.SEATING_VIEW, WeddingPermission.SEATING_EDIT, WeddingPermission.CHECKIN_MANAGE];
+        WeddingPermission.RSVP_VIEW, WeddingPermission.SEATING_VIEW, WeddingPermission.SEATING_EDIT, WeddingPermission.CHECKIN_MANAGE,
+        WeddingPermission.GIFT_RECORD];
     public CreateCoHostInvitationValidator()
     {
         RuleFor(x => x.Email).NotEmpty().EmailAddress().MaximumLength(256);
@@ -49,9 +50,9 @@ public sealed class CreateCoHostInvitationValidator : AbstractValidator<CreateCo
             g.RuleFor(x => x.GroupIds).Must(x => x is not null && x.Distinct().Count() == x.Count && x.All(id => id != Guid.Empty));
             g.RuleFor(x => x).Must(x => x.GroupIds is not null && (x.WeddingWide ? x.GroupIds.Count == 0 : x.GroupIds.Count > 0))
                 .WithMessage("Choose either wedding-wide scope or one or more guest groups.");
-            g.RuleFor(x => x).Must(x => x.Permission != nameof(WeddingPermission.CHECKIN_MANAGE) ||
+            g.RuleFor(x => x).Must(x => x.Permission is not (nameof(WeddingPermission.CHECKIN_MANAGE) or nameof(WeddingPermission.GIFT_RECORD)) ||
                                         (x.WeddingWide && x.GroupIds is { Count: 0 }))
-                .WithMessage("CHECKIN_MANAGE must be granted for the whole wedding, without guest-group scope.");
+                .WithMessage("CHECKIN_MANAGE and GIFT_RECORD must be granted for the whole wedding, without guest-group scope.");
         });
         RuleFor(x => x.Grants).Must(x => x is null || x.Select(g => g.Permission).Distinct(StringComparer.OrdinalIgnoreCase).Count() == x.Count)
             .WithMessage("Permission grants must not be duplicated.");
@@ -59,7 +60,7 @@ public sealed class CreateCoHostInvitationValidator : AbstractValidator<CreateCo
 }
 
 public sealed class CoHostInvitationHandler(ICoHostInvitationStore store, ICoHostInvitationEmailSender email,
-    ICurrentUser current, RequestValidation<CreateCoHostInvitationInput> validation)
+    ICurrentUser current, RequestValidation<CreateCoHostInvitationInput> validation, InviteMe.Application.Features.Billing.IWeddingEntitlements plans)
 {
     private static readonly TimeSpan Lifetime = TimeSpan.FromHours(72);
 
@@ -68,6 +69,7 @@ public sealed class CoHostInvitationHandler(ICoHostInvitationStore store, ICoHos
         var actor = RequireUser();
         await EnsureOwnerAsync(weddingId, actor, ct);
         await validation.ValidateAsync(input, ct);
+        await plans.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.CoHosts, 1, ct);
         var grants = input.Grants.Select(x => (Enum.Parse<WeddingPermission>(x.Permission), x.WeddingWide, x.GroupIds)).ToArray();
         var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         var expires = DateTimeOffset.UtcNow.Add(Lifetime);

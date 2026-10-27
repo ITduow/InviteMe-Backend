@@ -74,12 +74,17 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Features.Weddings.CoHosts.ICoHostInvitationStore, CoHostInvitationStore>();
         services.AddScoped<InviteMe.Application.Features.Weddings.CoHosts.ICoHostInvitationEmailSender, SmtpCoHostInvitationEmailSender>();
         services.AddScoped<InviteMe.Application.Features.Weddings.Setup.IWeddingSetupStore, WeddingSetupStore>();
+        services.AddScoped<InviteMe.Application.Features.Billing.IWeddingEntitlements, WeddingEntitlements>();
+        services.AddScoped<InviteMe.Application.Features.Billing.IPlanOrderStore, PlanOrderStore>();
+        services.AddSingleton(new InviteMe.Application.Features.Billing.BillingAccountOptions(configuration["Billing:BankBin"],
+            configuration["Billing:AccountNumber"], configuration["Billing:AccountName"]));
         services.AddScoped<InviteMe.Application.Features.Weddings.Setup.IWeddingListReader, WeddingListReader>();
         services.AddOptions<WeddingMediaOptions>().BindConfiguration(WeddingMediaOptions.SectionName)
             .Validate(x => x.MaximumFileSizeBytes is > 0 and <= 5 * 1024 * 1024, "WeddingMedia:MaximumFileSizeBytes must be between 1 byte and 5 MB.")
             .Validate(x => x.AllowedFormats.All(f => new[] { "jpeg", "jpg", "png", "webp" }.Contains(f, StringComparer.OrdinalIgnoreCase)), "WeddingMedia:AllowedFormats may include only JPEG, PNG and WebP.")
             .ValidateOnStart();
         services.AddHttpClient<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage, S3WeddingMediaStorage>();
+        services.AddHttpClient<InviteMe.Application.Features.Gifts.IGiftProofStorage, S3GiftProofStorage>();
         services.AddScoped<InviteMe.Application.Ports.Audit.IAuditReader, AuditReader>();
         services.AddScoped<InviteMe.Application.Features.Admin.IAdminStore, AdminStore>();
         services.AddScoped<InviteMe.Application.Ports.AI.IThankYouTemplateStore, ThankYouTemplateStore>();

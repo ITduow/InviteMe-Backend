@@ -59,7 +59,8 @@ public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePla
     }
 }
 public sealed class PlanningSeatingHandler(IPlanningSeatingStore store, IWeddingPermissionService permissions,
-    RequestValidation<ChangePlanningSeating> validation, RequestValidation<SuggestPlanningSeating> suggestions, IPlanningChangePublisher changes)
+    RequestValidation<ChangePlanningSeating> validation, RequestValidation<SuggestPlanningSeating> suggestions, IPlanningChangePublisher changes,
+    InviteMe.Application.Features.Billing.IWeddingEntitlements plans)
 {
     public async Task<PlanningSeatingDto> GetAsync(Guid weddingId, CancellationToken ct)
     {
@@ -76,6 +77,8 @@ public sealed class PlanningSeatingHandler(IPlanningSeatingStore store, IWedding
         if (groupScope is not null && input.Action == "APPLY_SUGGESTION")
             throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.Forbidden, "SEATING_SUGGESTION_REQUIRES_WEDDING_SCOPE", "Automatic seating suggestions require wedding-wide seating access.");
         await validation.ValidateAsync(input, ct);
+        if (input.Action is "CREATE_TABLE" or "CREATE_TABLES")
+            await plans.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.SeatingTables, input.Action == "CREATE_TABLE" ? 1 : input.TableCount ?? 1, ct);
         var result = await store.ChangeScopedAsync(weddingId, input, ct, groupScope);
         await changes.PublishAsync(weddingId, new("PlanningSeatingChanged", weddingId, result.Version), ct);
         return result;

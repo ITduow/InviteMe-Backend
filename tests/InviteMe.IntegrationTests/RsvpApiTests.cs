@@ -41,6 +41,7 @@ public sealed class RsvpApiTests
             new CreateWeddingInput("Thirty guest RSVP flow", "rsvp-flow-thirty", eventAt,
                 "Test hall", "Test address", 80, eventAt.AddDays(-10))));
         var w = wedding.Id;
+        await PlanApiTests.UseBasicPlan(db, w); // 70 expected people: more than the free plan allows
         var emptyDraft = await owner.GetAsync($"/api/weddings/{w}/invitation-messages/draft");
         Assert.Equal(HttpStatusCode.OK, emptyDraft.StatusCode);
         Assert.Equal("null", await emptyDraft.Content.ReadAsStringAsync());

@@ -91,6 +91,7 @@ app.MapInvitationWording();
 app.MapInvitationMessaging();
 app.MapInvitationDesign();
 app.MapWeddingWebsite();
+app.MapPlans();
 app.MapWeddingMedia();
 app.MapGuestAccess();
 app.MapThankYouTemplates();

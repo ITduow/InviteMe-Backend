@@ -14,13 +14,14 @@ public interface IWeddingMediaCatalog
 }
 
 public sealed class WeddingMediaHandler(IWeddingMediaStorage storage, IWeddingMediaCatalog catalog,
-    IWeddingPermissionService permissions)
+    IWeddingPermissionService permissions, InviteMe.Application.Features.Billing.IWeddingEntitlements plans)
 {
     public async Task<UploadedWeddingMedia> UploadAsync(Guid weddingId, Stream content, long length, CancellationToken ct)
     {
         await permissions.RequireAsync(weddingId, WeddingPermission.WEDDING_EDIT, ct);
         if (length is <= 0 or > WeddingCoverImage.MaxBytes)
             throw new ApplicationProblemException(ProblemKind.PayloadTooLarge, "MEDIA_SIZE_INVALID", "Image must be 5 MB or smaller.");
+        await plans.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.MediaImages, 1, ct);
         var image = await WeddingCoverImage.DetectAsync(content, ct);
         var stored = await storage.SaveAsync(weddingId, image.Content, image.Extension, ct);
         try { return await catalog.AddAsync(weddingId, stored, ct); }

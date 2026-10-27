@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using InviteMe.Application.Common.Errors;
+using InviteMe.Application.Features.Billing;
 using InviteMe.Application.Features.Invitations.Messaging;
 using InviteMe.Application.Features.Weddings.Website;
 using InviteMe.Domain.Audit;
@@ -11,7 +12,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace InviteMe.Infrastructure.Persistence.Adapters;
 
-public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider clock) : IInvitationMessagingStore
+public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider clock, IWeddingEntitlements entitlements) : IInvitationMessagingStore
 {
     public async Task<InvitationDraftDto?> GetDraftAsync(Guid weddingId, CancellationToken ct)
     {
@@ -126,6 +127,9 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
             .Select(c => new { GuestId = g.Id, Channel = c })).ToArray();
         if (missing.Length > 0)
             throw new ApplicationProblemException(ProblemKind.BusinessRule, "INVITATION_CONTACT_REQUIRED", "Every selected guest must have contact details for each requested channel.");
+        // Counted under the wedding lock: every queued delivery uses the plan's sending quota of its channel.
+        foreach (var channel in channels)
+            await entitlements.RequireQuotaAsync(weddingId, channel == "EMAIL" ? PlanQuota.EmailInvites : PlanQuota.SmsInvites, guests.Count, ct);
 
         var batch = new InvitationSendBatch
         {
