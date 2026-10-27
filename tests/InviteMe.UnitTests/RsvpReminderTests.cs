@@ -115,4 +115,15 @@ public sealed class RsvpReminderTests
         Assert.Equal(new RsvpReminderRoundDto(PlanningRsvpReminder.Auto1Day, Local(30, 8), "UPCOMING"), summary.AutoRounds[1]);
         Assert.All(RsvpReminderHandler.Summary(context with { AutoEnabled = false }, Local(28, 10)).AutoRounds, r => Assert.Equal("OFF", r.State));
     }
+
+    [Fact]
+    public void MaybeGuestsGetTheirOwnReminderText()
+    {
+        var maybe = RsvpReminderRules.Message("An", "Lễ cưới", Local(30, 12), Vn, maybe: true);
+        var silent = RsvpReminderRules.Message("An", "Lễ cưới", Local(30, 12), Vn);
+        Assert.Contains("Phân vân", maybe.Content);
+        Assert.Contains("chưa xác nhận", silent.Content);
+        Assert.Equal(maybe.Subject, silent.Subject);
+        Assert.Null(RsvpReminderRules.Blocker(Guest() with { Maybe = true }, PlanningRsvpReminder.Auto3Days, Local(27, 12), Local(30, 12)));
+    }
 }

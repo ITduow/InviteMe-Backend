@@ -11,64 +11,67 @@ namespace InviteMe.Application.Features.Rsvps;
 
 // ---------- read model loaded by the store (one wedding) ----------
 
-public sealed record RsvpDashboardPerson(Guid Id, string FullName, string Role, string AttendanceStatus, string? DietaryNote, int? Position);
+/// <summary>One person of an invitation: role (PRIMARY / COMPANION), RSVP attendance and the dietary note (kept on the recipient).</summary>
+public sealed record RsvpDashboardPerson(Guid GuestId, string Role, string AttendanceStatus, string? DietaryNote);
 public sealed record RsvpDashboardGuest(Guid Id, string RecipientName, int RowNumber, string Side, Guid? GroupId, string? GroupName,
-    string? Phone, string? Email, string? RsvpStatus, int ConfirmedPartySize, string? Note, DateTimeOffset? SubmittedAt, DateTimeOffset? UpdatedAt,
-    bool Locked, bool PendingRequest, IReadOnlyList<string> PlaceStatuses, IReadOnlyList<RsvpDashboardPerson> People,
-    int RemindersSent = 0, DateTimeOffset? LastRemindedAt = null, string? LastReminderStatus = null);
+    string? Phone, string? Email, string? RsvpStatus, int ConfirmedPartySize, int MaybePartySize, int MaxPeople, bool OverLimit, string? Note,
+    DateTimeOffset? SubmittedAt, DateTimeOffset? UpdatedAt, bool Locked, bool PendingRequest, IReadOnlyList<RsvpDashboardPerson> People, int RemindersSent = 0, DateTimeOffset? LastRemindedAt = null, string? LastReminderStatus = null);
 public sealed record RsvpDashboardData(Guid WeddingId, int? Capacity, long Occupied, DateTimeOffset? RsvpDeadline, IReadOnlyList<RsvpDashboardGuest> Guests);
 
 // ---------- API contracts ----------
 
-/// <summary>Filters shared by the dashboard, the guest list and the export. Status: NOT_RESPONDED, ATTENDING, DECLINED, WAITING, PENDING_REQUEST.</summary>
+/// <summary>Filters shared by the dashboard, the guest list and the export. Status: NOT_RESPONDED, ATTENDING, MAYBE, DECLINED, NEEDS_ACTION.</summary>
 public sealed record RsvpDashboardFilter(string? Side = null, Guid? GroupId = null, string? Status = null, string? Search = null);
 
-public sealed record RsvpCapacityStats(int? Max, long Occupied, long? Remaining);
-/// <summary>Counts of invitations (one per planning guest). ResponseRate = responded / invited, in percent.</summary>
-public sealed record RsvpInvitationStats(int Invited, int Responded, int NotResponded, int Attending, int Declined, int Waiting, decimal ResponseRate);
-/// <summary>Counts of people and reserved places. Companions = confirmed people who are not the invitation's main recipient.</summary>
-public sealed record RsvpPeopleStats(int InvitedPlaces, int Confirmed, int Companions, int Waitlisted, int Declined, int UnusedPlaces, int PendingPlaces);
+/// <summary>
+/// Wedding-wide. Expected = people coming (ATTENDING answers + walk-ins). Nothing is ever refused because of the capacity:
+/// OverCapacity / OverBy only warn the couple. MaybeMayExceed = expected + MAYBE people would be more than the capacity.
+/// </summary>
+public sealed record RsvpCapacityStats(int? Max, long Expected, long? Remaining, bool OverCapacity, long OverBy, bool MaybeMayExceed);
+/// <summary>Invitations by answer: Attending + Maybe + Declined + NotResponded = Invited. ResponseRate = firm answers (Có/Không) / invited, in percent.</summary>
+public sealed record RsvpInvitationStats(int Invited, int Attending, int Maybe, int Declined, int NotResponded, decimal ResponseRate);
+/// <summary>"Cần xử lý": invitations over their threshold that the couple has not marked as seen, and changes sent after the deadline / lock.</summary>
+public sealed record RsvpActionStats(int Invitations, int OverLimit, int ChangeRequests);
+/// <summary>Expected = people coming ("Dự kiến"). Companions = those of them who are not the invitation's recipient. Maybe = people MAYBE invitations may bring.</summary>
+public sealed record RsvpPeopleStats(int Expected, int Companions, int Maybe);
 public sealed record RsvpNoteCount(string Note, int Count);
-public sealed record RsvpNoteStats(int ConfirmedWithDietaryNote, int GuestsWithNote, IReadOnlyList<RsvpNoteCount> TopDietaryNotes);
-public sealed record RsvpSideStats(string Side, int Invited, int Responded, int Confirmed);
+public sealed record RsvpNoteStats(int InvitationsWithDietaryNote, int InvitationsWithNote, IReadOnlyList<RsvpNoteCount> TopDietaryNotes);
+public sealed record RsvpSideStats(string Side, int Invited, int Responded, int Expected);
 
 /// <summary>
 /// Couple06 live headcount. Capacity numbers are wedding-wide; the other numbers follow the side/group filter.
-/// Clients refetch it on realtime events (RsvpChanged, RsvpChangeRequested, ...) and after a reconnect.
+/// Clients refetch it on realtime events (RsvpChanged, RsvpOverLimit, ...) and after a reconnect.
 /// </summary>
 public sealed record RsvpDashboardDto(Guid WeddingId, DateTimeOffset GeneratedAt, DateTimeOffset? RsvpDeadline, RsvpCapacityStats Capacity,
-    RsvpInvitationStats Invitations, RsvpPeopleStats People, int PendingRequests, int LockedGuests, RsvpNoteStats Notes,
+    RsvpInvitationStats Invitations, RsvpActionStats NeedsAction, RsvpPeopleStats People, int LockedGuests, RsvpNoteStats Notes,
     IReadOnlyList<RsvpSideStats> BySide);
 
 /// <summary>
-/// One invitation in the host list. Phone/Email are only filled for users who may view guests (GUEST_VIEW).
+/// One invitation in the couple's list. MaxPeople = the invitation's threshold; People = people coming; OverLimit = over the threshold
+/// and not marked as seen. Phone/Email are only filled for users who may view guests (GUEST_VIEW).
 /// Guest05: RemindersSent (of at most 3), when the last reminder went out and the status of the latest one.
 /// </summary>
 public sealed record RsvpGuestRowDto(Guid GuestId, string RecipientName, string Side, Guid? GroupId, string? GroupName, string? Phone, string? Email,
-    string RsvpStatus, int InvitedPlaces, int ConfirmedPeople, int WaitlistedPeople, bool Locked, bool PendingRequest, string? Note,
-    DateTimeOffset? RespondedAt, DateTimeOffset? UpdatedAt, int RemindersSent, DateTimeOffset? LastRemindedAt, string? LastReminderStatus);
+    string RsvpStatus, int MaxPeople, int People, int MaybePeople, bool OverLimit, bool NeedsAction, bool PendingRequest, bool Locked,
+    string? DietaryNote, string? Note, DateTimeOffset? RespondedAt, DateTimeOffset? UpdatedAt, int RemindersSent, DateTimeOffset? LastRemindedAt,
+    string? LastReminderStatus);
 
 public sealed record RsvpExportFile(byte[] Content, string FileName);
 
 public static class RsvpGuestStatus
 {
-    public const string NotResponded = "NOT_RESPONDED", Attending = "ATTENDING", Declined = "DECLINED", Waiting = "WAITING", PendingRequest = "PENDING_REQUEST";
-    public static readonly IReadOnlySet<string> Filters = new HashSet<string> { NotResponded, Attending, Declined, Waiting, PendingRequest };
+    public const string NotResponded = "NOT_RESPONDED", Attending = "ATTENDING", Maybe = "MAYBE", Declined = "DECLINED", NeedsAction = "NEEDS_ACTION";
+    public static readonly IReadOnlySet<string> Filters = new HashSet<string> { NotResponded, Attending, Maybe, Declined, NeedsAction };
+
     public static string Of(RsvpDashboardGuest g) => g.RsvpStatus switch
     {
-        null => NotResponded, "ATTENDING" => Attending, "DECLINED" => Declined, _ => Waiting
+        null => NotResponded, "MAYBE" => Maybe, "DECLINED" => Declined, _ => Attending
     };
 
-    /// <summary>
-    /// List filter. WAITING lists every invitation with someone on the waitlist, also a confirmed party whose extra
-    /// people wait (it then shows under ATTENDING too); PENDING_REQUEST lists invitations with a change waiting for the hosts.
-    /// </summary>
-    public static bool Matches(RsvpDashboardGuest g, string status) => status switch
-    {
-        PendingRequest => g.PendingRequest,
-        Waiting => Of(g) == Waiting || g.People.Any(p => p.AttendanceStatus == "WAITLISTED"),
-        _ => Of(g) == status
-    };
+    public static bool WaitsForCouple(RsvpDashboardGuest g) => g.OverLimit || g.PendingRequest;
+
+    /// <summary>NEEDS_ACTION is not an answer: it lists invitations the couple should look at, whatever their answer.</summary>
+    public static bool Matches(RsvpDashboardGuest g, string status) => status == NeedsAction ? WaitsForCouple(g) : Of(g) == status;
 }
 
 public sealed class RsvpDashboardFilterValidator : AbstractValidator<RsvpDashboardFilter>
@@ -76,7 +79,8 @@ public sealed class RsvpDashboardFilterValidator : AbstractValidator<RsvpDashboa
     public RsvpDashboardFilterValidator()
     {
         RuleFor(x => x.Side).Must(x => x is null || x is "BRIDE" or "GROOM" or "MUTUAL" or "UNSPECIFIED").WithMessage("Side must be BRIDE, GROOM, MUTUAL or UNSPECIFIED.");
-        RuleFor(x => x.Status).Must(x => x is null || RsvpGuestStatus.Filters.Contains(x)).WithMessage("Unknown status filter.");
+        RuleFor(x => x.Status).Must(x => x is null || RsvpGuestStatus.Filters.Contains(x))
+            .WithMessage("Status must be NOT_RESPONDED, ATTENDING, MAYBE, DECLINED or NEEDS_ACTION.");
         RuleFor(x => x.Search).MaximumLength(100);
         RuleFor(x => x.GroupId).Must(x => x is null || x != Guid.Empty);
     }
@@ -91,7 +95,7 @@ public sealed class RsvpDashboardHandler(IRsvpStore store, IWeddingPermissionSer
         var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
         await filters.ValidateAsync(filter, ct);
         var scopedFilter = ScopedFilter(filter, scope);
-        return RsvpDashboardMath.Summarize(await store.DashboardScopedAsync(weddingId, ct, scope.IsWeddingWide ? null : scope.GroupIds), scopedFilter, clock.GetUtcNow());
+        return RsvpDashboardMath.Summarize(await store.DashboardAsync(weddingId, scope.IsWeddingWide ? null : scope.GroupIds, ct), scopedFilter, clock.GetUtcNow());
     }
 
     public async Task<PagedResult<RsvpGuestRowDto>> GuestsAsync(Guid weddingId, RsvpDashboardFilter filter, PageRequest page, CancellationToken ct)
@@ -99,7 +103,7 @@ public sealed class RsvpDashboardHandler(IRsvpStore store, IWeddingPermissionSer
         var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
         await filters.ValidateAsync(filter, ct); await pages.ValidateAsync(page, ct);
         var contacts = await CanViewContactsAsync(weddingId, scope, ct);
-        var rows = RsvpDashboardMath.Filter(await store.DashboardScopedAsync(weddingId, ct, scope.IsWeddingWide ? null : scope.GroupIds), ScopedFilter(filter, scope)).Select(g => RsvpDashboardMath.Row(g, contacts)).ToList();
+        var rows = RsvpDashboardMath.Filter(await store.DashboardAsync(weddingId, scope.IsWeddingWide ? null : scope.GroupIds, ct), ScopedFilter(filter, scope)).Select(g => RsvpDashboardMath.Row(g, contacts)).ToList();
         return new(rows.Skip((page.Page - 1) * page.PageSize).Take(page.PageSize).ToList(), page.Page, page.PageSize, rows.Count);
     }
 
@@ -108,7 +112,7 @@ public sealed class RsvpDashboardHandler(IRsvpStore store, IWeddingPermissionSer
         var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
         await filters.ValidateAsync(filter, ct);
         var contacts = await CanViewContactsAsync(weddingId, scope, ct);
-        var guests = RsvpDashboardMath.Filter(await store.DashboardScopedAsync(weddingId, ct, scope.IsWeddingWide ? null : scope.GroupIds), ScopedFilter(filter, scope));
+        var guests = RsvpDashboardMath.Filter(await store.DashboardAsync(weddingId, scope.IsWeddingWide ? null : scope.GroupIds, ct), ScopedFilter(filter, scope));
         return new(RsvpDashboardMath.Csv(guests, contacts), $"rsvp-{clock.GetUtcNow():yyyyMMdd-HHmm}.csv");
     }
 
@@ -136,8 +140,7 @@ public static class RsvpDashboardMath
         return data.Guests
             .Where(g => filter.Side is null || g.Side == filter.Side)
             .Where(g => filter.GroupId is null || g.GroupId == filter.GroupId)
-            .Where(g => string.IsNullOrEmpty(search) || g.RecipientName.Contains(search, StringComparison.OrdinalIgnoreCase)
-                        || g.People.Any(p => p.FullName.Contains(search, StringComparison.OrdinalIgnoreCase)))
+            .Where(g => string.IsNullOrEmpty(search) || g.RecipientName.Contains(search, StringComparison.OrdinalIgnoreCase))
             .Where(g => filter.Status is null || RsvpGuestStatus.Matches(g, filter.Status))
             .OrderBy(g => g.RecipientName, StringComparer.CurrentCultureIgnoreCase).ThenBy(g => g.RowNumber).ThenBy(g => g.Id)
             .ToList();
@@ -148,22 +151,23 @@ public static class RsvpDashboardMath
         var guests = Filter(data, filter with { Status = null, Search = null });
         var invited = guests.Count;
         int Count(string status) => guests.Count(g => RsvpGuestStatus.Of(g) == status);
-        var notResponded = Count(RsvpGuestStatus.NotResponded);
-        var people = guests.SelectMany(g => g.People).ToList();
-        var places = guests.SelectMany(g => g.PlaceStatuses).ToList();
-        var confirmed = people.Where(p => p.AttendanceStatus == "ATTENDING").ToList();
-        var topNotes = confirmed.Where(p => !string.IsNullOrWhiteSpace(p.DietaryNote))
-            .GroupBy(p => p.DietaryNote!.Trim().ToLower(CultureInfo.CurrentCulture))
-            .Select(x => new RsvpNoteCount(x.First().DietaryNote!.Trim(), x.Count()))
+        var (attending, maybe, declined) = (Count(RsvpGuestStatus.Attending), Count(RsvpGuestStatus.Maybe), Count(RsvpGuestStatus.Declined));
+        var confirmed = guests.SelectMany(g => g.People).Where(p => p.AttendanceStatus == "ATTENDING").ToList();
+        var maybePeople = guests.Sum(g => g.MaybePartySize);
+        var dietary = guests.Select(Dietary).Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n!.Trim()).ToList();
+        var topNotes = dietary.GroupBy(n => n.ToLower(CultureInfo.CurrentCulture))
+            .Select(x => new RsvpNoteCount(x.First(), x.Count()))
             .OrderByDescending(x => x.Count).ThenBy(x => x.Note, StringComparer.CurrentCulture).Take(10).ToList();
         return new(data.WeddingId, now, data.RsvpDeadline,
-            new(data.Capacity, data.Occupied, data.Capacity is { } max ? Math.Max(0, max - data.Occupied) : null),
-            new(invited, invited - notResponded, notResponded, Count(RsvpGuestStatus.Attending), Count(RsvpGuestStatus.Declined), Count(RsvpGuestStatus.Waiting),
-                invited == 0 ? 0 : Math.Round(100m * (invited - notResponded) / invited, 1)),
-            new(places.Count, confirmed.Count, confirmed.Count(p => p.Role != "PRIMARY"), people.Count(p => p.AttendanceStatus == "WAITLISTED"),
-                people.Count(p => p.AttendanceStatus == "DECLINED"), places.Count(s => s == RsvpPlaceStatus.Unused), places.Count(s => s == RsvpPlaceStatus.Pending)),
-            guests.Count(g => g.PendingRequest), guests.Count(g => g.Locked),
-            new(confirmed.Count(p => !string.IsNullOrWhiteSpace(p.DietaryNote)), guests.Count(g => g.Note is not null), topNotes),
+            new(data.Capacity, data.Occupied, data.Capacity is { } max ? Math.Max(0, max - data.Occupied) : null,
+                data.Capacity is { } over && data.Occupied > over, data.Capacity is { } by ? Math.Max(0, data.Occupied - by) : 0,
+                data.Capacity is { } cap && data.Occupied + data.Guests.Sum(g => g.MaybePartySize) > cap),
+            new(invited, attending, maybe, declined, invited - attending - maybe - declined,
+                invited == 0 ? 0 : Math.Round(100m * (attending + declined) / invited, 1)),
+            new(guests.Count(RsvpGuestStatus.WaitsForCouple), guests.Count(g => g.OverLimit), guests.Count(g => g.PendingRequest)),
+            new(confirmed.Count, confirmed.Count(p => p.Role != "PRIMARY"), maybePeople),
+            guests.Count(g => g.Locked),
+            new(dietary.Count, guests.Count(g => g.Note is not null), topNotes),
             guests.GroupBy(g => g.Side).OrderBy(x => x.Key, StringComparer.Ordinal)
                 .Select(x => new RsvpSideStats(x.Key, x.Count(), x.Count(g => g.RsvpStatus is not null),
                     x.Sum(g => g.People.Count(p => p.AttendanceStatus == "ATTENDING")))).ToList());
@@ -171,31 +175,33 @@ public static class RsvpDashboardMath
 
     public static RsvpGuestRowDto Row(RsvpDashboardGuest g, bool contacts) =>
         new(g.Id, g.RecipientName, g.Side, g.GroupId, g.GroupName, contacts ? g.Phone : null, contacts ? g.Email : null, RsvpGuestStatus.Of(g),
-            g.PlaceStatuses.Count, g.People.Count(p => p.AttendanceStatus == "ATTENDING"), g.People.Count(p => p.AttendanceStatus == "WAITLISTED"),
-            g.Locked, g.PendingRequest, g.Note, g.SubmittedAt, g.UpdatedAt, g.RemindersSent, g.LastRemindedAt, g.LastReminderStatus);
+            g.MaxPeople, g.People.Count(p => p.AttendanceStatus == "ATTENDING"), g.MaybePartySize, g.OverLimit, RsvpGuestStatus.WaitsForCouple(g),
+            g.PendingRequest, g.Locked, Dietary(g), g.Note, g.SubmittedAt, g.UpdatedAt, g.RemindersSent, g.LastRemindedAt, g.LastReminderStatus);
 
-    /// <summary>One line per person (UTF-8 with BOM so Excel shows Vietnamese). Cells are protected against formula injection.</summary>
+    /// <summary>One line per invitation (UTF-8 with BOM so Excel shows Vietnamese). Cells are protected against formula injection.</summary>
     public static byte[] Csv(IEnumerable<RsvpDashboardGuest> guests, bool contacts)
     {
         var sb = new StringBuilder();
         var header = new List<string> { "Khách mời", "Bên", "Nhóm" };
         if (contacts) header.AddRange(["Số điện thoại", "Email"]);
-        header.AddRange(["Trạng thái RSVP", "Người", "Vai trò", "Tham dự", "Chỗ số", "Món ăn", "Ghi chú RSVP", "Trả lời lúc (UTC)",
-            "Đã nhắc (lần)", "Nhắc gần nhất (UTC)"]);
+        header.AddRange(["Trạng thái RSVP", "Ngưỡng (người)", "Đi (người)", "Phân vân (người)", "Vượt ngưỡng", "Món ăn",
+            "Ghi chú RSVP", "Trả lời lúc (UTC)", "Đã nhắc (lần)", "Nhắc gần nhất (UTC)"]);
         Line(sb, header);
         foreach (var g in guests)
-            foreach (var p in g.People.OrderBy(p => p.Position ?? int.MaxValue).ThenBy(p => p.FullName, StringComparer.CurrentCulture))
-            {
-                var cells = new List<string?> { g.RecipientName, g.Side, g.GroupName };
-                if (contacts) cells.AddRange([g.Phone, g.Email]);
-                cells.AddRange([RsvpGuestStatus.Of(g), p.FullName, p.Role, p.AttendanceStatus, p.Position?.ToString(CultureInfo.InvariantCulture),
-                    p.DietaryNote, g.Note, g.SubmittedAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
-                    g.RemindersSent.ToString(CultureInfo.InvariantCulture),
-                    g.LastRemindedAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)]);
-                Line(sb, cells);
-            }
+        {
+            var cells = new List<string?> { g.RecipientName, g.Side, g.GroupName };
+            if (contacts) cells.AddRange([g.Phone, g.Email]);
+            cells.AddRange([RsvpGuestStatus.Of(g), Number(g.MaxPeople), Number(g.People.Count(p => p.AttendanceStatus == "ATTENDING")),
+                Number(g.MaybePartySize), g.OverLimit ? "Có" : "", Dietary(g), g.Note,
+                g.SubmittedAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture), Number(g.RemindersSent),
+                g.LastRemindedAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)]);
+            Line(sb, cells);
+        }
         return [.. Encoding.UTF8.GetPreamble(), .. Encoding.UTF8.GetBytes(sb.ToString())];
     }
+
+    private static string? Dietary(RsvpDashboardGuest g) => g.People.FirstOrDefault(p => p.Role == "PRIMARY")?.DietaryNote;
+    private static string Number(int value) => value.ToString(CultureInfo.InvariantCulture);
 
     private static void Line(StringBuilder sb, IEnumerable<string?> cells) =>
         sb.Append(string.Join(',', cells.Select(Cell))).Append("\r\n");

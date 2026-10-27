@@ -9,15 +9,18 @@ namespace InviteMe.Infrastructure.Persistence.Configurations;
 
 /// <summary>RSVP module tables for Guest Planning v2 parties (planning_guests / planning_participants).</summary>
 public sealed class PlanningRsvpConfiguration : IEntityTypeConfiguration<PlanningRsvp>, IEntityTypeConfiguration<PlanningRsvpHistory>,
-    IEntityTypeConfiguration<PlanningWaitlistEntry>, IEntityTypeConfiguration<PlanningDietaryNote>
+    IEntityTypeConfiguration<PlanningDietaryNote>
 {
     public void Configure(EntityTypeBuilder<PlanningRsvp> b)
     {
         b.ToTable("planning_rsvps", t =>
         {
-            t.HasCheckConstraint("ck_planning_rsvps_status", "status IN ('PENDING','ATTENDING','DECLINED')");
+            t.HasCheckConstraint("ck_planning_rsvps_status", "status IN ('ATTENDING','MAYBE','DECLINED')");
             t.HasCheckConstraint("ck_planning_rsvps_party_size",
-                "(status IN ('PENDING','DECLINED') AND confirmed_party_size = 0) OR (status = 'ATTENDING' AND confirmed_party_size >= 1)");
+                "(status = 'ATTENDING' AND confirmed_party_size >= 0 AND maybe_party_size = 0) OR " +
+                "(status = 'MAYBE' AND confirmed_party_size = 0 AND maybe_party_size >= 1) OR " +
+                "(status = 'DECLINED' AND confirmed_party_size = 0 AND maybe_party_size = 0)");
+            t.HasCheckConstraint("ck_planning_rsvps_accepted_party_size", "accepted_party_size IS NULL OR accepted_party_size >= 0");
         });
         b.HasKey(x => x.Id);
         b.Property(x => x.Id).HasColumnName("id");
@@ -25,6 +28,8 @@ public sealed class PlanningRsvpConfiguration : IEntityTypeConfiguration<Plannin
         b.Property(x => x.GuestId).HasColumnName("guest_id");
         b.Property(x => x.Status).HasColumnName("status").HasMaxLength(20);
         b.Property(x => x.ConfirmedPartySize).HasColumnName("confirmed_party_size");
+        b.Property(x => x.MaybePartySize).HasColumnName("maybe_party_size");
+        b.Property(x => x.AcceptedPartySize).HasColumnName("accepted_party_size");
         b.Property(x => x.Note).HasColumnName("note").HasMaxLength(500);
         b.Property(x => x.Version).HasColumnName("version").IsConcurrencyToken();
         b.Property(x => x.SubmittedAt).HasColumnName("submitted_at");
@@ -40,7 +45,7 @@ public sealed class PlanningRsvpConfiguration : IEntityTypeConfiguration<Plannin
         b.ToTable("planning_rsvp_history", t =>
         {
             t.HasCheckConstraint("ck_planning_rsvp_history_status",
-                "new_status IN ('PENDING','ATTENDING','DECLINED') AND (old_status IS NULL OR old_status IN ('PENDING','ATTENDING','DECLINED'))");
+                "new_status IN ('PENDING','ATTENDING','MAYBE','DECLINED') AND (old_status IS NULL OR old_status IN ('PENDING','ATTENDING','MAYBE','DECLINED'))");
             t.HasCheckConstraint("ck_planning_rsvp_history_actor",
                 "(actor_type = 'USER' AND changed_by IS NOT NULL AND actor_guest_id IS NULL) OR (actor_type = 'WEDDING_GUEST' AND actor_guest_id IS NOT NULL AND changed_by IS NULL)");
         });
@@ -63,27 +68,6 @@ public sealed class PlanningRsvpConfiguration : IEntityTypeConfiguration<Plannin
         b.HasOne<PlanningRsvp>().WithMany().HasForeignKey(x => x.RsvpId).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_planning_rsvp_history_rsvp");
         b.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ChangedBy).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_planning_rsvp_history_user");
         b.HasOne<PlanningGuest>().WithMany().HasForeignKey(x => x.ActorGuestId).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_planning_rsvp_history_guest");
-    }
-
-    public void Configure(EntityTypeBuilder<PlanningWaitlistEntry> b)
-    {
-        b.ToTable("planning_rsvp_waitlist", t =>
-        {
-            t.HasCheckConstraint("ck_planning_rsvp_waitlist_slots", "requested_slots > 0");
-            t.HasCheckConstraint("ck_planning_rsvp_waitlist_status", "status IN ('WAITING','PROMOTED','CANCELLED')");
-        });
-        b.HasKey(x => x.Id);
-        b.Property(x => x.Id).HasColumnName("id");
-        b.Property(x => x.WeddingId).HasColumnName("wedding_id");
-        b.Property(x => x.GuestId).HasColumnName("guest_id");
-        b.Property(x => x.RequestedSlots).HasColumnName("requested_slots");
-        b.Property(x => x.Status).HasColumnName("status").HasMaxLength(20);
-        b.Property(x => x.RequestedAt).HasColumnName("requested_at");
-        b.Property(x => x.ResolvedAt).HasColumnName("resolved_at");
-        b.HasIndex(x => x.GuestId).IsUnique().HasFilter("status = 'WAITING'").HasDatabaseName("uq_planning_rsvp_waitlist_active_guest");
-        b.HasIndex(x => new { x.WeddingId, x.Status, x.RequestedAt }).HasDatabaseName("ix_planning_rsvp_waitlist_queue");
-        b.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_planning_rsvp_waitlist_wedding");
-        b.HasOne<PlanningGuest>().WithMany().HasForeignKey(x => x.GuestId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_planning_rsvp_waitlist_guest");
     }
 
     public void Configure(EntityTypeBuilder<PlanningDietaryNote> b)
