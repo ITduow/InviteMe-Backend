@@ -80,6 +80,13 @@ internal static class GuestPlanningEndpoints
         g.MapGet("/seating-summary", (Guid weddingId, PlanningSeatingHandler handler, CancellationToken ct) =>
             handler.GetSummaryAsync(weddingId, ct))
             .WithName("GetSeatingSummary").Produces<SeatingSummaryDto>().ProducesProblem(403);
+        // Direct alias routes: /api/weddings/{weddingId}/seating-layout
+        var direct = endpoints.MapGroup("/api/weddings/{weddingId:guid}").RequireAuthorization().WithTags("Guest Planning v2");
+        direct.MapGet("/seating-layout", (Guid weddingId, PlanningSeatingHandler handler, CancellationToken ct) => handler.GetLayoutAsync(weddingId, ct))
+            .WithName("GetWeddingSeatingLayoutDirect").Produces<SeatingLayoutDto>().ProducesProblem(403);
+        direct.MapPut("/seating-layout", (Guid weddingId, UpdateSeatingLayout input, PlanningSeatingHandler handler, CancellationToken ct) => handler.UpdateLayoutAsync(weddingId, input, ct))
+            .WithName("UpdateWeddingSeatingLayoutDirect").Produces<SeatingLayoutDto>().ProducesProblem(403).ProducesProblem(409).ProducesProblem(422);
+
         return endpoints;
     }
 }
