@@ -47,7 +47,6 @@ public sealed class RsvpApiTests
         Assert.Equal("null", await emptyDraft.Content.ReadAsStringAsync());
         var rows = Enumerable.Range(0, 30).Select(i => new PlanningRow(i + 2, $"QA guest {i + 1:00}",
             Honorific: i % 3 == 0 ? "Bác" : i % 3 == 1 ? "Anh" : "Bạn",
-            InvitationKind: i % 3 == 0 ? "FAMILY" : i % 3 == 1 ? "GROUP" : "INDIVIDUAL",
             ExpectedPeople: i % 3 == 0 ? 4 : i % 3 == 1 ? 2 : 1,
             Side: i % 2 == 0 ? "BRIDE" : "GROOM",
             Group: new PlanningGroupInput(NewName: i % 2 == 0 ? "Họ ngoại" : "Đồng nghiệp", Confirmed: true),

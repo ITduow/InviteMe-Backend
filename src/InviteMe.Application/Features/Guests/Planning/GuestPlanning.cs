@@ -7,15 +7,18 @@ using InviteMe.Domain.Weddings;
 namespace InviteMe.Application.Features.Guests.Planning;
 
 public sealed record PlanningGroupInput(Guid? ExistingId = null, string? NewName = null, bool Confirmed = false);
+/// <summary>One spreadsheet row. The kind of invitation is not imported: it follows ExpectedPeople (2+ = a family).</summary>
 public sealed record PlanningRow(int RowNumber, string? RecipientName, string? Honorific = null,
-    string? InvitationKind = null, int? ExpectedPeople = null, string? Side = null,
+    int? ExpectedPeople = null, string? Side = null,
     PlanningGroupInput? Group = null, string? Phone = null, string? Note = null, string? Email = null);
 public sealed record PlanningImport(IReadOnlyList<PlanningRow?>? Rows);
 public sealed record ImportIssue(int RowNumber, string Field, string Code, string Message);
 public sealed record PlanningGroupDto(Guid Id, string Name);
 public sealed record PlanningImportedRow(int RowNumber, Guid GuestId, int ExpectedPeople);
+/// <summary>Skipped = rows left out because the same guest with exactly the same data is already there.</summary>
 public sealed record PlanningImportResult(Guid ImportId, int CreatedGuestCount, int CreatedPlaceCount,
-    IReadOnlyList<PlanningImportedRow> Items, IReadOnlyList<PlanningGroupDto> CreatedGroups, IReadOnlyList<ImportIssue> Warnings);
+    IReadOnlyList<PlanningImportedRow> Items, IReadOnlyList<PlanningGroupDto> CreatedGroups, IReadOnlyList<ImportIssue> Warnings,
+    IReadOnlyList<ImportIssue>? Skipped = null);
 public sealed record PlanningImportOutcome(PlanningImportResult? Result, IReadOnlyList<ImportIssue> Errors, bool Replayed = false);
 public sealed record PlanningPersonDto(Guid Id, string FullName, string Role, string AttendanceStatus);
 public sealed record PlanningPlaceDto(Guid Id, PlanningPersonDto? Person);
@@ -56,6 +59,8 @@ public interface IGuestPlanningStore
     Task<ArchivePlanningGuestResult> ArchiveAsync(Guid weddingId, Guid guestId, int expectedVersion, Guid actorId,
         CancellationToken ct, IReadOnlySet<Guid>? groupScope = null);
     Task<PlanningImportOutcome> ImportAsync(Guid weddingId, Guid key, PlanningImport input, Guid actorId, CancellationToken ct);
+    Task<IReadOnlyList<ExistingPlanningContact>> ExistingContactsAsync(Guid weddingId, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<ExistingPlanningContact>>([]);
     Task<PlanningGuestPage> ListAsync(Guid weddingId, int page, int pageSize, string? search, string? side, Guid? groupId, CancellationToken ct);
     Task<PlanningGuestPage> ListScopedAsync(Guid weddingId, int page, int pageSize, string? search, string? side, Guid? groupId, CancellationToken ct, IReadOnlySet<Guid>? groupScope) =>
         ListAsync(weddingId, page, pageSize, search, side, groupId, ct);
@@ -122,6 +127,20 @@ public sealed class GuestPlanningHandler(IGuestPlanningStore store, IWeddingPerm
             scope.IsWeddingWide ? null : scope.GroupIds);
         await changes.PublishAsync(weddingId, new("PlanningGuestArchived", guestId), ct);
         return result;
+    }
+
+    /// <summary>Checks a file without importing it: format errors, duplicates (errors) and warnings, so the user fixes them first.</summary>
+    public async Task<PlanningImportCheck> CheckImportAsync(Guid weddingId, PlanningImport input, CancellationToken ct)
+    {
+        var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
+        if (!scope.IsWeddingWide)
+            throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.Forbidden, "GUEST_IMPORT_REQUIRES_WEDDING_SCOPE", "Guest import requires wedding-wide guest edit access.");
+        var rows = (input.Rows ?? []).Where(x => x is not null).Select(x => x!).ToList();
+        var format = new List<ImportIssue>();
+        try { await imports.ValidateAsync(input, ct); }
+        catch (ValidationException error) { format.AddRange(PlanningImportValidator.Issues(input, error.Errors)); }
+        var check = PlanningImportChecks.Analyze(rows, await store.ExistingContactsAsync(weddingId, ct));
+        return check with { Errors = [.. format, .. check.Errors] };
     }
 
     public async Task<PlanningImportOutcome> ImportAsync(Guid weddingId, string? idempotencyKey, PlanningImport input, CancellationToken ct)
