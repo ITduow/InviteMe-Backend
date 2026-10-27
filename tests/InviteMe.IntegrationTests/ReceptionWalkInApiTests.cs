@@ -28,7 +28,7 @@ public sealed class ReceptionWalkInApiTests
         await db.SaveChangesAsync();
         var path = $"/api/weddings/{wedding.Id}/guest-planning";
         var import = new HttpRequestMessage(HttpMethod.Post, path + "/imports")
-        { Content = JsonContent.Create(new PlanningImport([new(1, "Lê Văn Cường", "Anh", "FAMILY", 2, "GROOM")])) };
+        { Content = JsonContent.Create(new PlanningImport([new(1, "Lê Văn Cường", "Anh", 2, "GROOM")])) };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
         Assert.Equal(HttpStatusCode.Created, (await owner.SendAsync(import)).StatusCode);
         var cuong = await db.Set<PlanningGuest>().AsNoTracking().SingleAsync();
@@ -107,7 +107,7 @@ public sealed class ReceptionWalkInApiTests
         await db.SaveChangesAsync();
         var path = $"/api/weddings/{wedding.Id}/guest-planning";
         var import = new HttpRequestMessage(HttpMethod.Post, path + "/imports")
-        { Content = JsonContent.Create(new PlanningImport([new(1, "Hồ Văn Tâm", "Anh", "INDIVIDUAL", 1, "GROOM")])) };
+        { Content = JsonContent.Create(new PlanningImport([new(1, "Hồ Văn Tâm", "Anh", 1, "GROOM")])) };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
         Assert.Equal(HttpStatusCode.Created, (await owner.SendAsync(import)).StatusCode);
         var tam = await db.Set<PlanningGuest>().AsNoTracking().SingleAsync();

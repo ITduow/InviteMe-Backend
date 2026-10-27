@@ -21,6 +21,9 @@ internal static class GuestPlanningEndpoints
         }).WithName("CreatePlanningGuest")
             .Produces<PlanningGuestDto>(201).Produces<PlanningGuestDto>(200)
             .ProducesValidationProblem().ProducesProblem(403).ProducesProblem(404).ProducesProblem(409);
+        // Dry run before importing: errors (block) and warnings per spreadsheet row; nothing is saved.
+        g.MapPost("/imports/check", (Guid weddingId, PlanningImport input, GuestPlanningHandler handler, CancellationToken ct) =>
+            handler.CheckImportAsync(weddingId, input, ct)).Produces<PlanningImportCheck>();
         g.MapPost("/imports", async (Guid weddingId, PlanningImport input, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
             GuestPlanningHandler handler, CancellationToken ct) =>
         {

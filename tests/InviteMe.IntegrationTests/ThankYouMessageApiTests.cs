@@ -119,8 +119,8 @@ public sealed class ThankYouMessageApiTests
         using var import = new HttpRequestMessage(HttpMethod.Post, $"/api/weddings/{wedding.Id}/guest-planning/imports")
         {
             Content = JsonContent.Create(new PlanningImport([
-                new PlanningRow(2, "Personalized Guest", InvitationKind: "INDIVIDUAL", ExpectedPeople: 1, Side: "BRIDE", Email: "guest@example.test", Phone: "+84912345678"),
-                new PlanningRow(3, "Second Guest", InvitationKind: "INDIVIDUAL", ExpectedPeople: 1, Side: "GROOM", Email: "second@example.test", Phone: "+84912345679")
+                new PlanningRow(2, "Personalized Guest", ExpectedPeople: 1, Side: "BRIDE", Email: "guest@example.test", Phone: "+84912345678"),
+                new PlanningRow(3, "Second Guest", ExpectedPeople: 1, Side: "GROOM", Email: "second@example.test", Phone: "+84912345679")
             ]))
         };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());

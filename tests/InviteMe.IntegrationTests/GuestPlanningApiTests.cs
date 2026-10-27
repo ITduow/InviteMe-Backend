@@ -214,7 +214,7 @@ public sealed class GuestPlanningApiTests
             return await owner.SendAsync(request);
         }
         var group = new PlanningGroupInput(NewName: "Họ ngoại", Confirmed: true);
-        var good = new PlanningRow(2, "Nguyễn Văn An", "Bác", "FAMILY", 4, "BRIDE", group,
+        var good = new PlanningRow(2, "Nguyễn Văn An", "Bác", 4, "BRIDE", group,
             Phone: "0900123456", Email: " an@example.com ");
         var badContact = await Import(new([good, new(7, "Nam", Phone: "abc", Email: "invalid")]), Guid.NewGuid());
         Assert.Equal(HttpStatusCode.UnprocessableEntity, badContact.StatusCode);

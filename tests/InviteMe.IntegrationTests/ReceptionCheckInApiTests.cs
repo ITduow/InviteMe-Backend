@@ -28,8 +28,8 @@ public sealed class ReceptionCheckInApiTests
         var import = new HttpRequestMessage(HttpMethod.Post, path + "/imports")
         {
             Content = JsonContent.Create(new PlanningImport([
-                new(2, "Nguyễn Văn Đức", "Bác", "FAMILY", 3, "BRIDE", Phone: "0901 234 567"),
-                new(3, "Trần Thị Bình", "Chị", "INDIVIDUAL", 1, "GROOM")]))
+                new(2, "Nguyễn Văn Đức", "Bác", 3, "BRIDE", Phone: "0901 234 567"),
+                new(3, "Trần Thị Bình", "Chị", 1, "GROOM")]))
         };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
         Assert.Equal(HttpStatusCode.Created, (await owner.SendAsync(import)).StatusCode);

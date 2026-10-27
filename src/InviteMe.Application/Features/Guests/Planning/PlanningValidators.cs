@@ -44,7 +44,6 @@ public sealed class PlanningRowValidator : AbstractValidator<PlanningRow>
             .When(x => !string.IsNullOrWhiteSpace(x.Email));
         RuleFor(x => x.Note).Must(x => PlanningText.Valid(x, 2000)).WithErrorCode("INVALID_TEXT");
         RuleFor(x => x.ExpectedPeople).Must(x => (x ?? 1) is >= 1 and <= 500).WithErrorCode("INVALID_EXPECTED_PEOPLE");
-        RuleFor(x => x.InvitationKind).Must(x => x is null or "" or "INDIVIDUAL" or "FAMILY" or "GROUP").WithErrorCode("INVALID_KIND");
         RuleFor(x => x.Side).Must(PlanningText.ValidSide).WithErrorCode("INVALID_SIDE");
         When(x => x.Group is not null, () =>
         {

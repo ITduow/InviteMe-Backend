@@ -181,6 +181,13 @@ public sealed class GuestPlanningStore(InviteMeDbContext db, InviteMe.Applicatio
         return result;
     }
 
+    public async Task<IReadOnlyList<ExistingPlanningContact>> ExistingContactsAsync(Guid weddingId, CancellationToken ct) =>
+        await (from g in db.Set<PlanningGuest>().AsNoTracking()
+               where g.WeddingId == weddingId && g.ArchivedAt == null
+               from grp in db.Set<PlanningGroup>().AsNoTracking().Where(x => x.Id == g.GroupId).DefaultIfEmpty()
+               select new ExistingPlanningContact(g.RecipientName, g.Phone, g.Email, g.Honorific, g.ExpectedPeople, g.Side, g.GroupId,
+                   grp == null ? null : grp.Name, g.Note)).ToListAsync(ct);
+
     public async Task<PlanningImportOutcome> ImportAsync(Guid weddingId, Guid key, PlanningImport input, Guid actorId, CancellationToken ct)
     {
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(input))));
@@ -197,20 +204,21 @@ public sealed class GuestPlanningStore(InviteMeDbContext db, InviteMe.Applicatio
         foreach (var row in input.Rows!)
             if (row!.Group?.ExistingId is { } id && groups.All(x => x.Id != id))
                 errors.Add(new(row.RowNumber, "group", "GROUP_NOT_FOUND", "Nhóm không thuộc wedding này."));
+        // Duplicates are checked again under the wedding lock: another import may have added the same contacts meanwhile.
+        var check = PlanningImportChecks.Analyze(input.Rows!.Select(x => x!).ToList(), await ExistingContactsAsync(weddingId, ct));
+        errors.AddRange(check.Errors);
         if (errors.Count > 0) return new(null, errors);
-        await entitlements.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.GuestPlaces, input.Rows!.Sum(x => x!.ExpectedPeople ?? 1), ct);
+        await entitlements.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.GuestPlaces, check.PeopleCount, ct);
+        var skippedRows = check.Skipped.Select(x => x.RowNumber).ToHashSet();
         var batch = new PlanningImportBatch { Id = Guid.NewGuid(), WeddingId = weddingId, Key = key, RequestHash = hash };
         db.Add(batch);
         var createdGroups = new List<PlanningGroupDto>();
         var items = new List<PlanningImportedRow>();
-        var warnings = new List<ImportIssue>();
-        var existing = await db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null)
-            .Select(x => new { x.RecipientName, x.Phone }).ToListAsync(ct);
-        var names = existing.Select(x => PlanningText.Key(x.RecipientName)).ToHashSet();
-        var phones = existing.Where(x => x.Phone != null).Select(x => PlanningText.PhoneKey(x.Phone)).ToHashSet();
+        var warnings = check.Warnings.ToList();
         foreach (var row in input.Rows!)
         {
             var r = row!;
+            if (skippedRows.Contains(r.RowNumber)) continue;
             Guid? groupId = r.Group?.ExistingId;
             if (r.Group?.NewName is { } newName)
             {
@@ -227,16 +235,11 @@ public sealed class GuestPlanningStore(InviteMeDbContext db, InviteMe.Applicatio
             var guest = new PlanningGuest {
                 Id = Guid.NewGuid(), WeddingId = weddingId, ImportId = batch.Id, RowNumber = r.RowNumber,
                 RecipientName = PlanningText.Clean(r.RecipientName), Honorific = Optional(r.Honorific),
-                InvitationKind = string.IsNullOrEmpty(r.InvitationKind) ? "INDIVIDUAL" : r.InvitationKind,
+                InvitationKind = "INDIVIDUAL", // no automatic "gia đình"/"nhóm": the name says it
                 ExpectedPeople = r.ExpectedPeople ?? 1, Side = string.IsNullOrEmpty(r.Side) ? "UNSPECIFIED" : r.Side,
                 GroupId = groupId, Phone = Optional(r.Phone), Note = Optional(r.Note), Email = Optional(r.Email),
                 InvitationToken = InvitationToken.Generate()
             };
-            if (names.Contains(PlanningText.Key(guest.RecipientName)) ||
-                (guest.Phone is not null && phones.Contains(PlanningText.PhoneKey(guest.Phone))))
-                warnings.Add(new(r.RowNumber, "recipientName", "POSSIBLE_DUPLICATE", "Có khách trùng tên hoặc SĐT; đã giữ thành đầu mối riêng."));
-            names.Add(PlanningText.Key(guest.RecipientName));
-            if (guest.Phone is not null) phones.Add(PlanningText.PhoneKey(guest.Phone));
             db.Add(guest);
             var person = new PlanningParticipant { Id = Guid.NewGuid(), GuestId = guest.Id, FullName = guest.RecipientName };
             db.Add(person);
@@ -244,7 +247,7 @@ public sealed class GuestPlanningStore(InviteMeDbContext db, InviteMe.Applicatio
                 db.Add(new PlanningPlace { Id = Guid.NewGuid(), GuestId = guest.Id, Position = i + 1, ParticipantId = i == 0 ? person.Id : null });
             items.Add(new(r.RowNumber, guest.Id, guest.ExpectedPeople));
         }
-        var result = new PlanningImportResult(batch.Id, items.Count, items.Sum(x => x.ExpectedPeople), items, createdGroups, warnings);
+        var result = new PlanningImportResult(batch.Id, items.Count, items.Sum(x => x.ExpectedPeople), items, createdGroups, warnings, check.Skipped);
         batch.ResultJson = JsonSerializer.Serialize(result);
         db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_import_batches", batch.Id, "GUESTS_IMPORTED", actorId,
             metadata: JsonSerializer.Serialize(new { guestCount = items.Count, expectedPeople = result.CreatedPlaceCount,
