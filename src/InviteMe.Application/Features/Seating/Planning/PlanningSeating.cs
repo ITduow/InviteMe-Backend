@@ -12,7 +12,13 @@ public sealed record SeatingLayoutDto(
     int BrideRows,
     int BrideColumns,
     string Numbering,
-    int Version);
+    int Version,
+    bool IsLocked = false,
+    DateTimeOffset? LockedAt = null,
+    Guid? LockedBy = null,
+    bool IsEventStarted = false,
+    DateTimeOffset? EventStartedAt = null,
+    Guid? EventStartedBy = null);
 
 public sealed record UpdateSeatingLayout(
     int GroomRows,
@@ -41,7 +47,12 @@ public sealed record SeatingWarningDto(
     Guid? GuestId = null,
     Guid? PlaceId = null);
 
-public sealed record PlanningAssignmentDto(Guid PlaceId, Guid TableId, int SeatNumber);
+public sealed record PlanningAssignmentDto(
+    Guid PlaceId,
+    Guid TableId,
+    int SeatNumber,
+    Guid? PlannedTableId = null,
+    int? PlannedSeatNumber = null);
 public sealed record PlanningSeatingPlace(Guid Id, Guid GuestId, int Position, PlanningPersonDto? Person);
 
 public sealed record PlanningSeatingDto(
@@ -52,7 +63,13 @@ public sealed record PlanningSeatingDto(
     IReadOnlyList<PlanningSeatingPlace> Places,
     IReadOnlyList<PlanningAssignmentDto> Assignments,
     SeatingLayoutDto? Layout = null,
-    IReadOnlyList<SeatingWarningDto>? Warnings = null);
+    IReadOnlyList<SeatingWarningDto>? Warnings = null,
+    bool IsLocked = false,
+    DateTimeOffset? LockedAt = null,
+    Guid? LockedBy = null,
+    bool IsEventStarted = false,
+    DateTimeOffset? EventStartedAt = null,
+    Guid? EventStartedBy = null);
 
 public sealed record ChangePlanningSeating(
     int ExpectedVersion,
@@ -80,7 +97,9 @@ public sealed record ChangePlanningSeating(
     bool ConfirmDeleteWithGuests = false,
     Guid? GuestId = null,
     Guid? PlaceId = null,
-    Guid? TargetPlaceId = null);
+    Guid? TargetPlaceId = null,
+    Guid? TargetGuestId = null,
+    string? Reason = null);
 
 public interface IPlanningSeatingStore
 {
@@ -114,7 +133,8 @@ public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePla
     {
         RuleFor(x => x.ExpectedVersion).GreaterThanOrEqualTo(0);
         RuleFor(x => x.Action).Must(x => x is "CREATE_TABLE" or "CREATE_TABLES" or "UPDATE_TABLE" or "DELETE_TABLE" or "MOVE_PLACES"
-            or "APPLY_SUGGESTION" or "PLACE_TABLE" or "MOVE_TABLE" or "SWAP_TABLES" or "TAG_TABLES" or "RENUMBER_TABLES" or "MOVE_PARTY" or "SWAP_PLACES");
+            or "APPLY_SUGGESTION" or "PLACE_TABLE" or "MOVE_TABLE" or "SWAP_TABLES" or "TAG_TABLES" or "RENUMBER_TABLES" or "MOVE_PARTY" or "SWAP_PLACES"
+            or "LOCK_PLAN" or "UNLOCK_PLAN" or "RELEASE_DECLINED_SEATS" or "START_EVENT" or "OPERATIONAL_MOVE" or "SWAP_UNATTENDED");
         RuleFor(x => x.TableId).NotEqual(Guid.Empty).When(x => x.TableId.HasValue);
         RuleFor(x => x.GroupId).NotEqual(Guid.Empty).When(x => x.GroupId.HasValue);
         RuleFor(x => x).Must(x => x.TableId.HasValue).When(x => x.Action is "UPDATE_TABLE" or "DELETE_TABLE" or "PLACE_TABLE" or "MOVE_TABLE");

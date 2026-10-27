@@ -3674,6 +3674,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("PlaceId")
                         .HasColumnType("uuid");
 
+                    b.Property<int?>("PlannedSeatNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("PlannedTableId")
+                        .HasColumnType("uuid");
+
                     b.Property<int>("SeatNumber")
                         .HasColumnType("integer");
 
@@ -3706,6 +3712,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasDefaultValue(6);
 
+                    b.Property<DateTimeOffset?>("EventStartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("EventStartedBy")
+                        .HasColumnType("uuid");
+
                     b.Property<int>("GroomColumns")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer")
@@ -3715,6 +3727,22 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer")
                         .HasDefaultValue(6);
+
+                    b.Property<bool>("IsEventStarted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<bool>("IsLocked")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<DateTimeOffset?>("LockedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("LockedBy")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Numbering")
                         .IsRequired()
@@ -6305,6 +6333,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasForeignKey("PlaceId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.HasOne("InviteMe.Domain.Seating.PlanningTable", null)
+                        .WithMany()
+                        .HasForeignKey("PlannedTableId")
+                        .OnDelete(DeleteBehavior.SetNull);
 
                     b.HasOne("InviteMe.Domain.Seating.PlanningTable", null)
                         .WithMany()

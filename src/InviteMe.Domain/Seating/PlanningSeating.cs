@@ -13,6 +13,12 @@ public sealed class PlanningSeatingPlan
     public int BrideRows { get; set; } = 6;
     public int BrideColumns { get; set; } = 3;
     public string Numbering { get; set; } = "BY_ROW";
+    public bool IsLocked { get; set; }
+    public DateTimeOffset? LockedAt { get; set; }
+    public Guid? LockedBy { get; set; }
+    public bool IsEventStarted { get; set; }
+    public DateTimeOffset? EventStartedAt { get; set; }
+    public Guid? EventStartedBy { get; set; }
 }
 public sealed class PlanningTable
 {
@@ -33,4 +39,6 @@ public sealed class PlanningSeatAssignment
     public Guid PlaceId { get; set; }
     public Guid TableId { get; set; }
     public int SeatNumber { get; set; }
+    public Guid? PlannedTableId { get; set; }
+    public int? PlannedSeatNumber { get; set; }
 }

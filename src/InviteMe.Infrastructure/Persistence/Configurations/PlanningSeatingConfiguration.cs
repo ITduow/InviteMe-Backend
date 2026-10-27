@@ -24,6 +24,12 @@ public sealed class PlanningSeatingConfiguration : IEntityTypeConfiguration<Plan
         b.Property(x => x.BrideRows).HasDefaultValue(6);
         b.Property(x => x.BrideColumns).HasDefaultValue(3);
         b.Property(x => x.Numbering).HasMaxLength(20).HasDefaultValue("BY_ROW");
+        b.Property(x => x.IsLocked).HasDefaultValue(false);
+        b.Property(x => x.LockedAt);
+        b.Property(x => x.LockedBy);
+        b.Property(x => x.IsEventStarted).HasDefaultValue(false);
+        b.Property(x => x.EventStartedAt);
+        b.Property(x => x.EventStartedBy);
         b.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade);
     }
 
@@ -56,5 +62,6 @@ public sealed class PlanningSeatingConfiguration : IEntityTypeConfiguration<Plan
         b.HasIndex(x => new { x.TableId, x.SeatNumber }).IsUnique();
         b.HasOne<PlanningPlace>().WithMany().HasForeignKey(x => x.PlaceId).OnDelete(DeleteBehavior.Cascade);
         b.HasOne<PlanningTable>().WithMany().HasForeignKey(x => x.TableId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<PlanningTable>().WithMany().HasForeignKey(x => x.PlannedTableId).OnDelete(DeleteBehavior.SetNull);
     }
 }
