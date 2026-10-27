@@ -39,10 +39,13 @@ public sealed record SaveGiftAccount(string BankBin, string AccountNumber, strin
 /// Method CASH (envelope), TRANSFER or ITEM (a present handed over at the wedding: ItemName and Quantity, optional EstimatedValue,
 /// no Amount). GiverName is required without GuestId. TRANSFER by the owner = seen in the bank app (received); TRANSFER by a
 /// co-host = shown at the reception desk, needs ProofId (photo uploaded first) and waits for the couple to confirm the money.
+/// CASH without Amount = a sealed envelope: the couple enters the amount when they confirm it.
+/// ParticipantId (with GuestId) = the person of the invitation who gave, e.g. a companion; their name becomes the giver.
 /// </summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record RecordGift(string Method, long? Amount = null, Guid? GuestId = null, string? GiverName = null, string? Message = null,
-    DateTimeOffset? ReceivedAt = null, string? ItemName = null, int? Quantity = null, long? EstimatedValue = null, Guid? ProofId = null);
+    DateTimeOffset? ReceivedAt = null, string? ItemName = null, int? Quantity = null, long? EstimatedValue = null, Guid? ProofId = null,
+    Guid? ParticipantId = null);
 
 /// <summary>A transfer photo uploaded at the reception desk, to put in RecordGift.ProofId.</summary>
 public sealed record GiftProofDto(Guid Id);
@@ -62,7 +65,7 @@ public sealed record GiftLedgerFilter(string? Status = null, string? Method = nu
 public sealed record GiftDto(Guid Id, Guid? GuestId, string GiverName, string Method, string Status, string? Confirmation, string? Code,
     long? AmountExpected, long? AmountReceived, bool AmountMismatch, string? Message, bool MessagePublic, Guid? AccountId,
     DateTimeOffset CreatedAt, DateTimeOffset? ClaimedAt, DateTimeOffset? PaidAt, string? ItemName = null, int? ItemQuantity = null,
-    long? ItemValue = null, bool HasProof = false);
+    long? ItemValue = null, bool HasProof = false, Guid? ParticipantId = null);
 
 /// <summary>
 /// Gift book totals. Received = PAID gifts. Waiting = QR gifts not paid yet (PENDING/CLAIMED, not expired);
@@ -70,7 +73,7 @@ public sealed record GiftDto(Guid Id, Guid? GuestId, string GiverName, string Me
 /// </summary>
 public sealed record GiftSummaryDto(long TotalReceived, int ReceivedCount, long QrTotal, int QrCount, long CashTotal, int CashCount,
     long TransferTotal, int TransferCount, int Waiting, int Claimed, int Expired, int AmountMismatches, int NeedsReview, int Accounts,
-    int ItemCount = 0, int ItemQuantity = 0);
+    int ItemCount = 0, int ItemQuantity = 0, int EnvelopesToCount = 0);
 
 /// <summary>A bank notification. Status: MATCHED, UNMATCHED (no known code), DUPLICATE (gift already paid), IGNORED.</summary>
 public sealed record GiftTransactionDto(Guid Id, string Status, long Amount, string? Code, string Content, string Gateway,
@@ -191,11 +194,14 @@ public sealed class RecordGiftValidator : AbstractValidator<RecordGift>
             RuleFor(x => x.Amount).Null().WithMessage("Quà hiện vật không có số tiền; dùng EstimatedValue nếu muốn ghi giá trị.");
         }).Otherwise(() =>
         {
-            RuleFor(x => x.Amount).NotNull().InclusiveBetween(PlanningGift.MinAmount, PlanningGift.MaxAmount);
+            RuleFor(x => x.Amount).NotNull().When(x => x.Method != PlanningGift.Cash).WithMessage("Nhập số tiền.");
+            RuleFor(x => x.Amount).InclusiveBetween(PlanningGift.MinAmount, PlanningGift.MaxAmount).When(x => x.Amount is not null);
             RuleFor(x => x).Must(x => x.ItemName is null && x.Quantity is null && x.EstimatedValue is null)
                 .WithMessage("ItemName, Quantity and EstimatedValue are only for ITEM.");
         });
         RuleFor(x => x.ProofId).Must(x => x is null || x != Guid.Empty);
+        RuleFor(x => x.ParticipantId).Must(x => x is null || x != Guid.Empty);
+        RuleFor(x => x).Must(x => x.ParticipantId is null || x.GuestId is not null).WithMessage("Chọn thiệp của người mừng (GuestId).");
         RuleFor(x => x).Must(x => x.ProofId is null || x.Method == PlanningGift.Transfer).WithMessage("Ảnh chuyển khoản chỉ dùng cho TRANSFER.");
         RuleFor(x => x.GuestId).Must(x => x is null || x != Guid.Empty);
         RuleFor(x => x).Must(x => x.GuestId is not null || !string.IsNullOrWhiteSpace(x.GiverName)).WithMessage("Choose a guest or enter the giver name.");

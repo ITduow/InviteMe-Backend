@@ -151,7 +151,7 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
                    && prior.ProofId == input.ProofId
                    && prior.ItemQuantity == (itemName is null ? null : input.Quantity ?? 1) ? Dto(prior, clock.GetUtcNow())
                 : throw new ApplicationProblemException(ProblemKind.Conflict, "IDEMPOTENCY_KEY_REUSED", "This Idempotency-Key was used for a different gift.");
-        var giver = await GiverName(weddingId, input.GuestId, input.GiverName, ct);
+        var giver = await GiverName(weddingId, input.GuestId, input.GiverName, ct, input.ParticipantId);
         var now = clock.GetUtcNow();
         // The photo must be one this person uploaded for this wedding and not used yet.
         var proof = input.ProofId is not { } proofId ? null : await db.Set<PlanningGiftProof>()
@@ -162,9 +162,12 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         var gift = itemName is not null
             ? PlanningGift.ForItem(weddingId, input.GuestId, giver, itemName, input.Quantity ?? 1, input.EstimatedValue, message, actor,
                 input.ReceivedAt ?? now, now, key)
+            : input.Method == PlanningGift.Cash && input.Amount is null
+                ? PlanningGift.Envelope(weddingId, input.GuestId, giver, message, actor, now, key)
             : atReception && proof is not null
                 ? PlanningGift.FromHallTransfer(weddingId, input.GuestId, giver, input.Amount!.Value, message, proof.Id, actor, now, key)
                 : PlanningGift.Recorded(weddingId, input.GuestId, giver, input.Method, input.Amount!.Value, message, actor, input.ReceivedAt ?? now, now, key);
+        gift.GivenBy(input.ParticipantId);
         if (proof is not null)
         {
             if (!atReception) gift.AttachProof(proof.Id);
@@ -217,7 +220,10 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         var gift = await LockGift(weddingId, giftId, ct) ?? throw Missing("GIFT_NOT_FOUND");
         if (gift.Status is PlanningGift.Paid or PlanningGift.Cancelled) throw Rule("GIFT_CLOSED", "Quà mừng này đã được ghi nhận hoặc đã huỷ.");
         var now = clock.GetUtcNow();
-        gift.MarkPaid(amount ?? gift.AmountExpected!.Value, PlanningGift.Manual, actor, now);
+        // A sealed envelope has no amount until the couple counts it.
+        var received = amount ?? gift.AmountExpected
+            ?? throw Rule("GIFT_AMOUNT_REQUIRED", "Nhập số tiền trong phong bì để xác nhận.");
+        gift.MarkPaid(received, PlanningGift.Manual, actor, now);
         db.AuditLogs.Add(Audit(gift, "GIFT_CONFIRMED", actor));
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
         return Dto(gift, now);
@@ -339,8 +345,17 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
             .Where(x => x.Provider == PlanningGiftTransaction.SePay && x.ProviderTransactionId == providerId)
             .Select(x => new GiftWebhookResult(x.Status, x.WeddingId, x.GiftId, true, false)).SingleOrDefaultAsync(ct);
 
-    private async Task<string> GiverName(Guid weddingId, Guid? guestId, string? giverName, CancellationToken ct)
+    private async Task<string> GiverName(Guid weddingId, Guid? guestId, string? giverName, CancellationToken ct, Guid? participantId = null)
     {
+        // A companion gives in their own name: the person must belong to the chosen invitation of this wedding.
+        if (participantId is { } personId)
+        {
+            var person = await (from p in db.Set<PlanningParticipant>().AsNoTracking()
+                                join g in db.Set<PlanningGuest>().AsNoTracking() on p.GuestId equals g.Id
+                                where p.Id == personId && p.GuestId == guestId && g.WeddingId == weddingId
+                                select p.FullName).SingleOrDefaultAsync(ct) ?? throw Missing("PARTICIPANT_NOT_FOUND");
+            return !string.IsNullOrWhiteSpace(giverName) ? GiftRules.Clean(giverName)! : person;
+        }
         // A guest id must belong to this wedding even when a giver name is typed as well.
         var guestName = guestId is null ? null
             : await db.Set<PlanningGuest>().Where(x => x.Id == guestId && x.WeddingId == weddingId).Select(x => x.RecipientName).SingleOrDefaultAsync(ct)
@@ -373,7 +388,7 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
 
     private static GiftDto Dto(PlanningGift g, DateTimeOffset now) => new(g.Id, g.GuestId, g.GiverName, g.Method, g.DisplayStatus(now),
         g.Confirmation, g.Code, g.AmountExpected, g.AmountReceived, g.AmountMismatch, g.Message, g.MessagePublic, g.AccountId, g.CreatedAt,
-        g.ClaimedAt, g.PaidAt, g.ItemName, g.ItemQuantity, g.ItemValue, g.ProofId is not null);
+        g.ClaimedAt, g.PaidAt, g.ItemName, g.ItemQuantity, g.ItemValue, g.ProofId is not null, g.ParticipantId);
 
     private static GiftBankAccountDto Dto(PlanningGiftAccount a) => new(a.Id, a.BankBin, a.BankName, a.AccountNumber, a.AccountName, a.Label);
 

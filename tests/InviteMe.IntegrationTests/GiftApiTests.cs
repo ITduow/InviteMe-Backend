@@ -205,8 +205,24 @@ public sealed class GiftApiTests
         Assert.Equal(HttpStatusCode.Forbidden, (await desk.PostAsJsonAsync($"{path}/{shown.Id}/confirm", new ConfirmGift())).StatusCode);
         var confirmed = await Read<GiftDto>(await owner.PostAsJsonAsync($"{path}/{shown.Id}/confirm", new ConfirmGift()), HttpStatusCode.OK);
         Assert.Equal((PlanningGift.Paid, (long?)300_000), (confirmed.Status, confirmed.AmountReceived));
+        // A sealed envelope in the gift box: only who gave it, here Lan's companion; the couple counts the money later.
+        var hoa = new PlanningParticipant { Id = Guid.NewGuid(), GuestId = guests["Lan"].Id, FullName = "Chị Hoa", Role = "COMPANION" };
+        db.Add(hoa); await db.SaveChangesAsync();
+        var sealedEnvelope = await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Cash, GuestId: guests["Lan"].Id,
+            ParticipantId: hoa.Id), "desk-5"), HttpStatusCode.Created);
+        Assert.Equal(("Chị Hoa", (Guid?)hoa.Id, guests["Lan"].Id, PlanningGift.Claimed, (long?)null),
+            (sealedEnvelope.GiverName, sealedEnvelope.ParticipantId, sealedEnvelope.GuestId!.Value, sealedEnvelope.Status, sealedEnvelope.AmountReceived));
+        await AssertProblem(HttpStatusCode.NotFound, "PARTICIPANT_NOT_FOUND", await Send(desk, path,
+            new RecordGift(PlanningGift.Cash, GuestId: guests["Lan"].Id, ParticipantId: Guid.NewGuid()), "desk-6"));
+        Assert.Equal(1, (await owner.GetFromJsonAsync<GiftSummaryDto>(path + "/summary"))!.EnvelopesToCount);
+        await AssertProblem(HttpStatusCode.UnprocessableEntity, "GIFT_AMOUNT_REQUIRED",
+            await owner.PostAsJsonAsync($"{path}/{sealedEnvelope.Id}/confirm", new ConfirmGift()));
+        Assert.Equal(HttpStatusCode.Forbidden, (await desk.PostAsJsonAsync($"{path}/{sealedEnvelope.Id}/confirm", new ConfirmGift(700_000))).StatusCode);
+        var counted = await Read<GiftDto>(await owner.PostAsJsonAsync($"{path}/{sealedEnvelope.Id}/confirm", new ConfirmGift(700_000)), HttpStatusCode.OK);
+        Assert.Equal((PlanningGift.Paid, (long?)700_000), (counted.Status, counted.AmountReceived));
+
         var reception = (await desk.GetFromJsonAsync<List<GiftDto>>(path + "/reception"))!;
-        Assert.Equal(5, reception.Count); // owner: present + envelope; desk: envelope + present + shown transfer
+        Assert.Equal(6, reception.Count); // owner: present + envelope; desk: envelope + present + shown transfer + sealed envelope
         Assert.All(reception, g => Assert.True(g.Method is PlanningGift.Cash or PlanningGift.Item || g.HasProof));
         Assert.All(reception, g => Assert.Null(g.Message)); // wishes stay with the couple
         Assert.Equal(300_000, reception.Single(g => g.HasProof).AmountReceived ?? reception.Single(g => g.HasProof).AmountExpected); // checked against the guest's phone

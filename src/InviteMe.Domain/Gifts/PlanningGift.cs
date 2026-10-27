@@ -34,7 +34,9 @@ public sealed class PlanningGiftAccount
 /// ITEM = a present handed over at the wedding: the couple or a co-host records it there, already received. It has no
 /// amount; ItemValue is only informative and never counted in money totals.
 /// A TRANSFER shown at the reception desk is recorded by a co-host with a photo of the transfer: it stays CLAIMED until the
-/// couple sees the money in their account and confirms it.
+/// couple sees the money in their account and confirms it. A sealed CASH envelope dropped in the gift box is recorded with
+/// its giver only: it stays CLAIMED until the couple opens it and enters the amount.
+/// ParticipantId = the person of the invitation who gave (e.g. a companion), GuestId = their invitation.
 /// </summary>
 public sealed class PlanningGift
 {
@@ -52,6 +54,8 @@ public sealed class PlanningGift
     public Guid WeddingId { get; private set; }
     public Guid? GuestId { get; private set; }
     public string GiverName { get; private set; } = "";
+    /// <summary>Who of the invitation gave it (the main guest or a companion); null = the invitation as a whole.</summary>
+    public Guid? ParticipantId { get; private set; }
     public Guid? AccountId { get; private set; }
     /// <summary>Transfer code put in the bank transfer content (QR gifts only), e.g. MC7K2Q9PXA.</summary>
     public string? Code { get; private set; }
@@ -106,6 +110,17 @@ public sealed class PlanningGift
             CreatedAt = now, ExpiresAt = now, PaidAt = paidAt
         }
         : throw new ArgumentOutOfRangeException(nameof(amount));
+
+    /// <summary>A sealed envelope put in the gift box: who gave it is known, the amount is counted by the couple later.</summary>
+    public static PlanningGift Envelope(Guid weddingId, Guid? guestId, string giverName, string? message, Guid actor, DateTimeOffset now,
+        string? idempotencyKey = null) => new()
+    {
+        Id = Guid.NewGuid(), WeddingId = weddingId, GuestId = guestId, GiverName = giverName, Method = Cash, Message = message,
+        Status = Claimed, ClaimedAt = now, RecordedBy = actor, CreatedAt = now, ExpiresAt = now, IdempotencyKey = idempotencyKey
+    };
+
+    /// <summary>The person of the invitation who gave the gift (main guest or companion).</summary>
+    public PlanningGift GivenBy(Guid? participantId) { ParticipantId = participantId; return this; }
 
     /// <summary>A transfer a guest shows at the reception desk: the couple still has to see the money and confirm it.</summary>
     public static PlanningGift FromHallTransfer(Guid weddingId, Guid? guestId, string giverName, long amount, string? message, Guid proofId,

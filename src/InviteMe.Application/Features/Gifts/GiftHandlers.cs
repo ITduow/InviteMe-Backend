@@ -301,7 +301,8 @@ public static class GiftBook
             Total(PlanningGift.Cash), Count(PlanningGift.Cash), Total(PlanningGift.Transfer), Count(PlanningGift.Transfer),
             gifts.Count(g => g.Status is PlanningGift.Pending or PlanningGift.Claimed), gifts.Count(g => g.Status == PlanningGift.Claimed),
             gifts.Count(g => g.Status == PlanningGift.Expired), paid.Count(g => g.AmountMismatch), needsReview, accounts,
-            items.Count, items.Sum(g => g.ItemQuantity ?? 1));
+            items.Count, items.Sum(g => g.ItemQuantity ?? 1),
+            gifts.Count(g => g.Method == PlanningGift.Cash && g.Status == PlanningGift.Claimed));
     }
 
     /// <summary>UTF-8 with BOM so Excel shows Vietnamese; cells are protected against formula injection.</summary>

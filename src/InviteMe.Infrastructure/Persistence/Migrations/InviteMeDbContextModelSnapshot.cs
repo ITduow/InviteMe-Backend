@@ -1363,6 +1363,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("paid_at");
 
+                    b.Property<Guid?>("ParticipantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("participant_id");
+
                     b.Property<Guid?>("ProofId")
                         .HasColumnType("uuid")
                         .HasColumnName("proof_id");
@@ -5657,6 +5661,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasForeignKey("GuestId")
                         .OnDelete(DeleteBehavior.SetNull)
                         .HasConstraintName("fk_planning_gifts_guest");
+
+                    b.HasOne("InviteMe.Domain.Guests.PlanningParticipant", null)
+                        .WithMany()
+                        .HasForeignKey("ParticipantId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_planning_gifts_participant");
 
                     b.HasOne("InviteMe.Domain.Gifts.PlanningGiftProof", null)
                         .WithMany()

@@ -69,6 +69,8 @@ public sealed class PlanningGiftConfiguration : IEntityTypeConfiguration<Plannin
         b.Property(x => x.ItemQuantity).HasColumnName("item_quantity");
         b.Property(x => x.ItemValue).HasColumnName("item_value");
         b.Property(x => x.ProofId).HasColumnName("proof_id");
+        b.Property(x => x.ParticipantId).HasColumnName("participant_id");
+        b.HasOne<PlanningParticipant>().WithMany().HasForeignKey(x => x.ParticipantId).OnDelete(DeleteBehavior.SetNull).HasConstraintName("fk_planning_gifts_participant");
         b.HasOne<PlanningGiftProof>().WithMany().HasForeignKey(x => x.ProofId).OnDelete(DeleteBehavior.SetNull).HasConstraintName("fk_planning_gifts_proof");
         b.Ignore(x => x.AmountMismatch);
         b.HasIndex(x => x.Code).IsUnique().HasFilter("code IS NOT NULL").HasDatabaseName("uq_planning_gifts_code");
