@@ -242,6 +242,20 @@ public sealed class GiftApiTests
         var listed = (await owner.GetFromJsonAsync<PagedResult<GiftDto>>(path))!.Items.Single();
         Assert.Equal((PlanningGift.Claimed, true), (listed.Status, listed.HasProof));
         Assert.Equal(Png, await (await owner.GetAsync($"{path}/{gift.Id}/proof")).Content.ReadAsByteArrayAsync());
+
+        // Receipts sent online are for the couple: a reception co-host neither lists the QR gift nor opens its receipt.
+        using var desk = await SignIn(factory, "receipt-desk");
+        await CoHostPermissionTests.AddCoHostAsync(owner, desk, w, "GIFT_RECORD");
+        Assert.Empty((await desk.GetFromJsonAsync<List<GiftDto>>(path + "/reception"))!);
+        Assert.Equal(HttpStatusCode.NotFound, (await desk.GetAsync($"{path}/{gift.Id}/proof")).StatusCode);
+        var deskPhoto = await Read<GiftProofDto>(await UploadProof(desk, path + "/proofs", Png), HttpStatusCode.Created);
+        var deskTransfer = await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Transfer, 200_000, GiverName: "Chị Mai",
+            ProofId: deskPhoto.Id), "d1"), HttpStatusCode.Created);
+        Assert.Equal(HttpStatusCode.OK, (await desk.GetAsync($"{path}/{deskTransfer.Id}/proof")).StatusCode);
+        using var otherDesk = await SignIn(factory, "receipt-desk-2");
+        await CoHostPermissionTests.AddCoHostAsync(owner, otherDesk, w, "GIFT_RECORD");
+        Assert.Equal(HttpStatusCode.NotFound, (await otherDesk.GetAsync($"{path}/{deskTransfer.Id}/proof")).StatusCode); // only your own photos
+        Assert.Null(Assert.Single((await otherDesk.GetFromJsonAsync<List<GiftDto>>(path + "/reception"))!).Code);
         Assert.Equal(PlanningGift.Paid, (await Read<GiftDto>(await owner.PostAsJsonAsync($"{path}/{gift.Id}/confirm", new ConfirmGift()), HttpStatusCode.OK)).Status);
         await AssertProblem(HttpStatusCode.UnprocessableEntity, "GIFT_CLOSED", await UploadProof(guest, $"{an}/{gift.Id}/proof", Png)); // money confirmed
         Assert.Equal(1, await db.Set<PlanningGiftProof>().CountAsync(x => x.GuestId == guests["An"].Id));

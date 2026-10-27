@@ -135,7 +135,8 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
     {
         var owner = await permissions.HasPermissionAsync(weddingId, WeddingPermission.GIFT_VIEW, ct);
         await Require(weddingId, owner ? WeddingPermission.GIFT_VIEW : WeddingPermission.GIFT_RECORD, ct);
-        return await store.ProofAsync(weddingId, giftId, ct)
+        // A co-host only sees the photos they took; guests' receipts are for the couple.
+        return await store.ProofAsync(weddingId, giftId, owner ? null : user.UserId, ct)
             ?? throw new ApplicationProblemException(ProblemKind.NotFound, "GIFT_PROOF_NOT_FOUND", "Quà mừng này không có ảnh chuyển khoản.");
     }
 
@@ -206,9 +207,11 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
     {
         var owner = await permissions.HasPermissionAsync(weddingId, WeddingPermission.GIFT_VIEW, ct);
         await Require(weddingId, owner ? WeddingPermission.GIFT_VIEW : WeddingPermission.GIFT_RECORD, ct);
-        var gifts = (await store.GiftsAsync(weddingId, ct)).Where(g => g.Method is PlanningGift.Cash or PlanningGift.Item || g.HasProof);
+        // Only what is handed over at the desk: guests' online QR gifts (and their receipts) are not part of it.
+        var gifts = (await store.GiftsAsync(weddingId, ct))
+            .Where(g => g.Method is PlanningGift.Cash or PlanningGift.Item || (g.Method == PlanningGift.Transfer && g.HasProof));
         return (owner ? gifts : gifts.Select(g => g with { AmountExpected = null, AmountReceived = null, AmountMismatch = false, Message = null,
-            ItemValue = null })).ToList();
+            ItemValue = null, Code = null, Confirmation = null, AccountId = null })).ToList();
     }
 
     /// <summary>True for the owner (GIFT_EDIT); false for a co-host who may only record at the reception (GIFT_RECORD).</summary>

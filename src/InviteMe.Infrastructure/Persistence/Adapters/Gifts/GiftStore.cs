@@ -205,10 +205,10 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         return new(GuestDto(gift, (await Accounts(wedding.Id, ct)).FirstOrDefault(a => a.Id == gift.AccountId)), true, wedding.Id);
     }
 
-    public async Task<GiftProofFile?> ProofAsync(Guid weddingId, Guid giftId, CancellationToken ct) =>
+    public async Task<GiftProofFile?> ProofAsync(Guid weddingId, Guid giftId, Guid? uploadedBy, CancellationToken ct) =>
         await (from g in db.Set<PlanningGift>().AsNoTracking()
                join p in db.Set<PlanningGiftProof>().AsNoTracking() on g.ProofId equals (Guid?)p.Id
-               where g.Id == giftId && g.WeddingId == weddingId && p.WeddingId == weddingId
+               where g.Id == giftId && g.WeddingId == weddingId && p.WeddingId == weddingId && (uploadedBy == null || p.UploadedBy == uploadedBy)
                select new GiftProofFile(p.Content, p.ContentType)).SingleOrDefaultAsync(ct);
 
     public async Task<GiftDto> ConfirmAsync(Guid weddingId, Guid giftId, long? amount, Guid actor, CancellationToken ct)

@@ -25,7 +25,8 @@ public interface IGiftStore
     /// <summary>atReception = recorded by a co-host: a TRANSFER is then a claim with a photo, confirmed later by the couple.</summary>
     Task<GiftDto> RecordAsync(Guid weddingId, RecordGift input, Guid actor, string? idempotencyKey, CancellationToken ct, bool atReception = false);
     Task<GiftProofDto> SaveProofAsync(Guid weddingId, string contentType, byte[] content, Guid actor, CancellationToken ct);
-    Task<GiftProofFile?> ProofAsync(Guid weddingId, Guid giftId, CancellationToken ct);
+    /// <summary>uploadedBy: only a photo this user uploaded (null = any photo of the gift).</summary>
+    Task<GiftProofFile?> ProofAsync(Guid weddingId, Guid giftId, Guid? uploadedBy, CancellationToken ct);
     /// <summary>The guest sends the photo of their transfer for their QR gift; the gift becomes CLAIMED (Created = changed).</summary>
     Task<GuestGiftResult> AttachGuestProofAsync(string token, Guid giftId, string contentType, byte[] content, CancellationToken ct);
     Task<GiftDto> ConfirmAsync(Guid weddingId, Guid giftId, long? amount, Guid actor, CancellationToken ct);
