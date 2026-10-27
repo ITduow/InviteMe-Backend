@@ -999,4 +999,110 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         return new(weddingId, version, tables, guests, places, assignments, layout, allWarnings,
             isLocked, lockedAt, lockedBy, isEventStarted, eventStartedAt, eventStartedBy);
     }
+
+    public async Task<IReadOnlyList<UnattendedGuestDto>> GetUnattendedGuestsAsync(Guid weddingId, Guid tableId, CancellationToken ct)
+    {
+        var table = await db.Set<PlanningTable>().AsNoTracking()
+            .SingleOrDefaultAsync(t => t.WeddingId == weddingId && t.Id == tableId, ct)
+            ?? throw Missing("TABLE_NOT_FOUND");
+
+        var assignments = await db.Set<PlanningSeatAssignment>().AsNoTracking()
+            .Where(a => a.TableId == tableId)
+            .OrderBy(a => a.SeatNumber)
+            .ToListAsync(ct);
+
+        var placeIds = assignments.Select(a => a.PlaceId).ToList();
+        var checkedInPlaceIds = await db.Set<PlanningCheckIn>().AsNoTracking()
+            .Where(c => placeIds.Contains(c.PlaceId))
+            .Select(c => c.PlaceId)
+            .ToListAsync(ct);
+
+        var unattendedPlaceIds = placeIds.Except(checkedInPlaceIds).ToList();
+        if (unattendedPlaceIds.Count == 0) return [];
+
+        var rows = await (from p in db.Set<PlanningPlace>().AsNoTracking()
+            where unattendedPlaceIds.Contains(p.Id)
+            join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
+            join person in db.Set<PlanningParticipant>() on p.ParticipantId equals (Guid?)person.Id into people
+            from person in people.DefaultIfEmpty()
+            join grp in db.Set<PlanningGroup>() on g.GroupId equals (Guid?)grp.Id into groups
+            from grp in groups.DefaultIfEmpty()
+            select new
+            {
+                PlaceId = p.Id,
+                GuestId = g.Id,
+                g.RecipientName,
+                PersonName = person == null ? null : person.FullName,
+                g.Side,
+                GroupName = grp == null ? null : grp.Name
+            }).ToListAsync(ct);
+
+        var assignmentByPlace = assignments.ToDictionary(a => a.PlaceId, a => a.SeatNumber);
+        return rows.Select(r => new UnattendedGuestDto(
+            r.PlaceId,
+            r.GuestId,
+            r.RecipientName,
+            r.PersonName,
+            assignmentByPlace.GetValueOrDefault(r.PlaceId),
+            r.Side,
+            r.GroupName)).OrderBy(x => x.SeatNumber).ToList();
+    }
+
+    public async Task<IReadOnlyList<SeatingAuditLogDto>> GetSeatingAuditLogsAsync(Guid weddingId, CancellationToken ct)
+    {
+        var actions = new[] { "SEATING_DAY_OF_CHANGE", "SEATING_EVENT_STARTED", "SEATING_PLAN_LOCKED", "SEATING_PLAN_UNLOCKED", "RELEASE_DECLINED_SEATS" };
+        var logs = await db.AuditLogs.AsNoTracking()
+            .Where(a => a.WeddingId == weddingId && actions.Contains(a.Action))
+            .OrderByDescending(a => a.CreatedAt)
+            .Take(100)
+            .Select(a => new SeatingAuditLogDto(a.Id, a.WeddingId, a.Action, a.ActorUserId, a.CreatedAt, a.Metadata))
+            .ToListAsync(ct);
+        return logs;
+    }
+
+    public async Task<SeatingSummaryDto> GetSummaryAsync(Guid weddingId, CancellationToken ct)
+    {
+        var layout = await GetLayoutAsync(weddingId, ct);
+        var tables = await db.Set<PlanningTable>().AsNoTracking()
+            .Where(t => t.WeddingId == weddingId)
+            .OrderBy(t => t.Number)
+            .ToListAsync(ct);
+
+        var tableIds = tables.Select(t => t.Id).ToList();
+        var assignments = await db.Set<PlanningSeatAssignment>().AsNoTracking()
+            .Where(a => tableIds.Contains(a.TableId))
+            .ToListAsync(ct);
+
+        var placeIds = assignments.Select(a => a.PlaceId).ToList();
+        var checkIns = await db.Set<PlanningCheckIn>().AsNoTracking()
+            .Where(c => placeIds.Contains(c.PlaceId))
+            .Select(c => c.PlaceId)
+            .ToListAsync(ct);
+        var checkedInPlaceSet = checkIns.ToHashSet();
+
+        var seatedByTable = assignments.GroupBy(a => a.TableId).ToDictionary(g => g.Key, g => g.Count());
+        var checkedInByTable = assignments.Where(a => checkedInPlaceSet.Contains(a.PlaceId))
+            .GroupBy(a => a.TableId).ToDictionary(g => g.Key, g => g.Count());
+
+        var summaryTables = tables.Select(t => new SeatingSummaryTableDto(
+            t.Id,
+            t.Name,
+            t.Number,
+            t.Side,
+            t.Row,
+            t.Column,
+            t.IsVip,
+            t.Capacity,
+            t.ExtraSeats,
+            seatedByTable.GetValueOrDefault(t.Id, 0),
+            checkedInByTable.GetValueOrDefault(t.Id, 0))).ToList();
+
+        var totalCapacity = tables.Sum(t => t.Capacity + t.ExtraSeats);
+        var totalSeated = assignments.Count;
+        var totalCheckedIn = checkedInPlaceSet.Count;
+        var placedTables = tables.Count(t => t.Row.HasValue && t.Column.HasValue);
+
+        return new SeatingSummaryDto(weddingId, layout, tables.Count, placedTables, totalCapacity, totalSeated, totalCheckedIn, summaryTables);
+    }
 }
+

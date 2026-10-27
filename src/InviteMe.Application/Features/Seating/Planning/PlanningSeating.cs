@@ -28,6 +28,46 @@ public sealed record UpdateSeatingLayout(
     string Numbering,
     int ExpectedVersion);
 
+public sealed record UnattendedGuestDto(
+    Guid PlaceId,
+    Guid GuestId,
+    string GuestName,
+    string? ParticipantName,
+    int SeatNumber,
+    string? Side,
+    string? GroupName);
+
+public sealed record SeatingSummaryTableDto(
+    Guid Id,
+    string Name,
+    int Number,
+    string? Side,
+    int? Row,
+    int? Column,
+    bool IsVip,
+    int Capacity,
+    int ExtraSeats,
+    int SeatedCount,
+    int CheckedInCount);
+
+public sealed record SeatingSummaryDto(
+    Guid WeddingId,
+    SeatingLayoutDto Layout,
+    int TotalTables,
+    int PlacedTables,
+    int TotalCapacity,
+    int TotalSeated,
+    int TotalCheckedIn,
+    IReadOnlyList<SeatingSummaryTableDto> Tables);
+
+public sealed record SeatingAuditLogDto(
+    Guid Id,
+    Guid? WeddingId,
+    string Action,
+    Guid? ActorUserId,
+    DateTimeOffset CreatedAt,
+    string? Metadata);
+
 public sealed record PlanningTableDto(
     Guid Id,
     string Name,
@@ -111,6 +151,12 @@ public interface IPlanningSeatingStore
         Task.FromResult(new SeatingLayoutDto(6, 3, 6, 3, "BY_ROW", 0));
     Task<SeatingLayoutDto> UpdateLayoutAsync(Guid weddingId, UpdateSeatingLayout input, CancellationToken ct) =>
         Task.FromResult(new SeatingLayoutDto(input.GroomRows, input.GroomColumns, input.BrideRows, input.BrideColumns, input.Numbering, input.ExpectedVersion + 1));
+    Task<IReadOnlyList<UnattendedGuestDto>> GetUnattendedGuestsAsync(Guid weddingId, Guid tableId, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<UnattendedGuestDto>>([]);
+    Task<IReadOnlyList<SeatingAuditLogDto>> GetSeatingAuditLogsAsync(Guid weddingId, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<SeatingAuditLogDto>>([]);
+    Task<SeatingSummaryDto> GetSummaryAsync(Guid weddingId, CancellationToken ct) =>
+        Task.FromResult(new SeatingSummaryDto(weddingId, new SeatingLayoutDto(6, 3, 6, 3, "BY_ROW", 0), 0, 0, 0, 0, 0, []));
 }
 
 public sealed class UpdateSeatingLayoutValidator : AbstractValidator<UpdateSeatingLayout>
@@ -250,7 +296,7 @@ public sealed class PlanningSeatingHandler(
                 "SEATING_SCOPE_MISMATCH",
                 "Seating edit scope must be contained in the assigned view scope.");
         var groupScope = editScope.IsWeddingWide ? null : editScope.GroupIds;
-        if (groupScope is not null && (input.Action is "APPLY_SUGGESTION" or "RENUMBER_TABLES" or "TAG_TABLES" or "SWAP_TABLES"))
+        if (groupScope is not null && (input.Action is "APPLY_SUGGESTION" or "RENUMBER_TABLES" or "TAG_TABLES" or "SWAP_TABLES" or "LOCK_PLAN" or "UNLOCK_PLAN" or "START_EVENT"))
             throw new InviteMe.Application.Common.Errors.ApplicationProblemException(
                 InviteMe.Application.Common.Errors.ProblemKind.Forbidden,
                 "SEATING_SUGGESTION_REQUIRES_WEDDING_SCOPE",
@@ -273,5 +319,23 @@ public sealed class PlanningSeatingHandler(
                 "Automatic seating suggestions require wedding-wide seating access.");
         await suggestions.ValidateAsync(input, ct);
         return SeatingSuggestions.Generate(await store.GetAsync(weddingId, ct), input);
+    }
+
+    public async Task<IReadOnlyList<UnattendedGuestDto>> GetUnattendedGuestsAsync(Guid weddingId, Guid tableId, CancellationToken ct)
+    {
+        await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
+        return await store.GetUnattendedGuestsAsync(weddingId, tableId, ct);
+    }
+
+    public async Task<IReadOnlyList<SeatingAuditLogDto>> GetSeatingAuditLogsAsync(Guid weddingId, CancellationToken ct)
+    {
+        await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
+        return await store.GetSeatingAuditLogsAsync(weddingId, ct);
+    }
+
+    public async Task<SeatingSummaryDto> GetSummaryAsync(Guid weddingId, CancellationToken ct)
+    {
+        await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
+        return await store.GetSummaryAsync(weddingId, ct);
     }
 }

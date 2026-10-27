@@ -46,10 +46,15 @@ public sealed class GuestAccessStore(InviteMeDbContext db, TimeProvider clock) :
                               Attending = person != null && person.AttendanceStatus == "ATTENDING",
                               Table = table == null ? null : table.Name, SeatNumber = assignment == null ? null : (int?)assignment.SeatNumber,
                               CheckedInAt = checkIn == null ? null : (DateTimeOffset?)checkIn.CheckedInAt,
-                              CheckInKind = checkIn == null ? null : checkIn.Kind
+                              CheckInKind = checkIn == null ? null : checkIn.Kind,
+                              TableNumber = table == null ? null : (int?)table.Number,
+                              TableSide = table == null ? null : table.Side,
+                              TableRow = table == null ? null : table.Row,
+                              TableColumn = table == null ? null : table.Column,
+                              IsVip = table == null ? null : (bool?)table.IsVip
                           }).ToListAsync(ct);
         return rows.Select(x => new ReceptionSeatDto(x.Id, x.Position, x.ParticipantId, x.PersonName, RsvpPlaceStatus.Of(answered, x.Attending),
-            x.Table, x.SeatNumber, x.CheckedInAt, x.CheckInKind)).ToList();
+            x.Table, x.SeatNumber, x.CheckedInAt, x.CheckInKind, x.TableNumber, x.TableSide, x.TableRow, x.TableColumn, x.IsVip)).ToList();
     }
 
     public async Task<SeatingPublicationDto> PublicationAsync(Guid weddingId, CancellationToken ct) =>

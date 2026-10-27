@@ -71,6 +71,15 @@ internal static class GuestPlanningEndpoints
         g.MapPost("/seating-suggestions/apply", (Guid weddingId, ApplySeatingSuggestionRequest input, PlanningSeatingHandler handler, CancellationToken ct) =>
             handler.ChangeAsync(weddingId, new ChangePlanningSeating(input.ExpectedVersion, "APPLY_SUGGESTION", Strategy: input.Strategy, Mode: input.Mode, SourceFingerprint: input.SourceFingerprint, ConfirmReplace: input.ConfirmReplace), ct))
             .WithName("ApplySeatingSuggestion").Produces<PlanningSeatingDto>().ProducesProblem(403).ProducesProblem(409).ProducesProblem(422);
+        g.MapGet("/seating/audit-logs", (Guid weddingId, PlanningSeatingHandler handler, CancellationToken ct) =>
+            handler.GetSeatingAuditLogsAsync(weddingId, ct))
+            .WithName("GetSeatingAuditLogs").Produces<IReadOnlyList<SeatingAuditLogDto>>().ProducesProblem(403);
+        g.MapGet("/seating/tables/{tableId:guid}/unattended-guests", (Guid weddingId, Guid tableId, PlanningSeatingHandler handler, CancellationToken ct) =>
+            handler.GetUnattendedGuestsAsync(weddingId, tableId, ct))
+            .WithName("GetUnattendedGuests").Produces<IReadOnlyList<UnattendedGuestDto>>().ProducesProblem(403).ProducesProblem(404);
+        g.MapGet("/seating-summary", (Guid weddingId, PlanningSeatingHandler handler, CancellationToken ct) =>
+            handler.GetSummaryAsync(weddingId, ct))
+            .WithName("GetSeatingSummary").Produces<SeatingSummaryDto>().ProducesProblem(403);
         return endpoints;
     }
 }
