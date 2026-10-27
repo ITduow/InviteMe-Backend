@@ -34,6 +34,13 @@ public sealed record PlanningTableDto(
     bool IsVip = false,
     int ExtraSeats = 0);
 
+public sealed record SeatingWarningDto(
+    string Code,
+    string Message,
+    Guid? TableId = null,
+    Guid? GuestId = null,
+    Guid? PlaceId = null);
+
 public sealed record PlanningAssignmentDto(Guid PlaceId, Guid TableId, int SeatNumber);
 public sealed record PlanningSeatingPlace(Guid Id, Guid GuestId, int Position, PlanningPersonDto? Person);
 
@@ -44,7 +51,8 @@ public sealed record PlanningSeatingDto(
     IReadOnlyList<PlanningGuestDto> Guests,
     IReadOnlyList<PlanningSeatingPlace> Places,
     IReadOnlyList<PlanningAssignmentDto> Assignments,
-    SeatingLayoutDto? Layout = null);
+    SeatingLayoutDto? Layout = null,
+    IReadOnlyList<SeatingWarningDto>? Warnings = null);
 
 public sealed record ChangePlanningSeating(
     int ExpectedVersion,
@@ -69,7 +77,10 @@ public sealed record ChangePlanningSeating(
     int? ExtraSeats = null,
     IReadOnlyList<Guid>? TableIds = null,
     Guid? TargetTableId = null,
-    bool ConfirmDeleteWithGuests = false);
+    bool ConfirmDeleteWithGuests = false,
+    Guid? GuestId = null,
+    Guid? PlaceId = null,
+    Guid? TargetPlaceId = null);
 
 public interface IPlanningSeatingStore
 {
@@ -103,7 +114,7 @@ public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePla
     {
         RuleFor(x => x.ExpectedVersion).GreaterThanOrEqualTo(0);
         RuleFor(x => x.Action).Must(x => x is "CREATE_TABLE" or "CREATE_TABLES" or "UPDATE_TABLE" or "DELETE_TABLE" or "MOVE_PLACES"
-            or "APPLY_SUGGESTION" or "PLACE_TABLE" or "MOVE_TABLE" or "SWAP_TABLES" or "TAG_TABLES" or "RENUMBER_TABLES");
+            or "APPLY_SUGGESTION" or "PLACE_TABLE" or "MOVE_TABLE" or "SWAP_TABLES" or "TAG_TABLES" or "RENUMBER_TABLES" or "MOVE_PARTY" or "SWAP_PLACES");
         RuleFor(x => x.TableId).NotEqual(Guid.Empty).When(x => x.TableId.HasValue);
         RuleFor(x => x.GroupId).NotEqual(Guid.Empty).When(x => x.GroupId.HasValue);
         RuleFor(x => x).Must(x => x.TableId.HasValue).When(x => x.Action is "UPDATE_TABLE" or "DELETE_TABLE" or "PLACE_TABLE" or "MOVE_TABLE");
@@ -145,6 +156,23 @@ public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePla
             RuleFor(x => x.PlaceIds).Must(x => x is { Count: >= 1 and <= 500 } && x.All(id => id != Guid.Empty) && x.Distinct().Count() == x.Count);
             RuleFor(x => x.SeatNumber).GreaterThan(0).When(x => x.SeatNumber.HasValue);
             RuleFor(x => x).Must(x => x.SeatNumber is null || x.TableId.HasValue);
+        });
+        When(x => x.Action == "MOVE_PARTY", () =>
+        {
+            RuleFor(x => x).Must(x => x.GuestId.HasValue || (x.PlaceIds != null && x.PlaceIds.Count == 1))
+                .WithMessage("Cần chỉ định thiệp hoặc khách để xếp cả nhóm.");
+            RuleFor(x => x.TableId).NotEqual(Guid.Empty).When(x => x.TableId.HasValue);
+            RuleFor(x => x.SeatNumber).GreaterThan(0).When(x => x.SeatNumber.HasValue);
+        });
+        When(x => x.Action == "SWAP_PLACES", () =>
+        {
+            RuleFor(x => x).Must(x => (x.PlaceId.HasValue && x.TargetPlaceId.HasValue) || (x.PlaceIds != null && x.PlaceIds.Count == 2))
+                .WithMessage("Cần chỉ định 2 khách để đổi chỗ.");
+            RuleFor(x => x).Must(x => {
+                var p1 = x.PlaceId ?? x.PlaceIds?[0];
+                var p2 = x.TargetPlaceId ?? x.PlaceIds?[1];
+                return p1 != p2 && p1 != Guid.Empty && p2 != Guid.Empty;
+            }).WithMessage("Không thể đổi chỗ một người với chính mình.");
         });
         When(x => x.Action == "APPLY_SUGGESTION", () =>
         {
