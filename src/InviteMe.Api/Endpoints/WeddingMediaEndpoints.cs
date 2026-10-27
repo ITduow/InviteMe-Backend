@@ -20,8 +20,8 @@ internal static class WeddingMediaEndpoints
             await using var stream = form.File.OpenReadStream();
             return Results.Ok(await h.UploadAsync(weddingId, stream, form.File.Length, ct));
         }).DisableAntiforgery().RequireRateLimiting("wedding-cover-upload")
-            .WithMetadata(new RequestSizeLimitAttribute(6 * 1024 * 1024),
-                new RequestFormLimitsAttribute { MultipartBodyLengthLimit = 6 * 1024 * 1024 });
+            .WithMetadata(new RequestSizeLimitAttribute(InviteMe.Domain.Weddings.UploadLimits.MaxImageRequestBytes),
+                new RequestFormLimitsAttribute { MultipartBodyLengthLimit = InviteMe.Domain.Weddings.UploadLimits.MaxImageRequestBytes });
         return endpoints;
     }
 }

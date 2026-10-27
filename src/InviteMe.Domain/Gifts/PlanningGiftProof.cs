@@ -7,7 +7,7 @@ namespace InviteMe.Domain.Gifts;
 /// </summary>
 public sealed class PlanningGiftProof
 {
-    public const int MaxBytes = 5 * 1024 * 1024;
+    public const int MaxBytes = InviteMe.Domain.Weddings.UploadLimits.MaxImageBytes;
 
     public Guid Id { get; private set; }
     public Guid WeddingId { get; private set; }

@@ -20,7 +20,7 @@ public sealed record GiftWebhookOptions(string? ApiKey);
 
 /// <summary>Guest08: the guest chooses an amount and a wish, gets a VietQR code to their couple's account, and may say "đã chuyển".</summary>
 public sealed class GiftGuestHandler(IGiftStore store, RequestValidation<CreateGuestGift> validation, IPlanningChangePublisher changes,
-    IGiftProofStorage proofs)
+    IGiftProofStorage proofs, InviteMe.Application.Features.Weddings.Setup.ImageUploadLimit limit)
 {
     public Task<GuestGiftPageDto> PageAsync(string token, CancellationToken ct) => store.GuestPageAsync(token, ct);
 
@@ -39,7 +39,7 @@ public sealed class GiftGuestHandler(IGiftStore store, RequestValidation<CreateG
     /// <summary>"Đã chuyển" with a photo of the bank receipt (JPEG/PNG/WebP, at most 5 MB): the couple sees it before confirming.</summary>
     public async Task<GuestGiftDto> SendProofAsync(string token, Guid giftId, Stream content, long length, CancellationToken ct)
     {
-        var (type, bytes) = await GiftProofImage.ReadAsync(content, length, ct);
+        var (type, bytes) = await GiftProofImage.ReadAsync(content, length, limit, ct);
         var result = await GiftProofImage.StoreAsync(proofs, type, bytes, key => store.AttachGuestProofAsync(token, giftId, key, type, bytes.Length, ct), ct);
         if (result.Created) await changes.PublishAsync(result.WeddingId, new(GiftRules.ChangedEvent, giftId), ct);
         return result.Gift;
@@ -62,7 +62,8 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
     RequestValidation<ConfirmGift> confirmValidation, RequestValidation<AssignGiftTransaction> assignValidation,
     RequestValidation<GiftLedgerFilter> filterValidation, RequestValidation<PageRequest> pages,
     RequestValidation<SimulateSePayTransfer> simulateValidation, IPlanningChangePublisher changes, TimeProvider clock,
-    InviteMe.Application.Features.Billing.IWeddingEntitlements plans, IGiftProofStorage proofs)
+    InviteMe.Application.Features.Billing.IWeddingEntitlements plans, IGiftProofStorage proofs,
+    InviteMe.Application.Features.Weddings.Setup.ImageUploadLimit limit)
 {
     public const string NeedsReview = "NEEDS_REVIEW";
 
@@ -127,7 +128,7 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
     public async Task<GiftProofDto> UploadProofAsync(Guid weddingId, Stream content, long length, CancellationToken ct)
     {
         await RequireRecorder(weddingId, ct);
-        var (type, bytes) = await GiftProofImage.ReadAsync(content, length, ct);
+        var (type, bytes) = await GiftProofImage.ReadAsync(content, length, limit, ct);
         return await GiftProofImage.StoreAsync(proofs, type, bytes, key => store.SaveProofAsync(weddingId, key, type, bytes.Length, user.UserId!.Value, ct), ct);
     }
 
@@ -267,10 +268,11 @@ public sealed class GiftWebhookHandler(IGiftStore store, GiftWebhookOptions opti
 /// <summary>A transfer photo: only real JPEG/PNG/WebP content of at most 5 MB is kept.</summary>
 internal static class GiftProofImage
 {
-    public static async Task<(string ContentType, byte[] Content)> ReadAsync(Stream content, long length, CancellationToken ct)
+    public static async Task<(string ContentType, byte[] Content)> ReadAsync(Stream content, long length,
+        InviteMe.Application.Features.Weddings.Setup.ImageUploadLimit limit, CancellationToken ct)
     {
-        if (length is <= 0 or > PlanningGiftProof.MaxBytes)
-            throw new ApplicationProblemException(ProblemKind.PayloadTooLarge, "GIFT_PROOF_SIZE_INVALID", "Ảnh tối đa 5 MB.");
+        if (length <= 0 || length > limit.Bytes)
+            throw new ApplicationProblemException(ProblemKind.PayloadTooLarge, "GIFT_PROOF_SIZE_INVALID", $"Ảnh tối đa {limit.Label}.");
         var image = await InviteMe.Application.Features.Weddings.Setup.WeddingCoverImage.DetectAsync(content, ct);
         using var buffer = new MemoryStream();
         await image.Content.CopyToAsync(buffer, ct);

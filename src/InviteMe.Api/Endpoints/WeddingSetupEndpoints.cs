@@ -39,18 +39,17 @@ internal static class WeddingSetupEndpoints
             WeddingSetupHandler handler, CancellationToken ct) => Results.Ok(await handler.CheckSlugAsync(slug, weddingId, ct)))
             .WithName("CheckWeddingSlugAvailability").RequireRateLimiting("wedding-slug-check")
             .Produces<WeddingSlugAvailability>().ProducesValidationProblem().ProducesProblem(401).ProducesProblem(403).ProducesProblem(429);
-        var configuredLimit = configuration.GetValue<long?>("WeddingMedia:MaximumFileSizeBytes") ?? 5 * 1024 * 1024;
-        var requestLimit = Math.Min(configuredLimit, 5 * 1024 * 1024) + 64 * 1024;
+        const long requestLimit = InviteMe.Domain.Weddings.UploadLimits.MaxImageRequestBytes;
         group.MapPost("/{weddingId:guid}/cover-image", async (Guid weddingId,
             [FromForm] WeddingCoverUploadForm form,
-            WeddingSetupHandler handler, IOptions<WeddingMediaOptions> mediaOptions, CancellationToken ct) =>
+            WeddingSetupHandler handler, IOptions<WeddingMediaOptions> mediaOptions, ImageUploadLimit limit, CancellationToken ct) =>
         {
             var image = form.Image;
             if (image is null) throw new ApplicationProblemException(ProblemKind.BadRequest, "WEDDING_COVER_REQUIRED", "An image file is required.");
             await using var stream = image.OpenReadStream();
             var options = mediaOptions.Value;
             var result = await handler.UploadCoverImageAsync(weddingId, stream, image.Length, form.ExpectedVersion,
-                Math.Min(options.MaximumFileSizeBytes, 5 * 1024 * 1024), options.AllowedFormats, ct);
+                limit.Bytes, options.AllowedFormats, ct);
             return Results.Ok(result);
         }).WithName("UploadWeddingCoverImage").RequireRateLimiting("wedding-cover-upload").DisableAntiforgery()
             .WithMetadata(new RequestSizeLimitAttribute(requestLimit), new RequestFormLimitsAttribute { MultipartBodyLengthLimit = requestLimit })
