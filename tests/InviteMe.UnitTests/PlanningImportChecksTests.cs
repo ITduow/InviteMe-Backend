@@ -55,6 +55,7 @@ public sealed class PlanningImportChecksTests
         var check = PlanningImportChecks.Analyze(
         [
             new(2, "Anh Tuấn", "Anh"),
+            new(6, "Gia đình ông Nguyễn Văn Đức", ExpectedPeople: 4), // the family label is part of the name: fine without honorific
             new(3, "Mai Hương", ExpectedPeople: 12),
             new(4, "Mai Hương", Phone: "0900000001")
         ], Existing);
@@ -72,6 +73,5 @@ public sealed class PlanningImportChecksTests
         Assert.Equal("0912345678", PlanningImportChecks.PhoneKey("+84 912.345.678"));
         Assert.Equal("0912345678", PlanningImportChecks.PhoneKey("(091) 234-5678"));
         Assert.Equal("84123", PlanningImportChecks.PhoneKey("84123")); // too short to be +84
-        Assert.Equal(("FAMILY", "INDIVIDUAL"), (PlanningImportChecks.InvitationKind(3), PlanningImportChecks.InvitationKind(1)));
     }
 }

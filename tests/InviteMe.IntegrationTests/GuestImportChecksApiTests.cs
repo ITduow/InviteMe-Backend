@@ -37,8 +37,8 @@ public sealed class GuestImportChecksApiTests
             "0912 345 678", Email: "an@example.test");
         var first = await Read<PlanningImportResult>(await Import(owner, path, [An(2), new(3, "Trần Thị Bình", "Chị", 1, "GROOM")]), HttpStatusCode.Created);
         Assert.Equal(2, first.CreatedGuestCount);
-        Assert.Equal(new[] { ("Nguyễn Văn An", "FAMILY"), ("Trần Thị Bình", "INDIVIDUAL") },
-            (await db.Set<PlanningGuest>().AsNoTracking().OrderBy(x => x.RowNumber).ToListAsync()).Select(x => (x.RecipientName, x.InvitationKind)).ToArray());
+        // No automatic "gia đình": the card shows the honorific and the name exactly as imported.
+        Assert.All(await db.Set<PlanningGuest>().AsNoTracking().ToListAsync(), x => Assert.Equal("INDIVIDUAL", x.InvitationKind));
 
         // Re-importing the same file with new people: the identical rows are left out, the new rows go in.
         PlanningRow[] again = [An(2), new(3, "Trần Thị Bình", "Chị", 1, "GROOM"), new(4, "Lê Văn Cường", "Anh", 2, "GROOM"), new(5, "Lê Văn Cường", "Anh", 2, "GROOM")];

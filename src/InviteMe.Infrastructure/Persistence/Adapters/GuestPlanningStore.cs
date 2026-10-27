@@ -235,7 +235,7 @@ public sealed class GuestPlanningStore(InviteMeDbContext db, InviteMe.Applicatio
             var guest = new PlanningGuest {
                 Id = Guid.NewGuid(), WeddingId = weddingId, ImportId = batch.Id, RowNumber = r.RowNumber,
                 RecipientName = PlanningText.Clean(r.RecipientName), Honorific = Optional(r.Honorific),
-                InvitationKind = PlanningImportChecks.InvitationKind(r.ExpectedPeople ?? 1),
+                InvitationKind = "INDIVIDUAL", // no automatic "gia đình"/"nhóm": the name says it
                 ExpectedPeople = r.ExpectedPeople ?? 1, Side = string.IsNullOrEmpty(r.Side) ? "UNSPECIFIED" : r.Side,
                 GroupId = groupId, Phone = Optional(r.Phone), Note = Optional(r.Note), Email = Optional(r.Email),
                 InvitationToken = InvitationToken.Generate()

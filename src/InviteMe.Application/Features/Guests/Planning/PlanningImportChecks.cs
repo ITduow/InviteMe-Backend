@@ -40,9 +40,6 @@ public static class PlanningImportChecks
 
     public static string EmailKey(string? email) => (email ?? "").Trim().ToLowerInvariant();
 
-    /// <summary>Kind of invitation shown on the card: several people = a family ("Kính mời gia đình ..."), else one person.</summary>
-    public static string InvitationKind(int expectedPeople) => expectedPeople > 1 ? "FAMILY" : "INDIVIDUAL";
-
     /// <summary>Every imported field, normalized: equal fingerprints = the same guest entered twice.</summary>
     private static string Fingerprint(string? name, string? honorific, int people, string? side, string? group, string? phone, string? email,
         string? note) => string.Join('\u001f', PlanningText.Key(name), PlanningText.Key(honorific), people,

@@ -7,7 +7,10 @@ using InviteMe.Domain.Weddings;
 namespace InviteMe.Application.Features.Guests.Planning;
 
 public sealed record PlanningGroupInput(Guid? ExistingId = null, string? NewName = null, bool Confirmed = false);
-/// <summary>One spreadsheet row. The kind of invitation is not imported: it follows ExpectedPeople (2+ = a family).</summary>
+/// <summary>
+/// One spreadsheet row. There is no invitation kind: the card shows the honorific and the name as written, so "Gia đình ông
+/// Nguyễn Văn Đức" or "Nhóm bạn lớp 12A1" goes in the name (honorific left empty). Nothing is added automatically.
+/// </summary>
 public sealed record PlanningRow(int RowNumber, string? RecipientName, string? Honorific = null,
     int? ExpectedPeople = null, string? Side = null,
     PlanningGroupInput? Group = null, string? Phone = null, string? Note = null, string? Email = null);
