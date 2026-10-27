@@ -51,8 +51,7 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
     RequestValidation<SaveGiftAccount> accountValidation, RequestValidation<RecordGift> recordValidation,
     RequestValidation<ConfirmGift> confirmValidation, RequestValidation<AssignGiftTransaction> assignValidation,
     RequestValidation<GiftLedgerFilter> filterValidation, RequestValidation<PageRequest> pages,
-    RequestValidation<SimulateSePayTransfer> simulateValidation, IPlanningChangePublisher changes, TimeProvider clock,
-    GiftCollectionOptions collection)
+    RequestValidation<SimulateSePayTransfer> simulateValidation, IPlanningChangePublisher changes, TimeProvider clock)
 {
     public const string NeedsReview = "NEEDS_REVIEW";
 
@@ -144,21 +143,13 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
         await changes.PublishAsync(weddingId, new(GiftRules.ChangedEvent, transactionId), ct);
     }
 
-    /// <summary>Sandbox collection: what InviteMe holds for this wedding (gifts paid to the collection account minus payouts).</summary>
-    public async Task<GiftBalanceDto> BalanceAsync(Guid weddingId, CancellationToken ct)
-    { await Require(weddingId, WeddingPermission.GIFT_VIEW, ct); return await store.BalanceAsync(weddingId, ct); }
-
-    public async Task<IReadOnlyList<GiftPayoutDto>> PayoutsAsync(Guid weddingId, CancellationToken ct)
-    { await Require(weddingId, WeddingPermission.GIFT_VIEW, ct); return await store.PayoutsAsync(weddingId, ct); }
-
-    /// <summary>Development only: builds the exact SePay webhook body for a transfer into the receiving account and processes it
-    /// (the collection account when it is on, unless a couple account is chosen).</summary>
+    /// <summary>Development only: builds the exact SePay webhook body for a transfer into one of the couple's accounts and processes it.</summary>
     public async Task<GiftWebhookResult> SimulateAsync(Guid weddingId, SimulateSePayTransfer input, GiftWebhookHandler webhook, CancellationToken ct)
     {
         await Require(weddingId, WeddingPermission.GIFT_EDIT, ct);
         await simulateValidation.ValidateAsync(input, ct);
         var accounts = await store.AccountsAsync(weddingId, ct);
-        var account = (input.AccountId is { } id ? accounts.FirstOrDefault(x => x.Id == id) : collection.Account() ?? accounts.FirstOrDefault())
+        var account = (input.AccountId is { } id ? accounts.FirstOrDefault(x => x.Id == id) : accounts.FirstOrDefault())
             ?? throw new ApplicationProblemException(ProblemKind.BusinessRule, "GIFT_ACCOUNT_REQUIRED", "Add a receiving account first.");
         var now = clock.GetUtcNow();
         var payload = new SePayWebhookPayload(RandomNumberGenerator.GetInt32(100_000_000, int.MaxValue), account.BankName,
@@ -202,47 +193,8 @@ public sealed class GiftWebhookHandler(IGiftStore store, GiftWebhookOptions opti
     {
         var result = await store.ProcessWebhookAsync(payload, rawJson, ct);
         if (!result.Replayed && result.WeddingId is { } weddingId)
-            await changes.PublishAsync(weddingId, result.PayoutId is { } payoutId ? new(GiftRules.PayoutEvent, payoutId)
-                : new(result.Paid ? GiftRules.ReceivedEvent : GiftRules.ChangedEvent, result.GiftId ?? weddingId), ct);
+            await changes.PublishAsync(weddingId, new(result.Paid ? GiftRules.ReceivedEvent : GiftRules.ChangedEvent, result.GiftId ?? weddingId), ct);
         return result;
-    }
-}
-
-/// <summary>
-/// Sandbox collection, platform admin (ADMIN_GIFT_PAYOUTS_MANAGE): sees what InviteMe holds per wedding and orders a payout
-/// to one of that wedding's couple accounts. The admin then transfers the amount with content = payout code from the
-/// collection account; the SePay "money out" webhook marks it PAID.
-/// </summary>
-public sealed class GiftPayoutAdminHandler(IGiftStore store, ICurrentUser user, RequestValidation<CreateGiftPayout> validation,
-    RequestValidation<PageRequest> pages, IPlanningChangePublisher changes)
-{
-    public async Task<PagedResult<AdminGiftBalanceDto>> BalancesAsync(PageRequest page, CancellationToken ct)
-    { await pages.ValidateAsync(page, ct); return await store.AdminBalancesAsync(page, ct); }
-
-    public async Task<PagedResult<GiftPayoutDto>> ListAsync(string? status, Guid? weddingId, PageRequest page, CancellationToken ct)
-    {
-        await pages.ValidateAsync(page, ct);
-        var wanted = string.IsNullOrWhiteSpace(status) ? null : status.Trim().ToUpperInvariant();
-        if (wanted is not null && !PlanningGiftPayout.Statuses.Contains(wanted))
-            throw new ValidationException([new FluentValidation.Results.ValidationFailure("status", "Status must be PENDING, PAID or CANCELLED.")]);
-        return await store.AdminPayoutsAsync(wanted, weddingId, page, ct);
-    }
-
-    public async Task<GiftPayoutResult> CreateAsync(Guid weddingId, CreateGiftPayout input, string? idempotencyKey, CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 100)
-            throw new ValidationException([new FluentValidation.Results.ValidationFailure("Idempotency-Key", "Idempotency-Key header (1-100 characters) is required.")]);
-        await validation.ValidateAsync(input, ct);
-        var result = await store.CreatePayoutAsync(weddingId, input, idempotencyKey.Trim(), user.UserId!.Value, ct);
-        if (result.Created) await changes.PublishAsync(weddingId, new(GiftRules.PayoutEvent, result.Payout.Id), ct);
-        return result;
-    }
-
-    public async Task<GiftPayoutDto> CancelAsync(Guid payoutId, CancellationToken ct)
-    {
-        var payout = await store.CancelPayoutAsync(payoutId, user.UserId!.Value, ct);
-        await changes.PublishAsync(payout.WeddingId, new(GiftRules.PayoutEvent, payout.Id), ct);
-        return payout;
     }
 }
 

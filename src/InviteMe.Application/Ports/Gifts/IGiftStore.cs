@@ -1,4 +1,3 @@
-using InviteMe.Application.Common.Models;
 using InviteMe.Application.Features.Gifts;
 
 namespace InviteMe.Application.Ports.Gifts;
@@ -32,16 +31,6 @@ public interface IGiftStore
     Task<GiftDto> AssignAsync(Guid weddingId, Guid transactionId, AssignGiftTransaction input, Guid actor, CancellationToken ct);
     Task DismissAsync(Guid weddingId, Guid transactionId, Guid actor, CancellationToken ct);
 
-    /// <summary>Stores one bank notification once (by provider transaction id) and pays the gift whose code it carries;
-    /// money out of the collection account with a payout code completes that payout.</summary>
+    /// <summary>Stores one bank notification once (by provider transaction id) and pays the gift whose code it carries.</summary>
     Task<GiftWebhookResult> ProcessWebhookAsync(SePayWebhookPayload payload, string rawJson, CancellationToken ct);
-
-    // ---------- sandbox collection: every amount belongs to exactly one wedding (by gift code or payout code) ----------
-    Task<GiftBalanceDto> BalanceAsync(Guid weddingId, CancellationToken ct);
-    Task<IReadOnlyList<GiftPayoutDto>> PayoutsAsync(Guid weddingId, CancellationToken ct);
-    /// <summary>Weddings that hold collected money or have an open payout, most to pay out first.</summary>
-    Task<PagedResult<AdminGiftBalanceDto>> AdminBalancesAsync(PageRequest page, CancellationToken ct);
-    Task<PagedResult<GiftPayoutDto>> AdminPayoutsAsync(string? status, Guid? weddingId, PageRequest page, CancellationToken ct);
-    Task<GiftPayoutResult> CreatePayoutAsync(Guid weddingId, CreateGiftPayout input, string idempotencyKey, Guid actor, CancellationToken ct);
-    Task<GiftPayoutDto> CancelPayoutAsync(Guid payoutId, Guid actor, CancellationToken ct);
 }

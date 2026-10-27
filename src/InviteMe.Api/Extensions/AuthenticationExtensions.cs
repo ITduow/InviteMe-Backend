@@ -134,7 +134,6 @@ internal static class AuthenticationExtensions
             options.AddPolicy(AdminPolicyNames.AuditView, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.AuditView)));
             options.AddPolicy(AdminPolicyNames.RbacView, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.RbacView)));
             options.AddPolicy(AdminPolicyNames.RbacManage, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.RbacManage)));
-            options.AddPolicy(AdminPolicyNames.GiftPayoutsManage, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.GiftPayoutsManage)));
         });
         services.AddScoped<IAuthorizationHandler, AdminPermissionAuthorizationHandler>();
         return services;

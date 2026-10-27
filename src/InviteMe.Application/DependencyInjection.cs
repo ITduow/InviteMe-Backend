@@ -38,7 +38,6 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Features.Gifts.GiftGuestHandler>();
         services.AddScoped<InviteMe.Application.Features.Gifts.GiftHostHandler>();
         services.AddScoped<InviteMe.Application.Features.Gifts.GiftWebhookHandler>();
-        services.AddScoped<InviteMe.Application.Features.Gifts.GiftPayoutAdminHandler>();
         services.AddScoped<IWeddingPermissionService, WeddingPermissionService>();
         services.AddScoped<InviteMe.Application.Features.AI.ThankYouTemplates.ThankYouTemplateHandler>();
         services.AddScoped<InviteMe.Application.Features.AI.ThankYouMessages.ThankYouMessageHandler>();
