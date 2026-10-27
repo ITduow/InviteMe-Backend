@@ -171,12 +171,15 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
     }
 
     /// <summary>What was handed over at the wedding (cash envelopes and presents), newest first: the reception desk checks it
-    /// before recording to avoid entering the same gift twice. Owner (GIFT_VIEW) or co-host with GIFT_RECORD.</summary>
+    /// before recording to avoid entering the same gift twice. Owner (GIFT_VIEW) or co-host with GIFT_RECORD; a co-host gets
+    /// who gave what and when, never amounts, estimated values or wishes (adding envelopes up would reveal the totals).</summary>
     public async Task<IReadOnlyList<GiftDto>> ReceptionAsync(Guid weddingId, CancellationToken ct)
     {
-        if (await permissions.HasPermissionAsync(weddingId, WeddingPermission.GIFT_VIEW, ct)) await Require(weddingId, WeddingPermission.GIFT_VIEW, ct);
-        else await Require(weddingId, WeddingPermission.GIFT_RECORD, ct);
-        return (await store.GiftsAsync(weddingId, ct)).Where(g => g.Method is PlanningGift.Cash or PlanningGift.Item).ToList();
+        var owner = await permissions.HasPermissionAsync(weddingId, WeddingPermission.GIFT_VIEW, ct);
+        await Require(weddingId, owner ? WeddingPermission.GIFT_VIEW : WeddingPermission.GIFT_RECORD, ct);
+        var gifts = (await store.GiftsAsync(weddingId, ct)).Where(g => g.Method is PlanningGift.Cash or PlanningGift.Item);
+        return (owner ? gifts : gifts.Select(g => g with { AmountExpected = null, AmountReceived = null, AmountMismatch = false, Message = null,
+            ItemValue = null })).ToList();
     }
 
     /// <summary>True for the owner (GIFT_EDIT); false for a co-host who may only record at the reception (GIFT_RECORD).</summary>

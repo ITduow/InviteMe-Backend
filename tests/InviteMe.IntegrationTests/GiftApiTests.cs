@@ -192,6 +192,9 @@ public sealed class GiftApiTests
         var reception = (await desk.GetFromJsonAsync<List<GiftDto>>(path + "/reception"))!;
         Assert.Equal(4, reception.Count); // the present and envelope of the owner, the envelope and present of the desk
         Assert.All(reception, g => Assert.Contains(g.Method, new[] { PlanningGift.Cash, PlanningGift.Item }));
+        Assert.All(reception, g => Assert.Equal(((long?)null, (long?)null, (string?)null), (g.AmountReceived, g.ItemValue, g.Message))); // no totals for co-hosts
+        Assert.Contains(reception, g => g.ItemName == "Nồi chiên không dầu");
+        Assert.Contains(1_000_000L, (await owner.GetFromJsonAsync<List<GiftDto>>(path + "/reception"))!.Select(g => g.AmountReceived ?? 0));
         foreach (var hidden in new[] { path, path + "/summary", path + "/export", path + "/transactions" })
             Assert.Equal(HttpStatusCode.Forbidden, (await desk.GetAsync(hidden)).StatusCode);
         var deskId = (await desk.GetFromJsonAsync<AccountDto>("/api/auth/me"))!.Id;
