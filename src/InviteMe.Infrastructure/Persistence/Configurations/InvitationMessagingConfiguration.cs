@@ -70,6 +70,8 @@ public sealed class InvitationMessagingConfiguration : IEntityTypeConfiguration<
         builder.Property(x => x.Content).HasColumnName("content").HasMaxLength(12000);
         builder.Property(x => x.RsvpLink).HasColumnName("rsvp_link").HasMaxLength(2048);
         builder.Property(x => x.QrLink).HasColumnName("qr_link").HasMaxLength(2048);
+        builder.Property(x => x.EmailHtmlContent).HasColumnName("email_html_content").HasMaxLength(64000);
+        builder.Property(x => x.EmailPlainTextContent).HasColumnName("email_plain_text_content").HasMaxLength(12000);
         builder.Property(x => x.Status).HasColumnName("status").HasMaxLength(10).HasDefaultValue("PENDING");
         builder.Property(x => x.LeaseId).HasColumnName("lease_id");
         builder.Property(x => x.LeaseUntil).HasColumnName("lease_until");

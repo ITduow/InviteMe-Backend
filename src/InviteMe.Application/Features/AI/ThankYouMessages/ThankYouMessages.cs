@@ -103,8 +103,9 @@ public sealed class ThankYouMessageHandler(IThankYouMessageStore store, IWedding
             throw new ValidationException([new("Idempotency-Key", "Idempotency-Key (1–100 characters) is required.")]);
         if (input.TemplateId == Guid.Empty)
             throw new ValidationException([new("TemplateId", "Select a thank-you template.")]);
-        if (input.GuestIds is not { Count: > 0 and <= 180 } || input.GuestIds.Distinct().Count() != input.GuestIds.Count)
-            throw new ValidationException([new("GuestIds", "Select 1–180 unique guests.")]);
+        if (input.GuestIds is not { Count: > 0 } || input.GuestIds.Count > MessageRecipientLimits.Maximum ||
+            input.GuestIds.Any(id => id == Guid.Empty) || input.GuestIds.Distinct().Count() != input.GuestIds.Count)
+            throw new ValidationException([new("GuestIds", $"Select 1–{MessageRecipientLimits.Maximum} unique guests.")]);
         var channels = input.Channels.Select(x => x.Trim().ToUpperInvariant()).Distinct().Order(StringComparer.Ordinal).ToArray();
         if (channels.Length == 0 || channels.Any(x => x is not ("EMAIL" or "SMS")))
             throw new ValidationException([new("Channels", "Choose EMAIL and/or SMS.")]);

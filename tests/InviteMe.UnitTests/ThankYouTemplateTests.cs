@@ -144,6 +144,7 @@ public sealed class ThankYouTemplateTests
     public async Task InvitationPurposeUsesSeparateEmailAndSmsPrompt()
     {
         string? instructions = null;
+        string? serializedInput = null;
         var responseBody = """
             {"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"{\"subject\":\"Mời dự cưới\",\"emailContent\":\"{{GuestName}} {{RsvpLink}} {{QrLink}}\",\"smsContent\":\"{{GuestName}} {{RsvpLink}}\"}"}]}]}
             """;
@@ -151,6 +152,7 @@ public sealed class ThankYouTemplateTests
         {
             using var payload = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
             instructions = payload.RootElement.GetProperty("instructions").GetString();
+            serializedInput = payload.RootElement.GetProperty("input").GetString();
             return Response(200, responseBody);
         });
 
@@ -158,7 +160,9 @@ public sealed class ThankYouTemplateTests
 
         Assert.Contains("emailContent", instructions);
         Assert.Contains("smsContent", instructions);
-        Assert.Contains("never include QR", instructions);
+        Assert.Contains("at most 40 UTF-16 code units", instructions);
+        Assert.Contains("QR references", instructions);
+        Assert.DoesNotContain("tone", serializedInput, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("\"smsContent\":", result.Text);
     }
 

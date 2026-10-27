@@ -2,11 +2,14 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using InviteMe.Application.Features.Guests.Planning;
+using InviteMe.Application.Features.Billing;
 using InviteMe.Application.Features.Identity.Accounts;
 using InviteMe.Application.Features.Invitations.Messaging;
 using InviteMe.Application.Features.Invitations;
 using InviteMe.Application.Ports.AI;
 using InviteMe.Application.Ports.Authentication;
+using InviteMe.Domain.Weddings;
+using InviteMe.Domain.Billing;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -30,7 +33,8 @@ public sealed class InvitationMessagingApiTests
         {
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["InvitationMessaging:WorkerEnabled"] = "false"
+                ["InvitationMessaging:WorkerEnabled"] = "false",
+                ["InvitationMessaging:PublicApiUrl"] = "https://api.inviteme.asia"
             }));
             builder.ConfigureTestServices(services =>
             {
@@ -45,6 +49,10 @@ public sealed class InvitationMessagingApiTests
                 services.AddSingleton<IAiTextGenerator>(ai);
                 services.RemoveAll<IInvitationChannelSender>();
                 services.AddSingleton<IInvitationChannelSender>(sender);
+                // Links are captured during DI registration; override the singleton as well
+                // so a developer's local HTTP configuration cannot affect email-image assertions.
+                services.RemoveAll<InvitationMessagingLinks>();
+                services.AddSingleton(new InvitationMessagingLinks("http://localhost:3000", "https://api.inviteme.asia"));
             });
         });
         using var owner = factory.CreateClient(new WebApplicationFactoryClientOptions
@@ -56,6 +64,15 @@ public sealed class InvitationMessagingApiTests
         var login = await owner.PostAsJsonAsync("/api/auth/login", new LoginAccount("invitation-messaging@example.test", password));
         owner.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", (await login.Content.ReadFromJsonAsync<TokenDto>())!.AccessToken);
         var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "message-test");
+        var coverUrl = $"/media/wedding-covers/{wedding.Id:N}/{new string('a', 48)}.jpg";
+        wedding.UpdateSetup("Minh & Lan", wedding.Slug, wedding.MaxCapacity!.Value, coverUrl);
+        var venue = Venue.Create(wedding.Id);
+        venue.Configure("Nhà hàng Hoa Sen", "12 Đường Hoa, TP. Hồ Chí Minh");
+        db.Venues.Add(venue);
+        db.WeddingEvents.Add(WeddingEvent.CreateMain(wedding.Id,
+            new DateTimeOffset(2026, 11, 1, 10, 0, 0, TimeSpan.FromHours(7)), venue.Id));
+        db.WeddingSettings.Add(WeddingSettings.Create(wedding.Id));
+        await db.SaveChangesAsync();
         var guestsPath = $"/api/weddings/{wedding.Id}/guest-planning";
         using var importRequest = new HttpRequestMessage(HttpMethod.Post, guestsPath + "/imports")
         {
@@ -71,23 +88,36 @@ public sealed class InvitationMessagingApiTests
         var groupId = importResult.CreatedGroups.Single().Id;
         var path = $"/api/weddings/{wedding.Id}/invitation-messages";
 
-        var generated = await owner.PostAsJsonAsync(path + "/draft/generate", new GenerateInvitationDraft("WARM"));
+        var generated = await owner.PostAsJsonAsync(path + "/draft/generate", new GenerateInvitationDraft());
         Assert.Equal(HttpStatusCode.OK, generated.StatusCode);
         Assert.Equal("WEDDING_INVITATION", ai.LastRequest!.Purpose);
+        Assert.Equal("", ai.LastRequest.Tone);
+        using var aiContext = System.Text.Json.JsonDocument.Parse(ai.LastRequest.Context!);
+        Assert.Equal("Minh & Lan", aiContext.RootElement.GetProperty("coupleNames").GetString());
+        Assert.Equal("Nhà hàng Hoa Sen", aiContext.RootElement.GetProperty("venueName").GetString());
         var draft = (await generated.Content.ReadFromJsonAsync<InvitationDraftDto>())!;
         Assert.False(draft.UsedFallback);
         Assert.False(draft.SmsUsedFallback);
-        Assert.Contains("{{QrLink}}", draft.Content);
-        Assert.DoesNotContain("{{QrLink}}", draft.SmsContent);
+        Assert.DoesNotContain("{{", draft.Content);
+        Assert.DoesNotContain("QR", draft.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("{{", draft.SmsContent);
         var personalised = await owner.PutAsJsonAsync(path + "/draft", new SaveInvitationDraft(
-            "Thiệp mời {{GuestName}}", draft.Content, draft.Tone, draft.Version, draft.SmsContent));
+            "Thiệp mời", draft.Content, draft.Version, draft.SmsContent));
         Assert.Equal(HttpStatusCode.OK, personalised.StatusCode);
         var preview = await owner.PostAsync(path + "/preview/" + guestId, null);
         Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
         var previewBody = await preview.Content.ReadFromJsonAsync<InvitationPreviewDto>();
-        Assert.Contains("Nguyễn Văn An", previewBody!.Content);
-        Assert.Equal("Thiệp mời Nguyễn Văn An — CoHost Test Wedding", previewBody.Subject);
+        Assert.Contains("vui được mời", previewBody!.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Thiệp mời — Minh & Lan mời Nguyễn Văn An", previewBody.Subject);
+        var previewHtml = WebUtility.HtmlDecode(previewBody.EmailHtml);
+        Assert.Contains("Thân gửi Nguyễn Văn An", previewHtml);
+        Assert.Contains("Nhà hàng Hoa Sen", previewHtml);
+        Assert.Contains("12 Đường Hoa", previewHtml);
+        Assert.Contains("https://api.inviteme.asia/media/wedding-covers/", previewBody.EmailHtml);
+        Assert.Contains("Xác nhận tham dự", previewHtml);
         Assert.Contains("Nguyễn Văn An", previewBody.SmsContent);
+        Assert.True(InvitationMessageTemplate.IsSmsLengthSupported(previewBody.SmsContent));
+        Assert.EndsWith($" RSVP: {previewBody.RsvpLink}", previewBody.SmsContent);
         Assert.DoesNotContain("/qr?", previewBody.SmsContent);
         Assert.Contains("/invite/", previewBody.RsvpLink);
         Assert.Contains("/qr?format=png", previewBody.QrLink);
@@ -112,11 +142,18 @@ public sealed class InvitationMessagingApiTests
         var queuedJobs = await db.InvitationSendJobs.Where(x => x.BatchId == batch.Id).ToListAsync();
         var smsJob = Assert.Single(queuedJobs, x => x.Channel == "SMS");
         var emailJob = Assert.Single(queuedJobs, x => x.Channel == "EMAIL");
-        Assert.Equal("Thiệp mời Nguyễn Văn An — CoHost Test Wedding", emailJob.Subject);
-        Assert.Contains("RSVP tại", smsJob.Content);
+        Assert.Equal("Thiệp mời — Minh & Lan mời Nguyễn Văn An", emailJob.Subject);
+        Assert.Equal(InvitationMessageTemplate.RenderSms(draft.SmsContent, "Nguyễn Văn An", previewBody.RsvpLink), smsJob.Content);
+        Assert.Null(smsJob.EmailHtmlContent);
+        Assert.Null(smsJob.EmailPlainTextContent);
         Assert.DoesNotContain("/qr?", smsJob.Content);
-        Assert.Contains("thân mến", smsJob.Content);
-        Assert.Contains("/qr?format=png", emailJob.Content);
+        Assert.DoesNotContain("<", smsJob.Content);
+        Assert.DoesNotContain("{{", emailJob.Content);
+        Assert.DoesNotContain("QR", emailJob.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Thân gửi Nguyễn Văn An", WebUtility.HtmlDecode(emailJob.EmailHtmlContent));
+        Assert.Contains("/invite/", emailJob.EmailHtmlContent);
+        Assert.Contains("/qr?format=png", emailJob.EmailHtmlContent);
+        Assert.Equal(previewBody.EmailHtml, emailJob.EmailHtmlContent);
 
         await using (var scope = factory.Services.CreateAsyncScope())
         {
@@ -124,8 +161,13 @@ public sealed class InvitationMessagingApiTests
             var lease = Guid.NewGuid();
             var claimed = await store.ClaimDueAsync(lease, 10, default);
             Assert.Equal(2, claimed.Count);
-            await store.MarkSentAsync(claimed[0].JobId, lease, "provider-id", default);
-            await store.MarkFailedAsync(claimed[1].JobId, lease, "TEST_TEMPORARY_FAILURE", retry: false, default);
+            var emailDelivery = Assert.Single(claimed, x => x.Channel == "EMAIL");
+            Assert.Equal(emailJob.EmailHtmlContent, emailDelivery.EmailHtmlContent);
+            Assert.Equal(emailJob.EmailPlainTextContent, emailDelivery.EmailPlainTextContent);
+            await store.MarkSentAsync(emailDelivery.JobId, lease, "provider-id", default);
+            var smsDelivery = Assert.Single(claimed, x => x.Channel == "SMS");
+            Assert.Equal(smsJob.Content, smsDelivery.Content);
+            await store.MarkFailedAsync(smsDelivery.JobId, lease, "TEST_TEMPORARY_FAILURE", retry: false, default);
         }
         var partial = await owner.GetFromJsonAsync<InvitationSendBatchDto>(path + "/batches/" + batch.Id);
         Assert.Equal("PARTIAL_FAILED", partial!.Status);
@@ -139,6 +181,9 @@ public sealed class InvitationMessagingApiTests
             var store = scope.ServiceProvider.GetRequiredService<IInvitationMessagingStore>();
             var lease = Guid.NewGuid();
             var retriedJob = Assert.Single(await store.ClaimDueAsync(lease, 10, default));
+            Assert.Equal(smsJob.Id, retriedJob.JobId);
+            Assert.Equal("SMS", retriedJob.Channel);
+            Assert.Equal(smsJob.Content, retriedJob.Content);
             await store.MarkSentAsync(retriedJob.JobId, lease, "provider-id-2", default);
         }
         var sent = await owner.GetFromJsonAsync<InvitationSendBatchDto>(path + "/batches/" + batch.Id);
@@ -158,15 +203,53 @@ public sealed class InvitationMessagingApiTests
         Assert.Equal(HttpStatusCode.Accepted, testSend.StatusCode);
         Assert.Equal("invitation-messaging@example.test", Assert.Single(sender.Messages).Recipient);
         Assert.Equal("EMAIL", sender.Messages[0].Channel);
+        Assert.Contains("Thân gửi Nguyễn Văn An", WebUtility.HtmlDecode(sender.Messages[0].EmailHtmlContent));
+
+        var extraRecipients = await PlanningTestData.Guests(db, wedding.Id, "PENDING",
+            Enumerable.Range(1, 180).Select(index => $"Invitation guest {index}").ToArray());
+        foreach (var extraGuest in extraRecipients)
+        {
+            extraGuest.Email = $"invitation-{extraGuest.Id:N}@example.test";
+            extraGuest.GroupId = groupId;
+            extraGuest.InvitationToken = Convert.ToHexString(global::System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        }
+        await db.SaveChangesAsync();
+        var allIds = extraRecipients.Select(guest => guest.Id).Prepend(guestId).ToArray();
+        using var sendAll = new HttpRequestMessage(HttpMethod.Post, path + "/send")
+        { Content = JsonContent.Create(new QueueInvitationBatch(allIds, null, ["EMAIL"])) };
+        sendAll.Headers.Add("Idempotency-Key", "invitation-all-guests");
+        var allResponse = await owner.SendAsync(sendAll);
+        Assert.Equal(HttpStatusCode.Accepted, allResponse.StatusCode);
+        var allBatch = (await allResponse.Content.ReadFromJsonAsync<InvitationSendBatchDto>())!;
+        Assert.Equal(181, allBatch.TotalCount);
+        Assert.Equal(181, await db.InvitationSendJobs.CountAsync(x => x.BatchId == allBatch.Id));
+        using var sendWholeGroup = new HttpRequestMessage(HttpMethod.Post, path + "/send")
+        { Content = JsonContent.Create(new QueueInvitationBatch(null, groupId, ["EMAIL"])) };
+        sendWholeGroup.Headers.Add("Idempotency-Key", "invitation-whole-group");
+        var wholeGroupResponse = await owner.SendAsync(sendWholeGroup);
+        Assert.Equal(HttpStatusCode.Accepted, wholeGroupResponse.StatusCode);
+        Assert.Equal(181, (await wholeGroupResponse.Content.ReadFromJsonAsync<InvitationSendBatchDto>())!.TotalCount);
+
+        ai.Text = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            emailContent = draft.Content,
+            smsContent = new string('a', InvitationMessageTemplate.MaxSmsCopyCodeUnits + 1)
+        });
+        var longSmsResponse = await owner.PostAsJsonAsync(path + "/draft/generate", new GenerateInvitationDraft());
+        Assert.Equal(HttpStatusCode.OK, longSmsResponse.StatusCode);
+        var shortSmsDraft = (await longSmsResponse.Content.ReadFromJsonAsync<InvitationDraftDto>())!;
+        Assert.False(shortSmsDraft.UsedFallback);
+        Assert.True(shortSmsDraft.SmsUsedFallback);
+        Assert.Equal(InvitationMessageTemplate.DefaultSms(), shortSmsDraft.SmsContent);
 
         ai.Text = "not valid JSON";
-        var fallbackResponse = await owner.PostAsJsonAsync(path + "/draft/generate", new GenerateInvitationDraft("FORMAL"));
+        var fallbackResponse = await owner.PostAsJsonAsync(path + "/draft/generate", new GenerateInvitationDraft());
         Assert.Equal(HttpStatusCode.OK, fallbackResponse.StatusCode);
         var fallback = (await fallbackResponse.Content.ReadFromJsonAsync<InvitationDraftDto>())!;
         Assert.True(fallback.UsedFallback);
         Assert.True(fallback.SmsUsedFallback);
-        Assert.True(InvitationMessageTemplate.IsValid(fallback.Content));
-        Assert.True(InvitationMessageTemplate.IsValidSms(fallback.SmsContent));
+        Assert.True(InvitationEmailRenderer.IsSafeGeneratedCopy(fallback.Content));
+        Assert.True(InvitationEmailRenderer.IsSafeGeneratedCopy(fallback.SmsContent));
 
         var conflictRequest = new HttpRequestMessage(HttpMethod.Post, path + "/send")
         {
@@ -175,15 +258,54 @@ public sealed class InvitationMessagingApiTests
         conflictRequest.Headers.Add("Idempotency-Key", idempotencyKey);
         using (conflictRequest)
             Assert.Equal(HttpStatusCode.Conflict, (await owner.SendAsync(conflictRequest)).StatusCode);
+
+        // Bulk sending still enforces main's plan quotas, atomically across both channels.
+        await PlanApiTests.UseBasicPlan(db, wedding.Id);
+        var plan = await db.Set<Plan>().SingleAsync(x => x.Code == Plan.Basic);
+        var smsUsed = await db.InvitationSendJobs.CountAsync(x => x.WeddingId == wedding.Id && x.Channel == "SMS");
+        var limits = PlanLimits.Parse(plan.LimitsJson) with { SmsInvites = smsUsed };
+        plan.Update(plan.Name, plan.Price, limits.ToJson(), plan.Status);
+        await db.SaveChangesAsync();
+        var jobsBeforeQuota = await db.InvitationSendJobs.CountAsync();
+        var batchesBeforeQuota = await db.InvitationSendBatches.CountAsync();
+        async Task<HttpResponseMessage> SendWithQuota(string key)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, path + "/send")
+            { Content = JsonContent.Create(new QueueInvitationBatch([guestId], null, ["EMAIL", "SMS"])) };
+            request.Headers.Add("Idempotency-Key", key);
+            return await owner.SendAsync(request);
+        }
+        using var denied = await SendWithQuota("quota-atomic");
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        using var problem = System.Text.Json.JsonDocument.Parse(await denied.Content.ReadAsStringAsync());
+        Assert.Equal("PLAN_LIMIT_REACHED", problem.RootElement.GetProperty("code").GetString());
+        Assert.Equal("smsInvites", problem.RootElement.GetProperty("feature").GetString());
+        Assert.Equal(jobsBeforeQuota, await db.InvitationSendJobs.CountAsync());
+        Assert.Equal(batchesBeforeQuota, await db.InvitationSendBatches.CountAsync());
+
+        plan.Update(plan.Name, plan.Price, (limits with { SmsInvites = smsUsed + 1 }).ToJson(), plan.Status);
+        await db.SaveChangesAsync();
+        using var allowed = await SendWithQuota("quota-atomic");
+        Assert.Equal(HttpStatusCode.Accepted, allowed.StatusCode);
+        var limitedBatch = (await allowed.Content.ReadFromJsonAsync<InvitationSendBatchDto>())!;
+        Assert.Equal(2, limitedBatch.TotalCount);
+        using var replayAtLimit = await SendWithQuota("quota-atomic");
+        Assert.Equal(HttpStatusCode.Accepted, replayAtLimit.StatusCode);
+        Assert.Equal(limitedBatch.Id, (await replayAtLimit.Content.ReadFromJsonAsync<InvitationSendBatchDto>())!.Id);
+        using var overLimit = await SendWithQuota("quota-new-request");
+        Assert.Equal(HttpStatusCode.Forbidden, overLimit.StatusCode);
+        Assert.Equal(jobsBeforeQuota + 2, await db.InvitationSendJobs.CountAsync());
     });
 
     private sealed class InvitationAi : IAiTextGenerator
     {
         public AiTextRequest? LastRequest { get; private set; }
-        public string Text { get; set; } = """{"subject":"Trân trọng kính mời","emailContent":"{{GuestName}} thân mến, xác nhận tại {{RsvpLink}} và xem QR {{QrLink}}","smsContent":"{{GuestName}} thân mến, RSVP tại {{RsvpLink}}"}""";
+        public List<AiTextRequest> Requests { get; } = [];
+        public string Text { get; set; } = """{"emailContent":"Chúng mình rất vui được mời bạn đến chung vui trong ngày đặc biệt này.","smsContent":"Chúng mình mong được đón bạn."}""";
         public Task<AiTextResult> GenerateAsync(AiTextRequest request, CancellationToken ct)
         {
             LastRequest = request;
+            Requests.Add(request);
             return Task.FromResult(new AiTextResult(Text, "test-model"));
         }
     }

@@ -39,6 +39,8 @@ public sealed class InvitationSendJob
     public string Content { get; set; } = "";
     public string RsvpLink { get; set; } = "";
     public string QrLink { get; set; } = "";
+    public string? EmailHtmlContent { get; set; }
+    public string? EmailPlainTextContent { get; set; }
     public string Status { get; set; } = "PENDING";
     public Guid? LeaseId { get; set; }
     public DateTimeOffset? LeaseUntil { get; set; }
