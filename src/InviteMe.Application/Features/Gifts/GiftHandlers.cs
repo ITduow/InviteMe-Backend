@@ -19,7 +19,8 @@ namespace InviteMe.Application.Features.Gifts;
 public sealed record GiftWebhookOptions(string? ApiKey);
 
 /// <summary>Guest08: the guest chooses an amount and a wish, gets a VietQR code to their couple's account, and may say "đã chuyển".</summary>
-public sealed class GiftGuestHandler(IGiftStore store, RequestValidation<CreateGuestGift> validation, IPlanningChangePublisher changes)
+public sealed class GiftGuestHandler(IGiftStore store, RequestValidation<CreateGuestGift> validation, IPlanningChangePublisher changes,
+    IGiftProofStorage proofs)
 {
     public Task<GuestGiftPageDto> PageAsync(string token, CancellationToken ct) => store.GuestPageAsync(token, ct);
 
@@ -39,7 +40,7 @@ public sealed class GiftGuestHandler(IGiftStore store, RequestValidation<CreateG
     public async Task<GuestGiftDto> SendProofAsync(string token, Guid giftId, Stream content, long length, CancellationToken ct)
     {
         var (type, bytes) = await GiftProofImage.ReadAsync(content, length, ct);
-        var result = await store.AttachGuestProofAsync(token, giftId, type, bytes, ct);
+        var result = await GiftProofImage.StoreAsync(proofs, type, bytes, key => store.AttachGuestProofAsync(token, giftId, key, type, bytes.Length, ct), ct);
         if (result.Created) await changes.PublishAsync(result.WeddingId, new(GiftRules.ChangedEvent, giftId), ct);
         return result.Gift;
     }
@@ -61,7 +62,7 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
     RequestValidation<ConfirmGift> confirmValidation, RequestValidation<AssignGiftTransaction> assignValidation,
     RequestValidation<GiftLedgerFilter> filterValidation, RequestValidation<PageRequest> pages,
     RequestValidation<SimulateSePayTransfer> simulateValidation, IPlanningChangePublisher changes, TimeProvider clock,
-    InviteMe.Application.Features.Billing.IWeddingEntitlements plans)
+    InviteMe.Application.Features.Billing.IWeddingEntitlements plans, IGiftProofStorage proofs)
 {
     public const string NeedsReview = "NEEDS_REVIEW";
 
@@ -127,7 +128,7 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
     {
         await RequireRecorder(weddingId, ct);
         var (type, bytes) = await GiftProofImage.ReadAsync(content, length, ct);
-        return await store.SaveProofAsync(weddingId, type, bytes, user.UserId!.Value, ct);
+        return await GiftProofImage.StoreAsync(proofs, type, bytes, key => store.SaveProofAsync(weddingId, key, type, bytes.Length, user.UserId!.Value, ct), ct);
     }
 
     /// <summary>The couple checks the photo before confirming; the co-host who records can look at it again.</summary>
@@ -136,8 +137,10 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
         var owner = await permissions.HasPermissionAsync(weddingId, WeddingPermission.GIFT_VIEW, ct);
         await Require(weddingId, owner ? WeddingPermission.GIFT_VIEW : WeddingPermission.GIFT_RECORD, ct);
         // A co-host only sees the photos they took; guests' receipts are for the couple.
-        return await store.ProofAsync(weddingId, giftId, owner ? null : user.UserId, ct)
-            ?? throw new ApplicationProblemException(ProblemKind.NotFound, "GIFT_PROOF_NOT_FOUND", "Quà mừng này không có ảnh chuyển khoản.");
+        var proof = await store.ProofAsync(weddingId, giftId, owner ? null : user.UserId, ct);
+        var content = proof is null ? null : await proofs.ReadAsync(proof.StorageKey, ct);
+        return content is not null ? new(content, proof!.ContentType)
+            : throw new ApplicationProblemException(ProblemKind.NotFound, "GIFT_PROOF_NOT_FOUND", "Quà mừng này không có ảnh chuyển khoản.");
     }
 
     public async Task<GiftDto> ConfirmAsync(Guid weddingId, Guid giftId, ConfirmGift input, CancellationToken ct)
@@ -272,6 +275,20 @@ internal static class GiftProofImage
         using var buffer = new MemoryStream();
         await image.Content.CopyToAsync(buffer, ct);
         return (image.Extension switch { ".png" => "image/png", ".webp" => "image/webp", _ => "image/jpeg" }, buffer.ToArray());
+    }
+
+    /// <summary>Uploads the photo, then records it; when recording fails (wrong gift, closed, already sent) the object is removed.</summary>
+    public static async Task<T> StoreAsync<T>(IGiftProofStorage storage, string contentType, byte[] content, Func<string, Task<T>> record,
+        CancellationToken ct)
+    {
+        var key = await storage.SaveAsync(content, contentType, ct);
+        try { return await record(key); }
+        catch
+        {
+            try { await storage.DeleteAsync(key, CancellationToken.None); }
+            catch { /* Keep the original error; an orphan photo is harmless and unreachable. */ }
+            throw;
+        }
     }
 }
 

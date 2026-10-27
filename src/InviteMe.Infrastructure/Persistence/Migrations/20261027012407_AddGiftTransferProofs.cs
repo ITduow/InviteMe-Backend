@@ -12,6 +12,13 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.AddColumn<Guid>(
+                name: "participant_id",
+                schema: "inviteme",
+                table: "planning_gifts",
+                type: "uuid",
+                nullable: true);
+
+            migrationBuilder.AddColumn<Guid>(
                 name: "proof_id",
                 schema: "inviteme",
                 table: "planning_gifts",
@@ -26,8 +33,9 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     id = table.Column<Guid>(type: "uuid", nullable: false),
                     wedding_id = table.Column<Guid>(type: "uuid", nullable: false),
                     gift_id = table.Column<Guid>(type: "uuid", nullable: true),
+                    storage_key = table.Column<string>(type: "character varying(60)", maxLength: 60, nullable: false),
                     content_type = table.Column<string>(type: "character varying(30)", maxLength: 30, nullable: false),
-                    content = table.Column<byte[]>(type: "bytea", nullable: false),
+                    size = table.Column<int>(type: "integer", nullable: false),
                     uploaded_by = table.Column<Guid>(type: "uuid", nullable: true),
                     guest_id = table.Column<Guid>(type: "uuid", nullable: true),
                     created_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
@@ -35,7 +43,7 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_planning_gift_proofs", x => x.id);
-                    table.CheckConstraint("ck_planning_gift_proofs_size", "octet_length(content) BETWEEN 1 AND 5242880");
+                    table.CheckConstraint("ck_planning_gift_proofs_size", "size BETWEEN 1 AND 5242880");
                     table.ForeignKey(
                         name: "fk_planning_gift_proofs_guest",
                         column: x => x.guest_id,
@@ -74,6 +82,16 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                 filter: "gift_id IS NOT NULL");
 
             migrationBuilder.AddForeignKey(
+                name: "fk_planning_gifts_participant",
+                schema: "inviteme",
+                table: "planning_gifts",
+                column: "participant_id",
+                principalSchema: "inviteme",
+                principalTable: "planning_participants",
+                principalColumn: "Id",
+                onDelete: ReferentialAction.SetNull);
+
+            migrationBuilder.AddForeignKey(
                 name: "fk_planning_gifts_proof",
                 schema: "inviteme",
                 table: "planning_gifts",
@@ -88,6 +106,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropForeignKey(
+                name: "fk_planning_gifts_participant",
+                schema: "inviteme",
+                table: "planning_gifts");
+
+            migrationBuilder.DropForeignKey(
                 name: "fk_planning_gifts_proof",
                 schema: "inviteme",
                 table: "planning_gifts");
@@ -95,6 +118,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
             migrationBuilder.DropTable(
                 name: "planning_gift_proofs",
                 schema: "inviteme");
+
+            migrationBuilder.DropColumn(
+                name: "participant_id",
+                schema: "inviteme",
+                table: "planning_gifts");
 
             migrationBuilder.DropColumn(
                 name: "proof_id",

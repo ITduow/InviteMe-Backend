@@ -87,14 +87,14 @@ public sealed class PlanningGiftConfiguration : IEntityTypeConfiguration<Plannin
 
     public void Configure(EntityTypeBuilder<PlanningGiftProof> b)
     {
-        b.ToTable("planning_gift_proofs", t => t.HasCheckConstraint("ck_planning_gift_proofs_size",
-            $"octet_length(content) BETWEEN 1 AND {PlanningGiftProof.MaxBytes}"));
+        b.ToTable("planning_gift_proofs", t => t.HasCheckConstraint("ck_planning_gift_proofs_size", $"size BETWEEN 1 AND {PlanningGiftProof.MaxBytes}"));
         b.HasKey(x => x.Id);
         b.Property(x => x.Id).HasColumnName("id");
         b.Property(x => x.WeddingId).HasColumnName("wedding_id");
         b.Property(x => x.GiftId).HasColumnName("gift_id");
         b.Property(x => x.ContentType).HasColumnName("content_type").HasMaxLength(30);
-        b.Property(x => x.Content).HasColumnName("content");
+        b.Property(x => x.StorageKey).HasColumnName("storage_key").HasMaxLength(60);
+        b.Property(x => x.Size).HasColumnName("size");
         b.Property(x => x.UploadedBy).HasColumnName("uploaded_by");
         b.Property(x => x.GuestId).HasColumnName("guest_id");
         b.Property(x => x.CreatedAt).HasColumnName("created_at");

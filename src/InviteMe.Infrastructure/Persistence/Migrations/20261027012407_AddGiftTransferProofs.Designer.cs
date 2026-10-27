@@ -12,8 +12,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace InviteMe.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(InviteMeDbContext))]
-    [Migration("20261027011641_AddGiftParticipant")]
-    partial class AddGiftParticipant
+    [Migration("20261027012407_AddGiftTransferProofs")]
+    partial class AddGiftTransferProofs
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -1490,11 +1490,6 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
-                    b.Property<byte[]>("Content")
-                        .IsRequired()
-                        .HasColumnType("bytea")
-                        .HasColumnName("content");
-
                     b.Property<string>("ContentType")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -1512,6 +1507,16 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("GuestId")
                         .HasColumnType("uuid")
                         .HasColumnName("guest_id");
+
+                    b.Property<int>("Size")
+                        .HasColumnType("integer")
+                        .HasColumnName("size");
+
+                    b.Property<string>("StorageKey")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("storage_key");
 
                     b.Property<Guid?>("UploadedBy")
                         .HasColumnType("uuid")
@@ -1533,7 +1538,7 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.ToTable("planning_gift_proofs", "inviteme", t =>
                         {
-                            t.HasCheckConstraint("ck_planning_gift_proofs_size", "octet_length(content) BETWEEN 1 AND 5242880");
+                            t.HasCheckConstraint("ck_planning_gift_proofs_size", "size BETWEEN 1 AND 5242880");
                         });
                 });
 

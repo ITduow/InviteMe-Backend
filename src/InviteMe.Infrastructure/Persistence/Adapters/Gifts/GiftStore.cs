@@ -179,16 +179,17 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         return Dto(gift, now);
     }
 
-    public async Task<GiftProofDto> SaveProofAsync(Guid weddingId, string contentType, byte[] content, Guid actor, CancellationToken ct)
+    public async Task<GiftProofDto> SaveProofAsync(Guid weddingId, string storageKey, string contentType, int size, Guid actor, CancellationToken ct)
     {
         await RequireWedding(weddingId, ct);
-        var proof = PlanningGiftProof.Create(weddingId, contentType, content, actor, clock.GetUtcNow());
+        var proof = PlanningGiftProof.Create(weddingId, storageKey, contentType, size, actor, clock.GetUtcNow());
         db.Add(proof);
         await db.SaveChangesAsync(ct);
         return new(proof.Id);
     }
 
-    public async Task<GuestGiftResult> AttachGuestProofAsync(string token, Guid giftId, string contentType, byte[] content, CancellationToken ct)
+    public async Task<GuestGiftResult> AttachGuestProofAsync(string token, Guid giftId, string storageKey, string contentType, int size,
+        CancellationToken ct)
     {
         var (wedding, guest) = await Guest(token, ct);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -197,7 +198,7 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         if (gift.Status is PlanningGift.Paid or PlanningGift.Cancelled) throw Rule("GIFT_CLOSED", "Quà mừng này đã được ghi nhận hoặc đã huỷ.");
         if (gift.ProofId is not null) throw new ApplicationProblemException(ProblemKind.Conflict, "GIFT_PROOF_EXISTS", "Bạn đã gửi ảnh chuyển khoản cho quà mừng này.");
         var now = clock.GetUtcNow();
-        var proof = PlanningGiftProof.FromGuest(wedding.Id, guest.Id, gift.Id, contentType, content, now);
+        var proof = PlanningGiftProof.FromGuest(wedding.Id, guest.Id, gift.Id, storageKey, contentType, size, now);
         db.Add(proof);
         gift.AttachProof(proof.Id);
         gift.Claim(now);
@@ -208,11 +209,11 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         return new(GuestDto(gift, (await Accounts(wedding.Id, ct)).FirstOrDefault(a => a.Id == gift.AccountId)), true, wedding.Id);
     }
 
-    public async Task<GiftProofFile?> ProofAsync(Guid weddingId, Guid giftId, Guid? uploadedBy, CancellationToken ct) =>
+    public async Task<GiftProofRef?> ProofAsync(Guid weddingId, Guid giftId, Guid? uploadedBy, CancellationToken ct) =>
         await (from g in db.Set<PlanningGift>().AsNoTracking()
                join p in db.Set<PlanningGiftProof>().AsNoTracking() on g.ProofId equals (Guid?)p.Id
                where g.Id == giftId && g.WeddingId == weddingId && p.WeddingId == weddingId && (uploadedBy == null || p.UploadedBy == uploadedBy)
-               select new GiftProofFile(p.Content, p.ContentType)).SingleOrDefaultAsync(ct);
+               select new GiftProofRef(p.StorageKey, p.ContentType)).SingleOrDefaultAsync(ct);
 
     public async Task<GiftDto> ConfirmAsync(Guid weddingId, Guid giftId, long? amount, Guid actor, CancellationToken ct)
     {

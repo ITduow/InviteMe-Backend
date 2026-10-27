@@ -52,6 +52,20 @@ public sealed record GiftProofDto(Guid Id);
 
 public sealed record GiftProofFile(byte[] Content, string ContentType);
 
+/// <summary>Where a stored transfer photo is (the image itself is in object storage).</summary>
+public sealed record GiftProofRef(string StorageKey, string ContentType);
+
+/// <summary>
+/// Private storage of transfer photos (S3 bucket prefix gift-proofs/, a private folder locally). Keys are generated, never
+/// taken from users; the database keeps only the key.
+/// </summary>
+public interface IGiftProofStorage
+{
+    Task<string> SaveAsync(byte[] content, string contentType, CancellationToken ct);
+    Task<byte[]?> ReadAsync(string key, CancellationToken ct);
+    Task DeleteAsync(string key, CancellationToken ct);
+}
+
 /// <summary>Amount really received; defaults to the amount the guest chose.</summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record ConfirmGift(long? Amount = null);

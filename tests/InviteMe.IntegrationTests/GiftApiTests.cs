@@ -275,7 +275,9 @@ public sealed class GiftApiTests
         Assert.Null(Assert.Single((await otherDesk.GetFromJsonAsync<List<GiftDto>>(path + "/reception"))!).Code);
         Assert.Equal(PlanningGift.Paid, (await Read<GiftDto>(await owner.PostAsJsonAsync($"{path}/{gift.Id}/confirm", new ConfirmGift()), HttpStatusCode.OK)).Status);
         await AssertProblem(HttpStatusCode.UnprocessableEntity, "GIFT_CLOSED", await UploadProof(guest, $"{an}/{gift.Id}/proof", Png)); // money confirmed
-        Assert.Equal(1, await db.Set<PlanningGiftProof>().CountAsync(x => x.GuestId == guests["An"].Id));
+        var stored = await db.Set<PlanningGiftProof>().AsNoTracking().SingleAsync(x => x.GuestId == guests["An"].Id);
+        Assert.Matches(@"^[0-9a-f]{48}\.png$", stored.StorageKey); // the database keeps the key, the image is in private storage
+        Assert.Equal(Png.Length, stored.Size);
     });
 
     // ---------------- helpers ----------------
