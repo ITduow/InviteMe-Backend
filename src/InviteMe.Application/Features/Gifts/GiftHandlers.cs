@@ -200,9 +200,11 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
         return gift;
     }
 
-    /// <summary>What was handed over at the wedding (cash envelopes and presents), newest first: the reception desk checks it
-    /// before recording to avoid entering the same gift twice. Owner (GIFT_VIEW) or co-host with GIFT_RECORD; a co-host gets
-    /// who gave what and when, never amounts, estimated values or wishes (adding envelopes up would reveal the totals).</summary>
+    /// <summary>
+    /// What was handed over at the wedding (cash envelopes, presents, transfers shown at the desk), newest first. Owner (GIFT_VIEW)
+    /// or co-host with GIFT_RECORD. A co-host sees the amounts of these desk gifts to check them against the guest's phone and
+    /// avoid recording twice; online QR gifts, totals, wishes and payment details stay with the couple.
+    /// </summary>
     public async Task<IReadOnlyList<GiftDto>> ReceptionAsync(Guid weddingId, CancellationToken ct)
     {
         var owner = await permissions.HasPermissionAsync(weddingId, WeddingPermission.GIFT_VIEW, ct);
@@ -210,8 +212,7 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
         // Only what is handed over at the desk: guests' online QR gifts (and their receipts) are not part of it.
         var gifts = (await store.GiftsAsync(weddingId, ct))
             .Where(g => g.Method is PlanningGift.Cash or PlanningGift.Item || (g.Method == PlanningGift.Transfer && g.HasProof));
-        return (owner ? gifts : gifts.Select(g => g with { AmountExpected = null, AmountReceived = null, AmountMismatch = false, Message = null,
-            ItemValue = null, Code = null, Confirmation = null, AccountId = null })).ToList();
+        return (owner ? gifts : gifts.Select(g => g with { Message = null, Code = null, Confirmation = null, AccountId = null })).ToList();
     }
 
     /// <summary>True for the owner (GIFT_EDIT); false for a co-host who may only record at the reception (GIFT_RECORD).</summary>
