@@ -92,7 +92,7 @@ public sealed class RsvpDashboardHandler(IRsvpStore store, IWeddingPermissionSer
         var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
         await filters.ValidateAsync(filter, ct);
         var scopedFilter = ScopedFilter(filter, scope);
-        return RsvpDashboardMath.Summarize(await store.DashboardScopedAsync(weddingId, ct, scope.IsWeddingWide ? null : scope.GroupIds), scopedFilter, clock.GetUtcNow());
+        return RsvpDashboardMath.Summarize(await store.DashboardAsync(weddingId, scope.IsWeddingWide ? null : scope.GroupIds, ct), scopedFilter, clock.GetUtcNow());
     }
 
     public async Task<PagedResult<RsvpGuestRowDto>> GuestsAsync(Guid weddingId, RsvpDashboardFilter filter, PageRequest page, CancellationToken ct)
@@ -100,7 +100,7 @@ public sealed class RsvpDashboardHandler(IRsvpStore store, IWeddingPermissionSer
         var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
         await filters.ValidateAsync(filter, ct); await pages.ValidateAsync(page, ct);
         var contacts = await CanViewContactsAsync(weddingId, scope, ct);
-        var rows = RsvpDashboardMath.Filter(await store.DashboardScopedAsync(weddingId, ct, scope.IsWeddingWide ? null : scope.GroupIds), ScopedFilter(filter, scope)).Select(g => RsvpDashboardMath.Row(g, contacts)).ToList();
+        var rows = RsvpDashboardMath.Filter(await store.DashboardAsync(weddingId, scope.IsWeddingWide ? null : scope.GroupIds, ct), ScopedFilter(filter, scope)).Select(g => RsvpDashboardMath.Row(g, contacts)).ToList();
         return new(rows.Skip((page.Page - 1) * page.PageSize).Take(page.PageSize).ToList(), page.Page, page.PageSize, rows.Count);
     }
 
@@ -109,7 +109,7 @@ public sealed class RsvpDashboardHandler(IRsvpStore store, IWeddingPermissionSer
         var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
         await filters.ValidateAsync(filter, ct);
         var contacts = await CanViewContactsAsync(weddingId, scope, ct);
-        var guests = RsvpDashboardMath.Filter(await store.DashboardScopedAsync(weddingId, ct, scope.IsWeddingWide ? null : scope.GroupIds), ScopedFilter(filter, scope));
+        var guests = RsvpDashboardMath.Filter(await store.DashboardAsync(weddingId, scope.IsWeddingWide ? null : scope.GroupIds, ct), ScopedFilter(filter, scope));
         return new(RsvpDashboardMath.Csv(guests, contacts), $"rsvp-{clock.GetUtcNow():yyyyMMdd-HHmm}.csv");
     }
 

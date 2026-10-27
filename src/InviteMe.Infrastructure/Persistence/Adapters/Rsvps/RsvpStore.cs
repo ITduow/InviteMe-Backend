@@ -86,10 +86,7 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
         return new(weddingId, settings?.PlusOneLimit ?? 0, settings?.Version ?? 0, await Deadline(weddingId, ct));
     }
 
-    public async Task<RsvpDashboardData> DashboardAsync(Guid weddingId, CancellationToken ct)
-        => await DashboardScopedAsync(weddingId, ct, null);
-
-    public async Task<RsvpDashboardData> DashboardScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<Guid>? groupScope)
+    public async Task<RsvpDashboardData> DashboardAsync(Guid weddingId, IReadOnlySet<Guid>? groupScope, CancellationToken ct)
     {
         // One consistent snapshot of the wedding (a host may be editing while the dashboard reads).
         await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct);
@@ -121,9 +118,7 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
         var plusOneLimit = await db.Set<PlanningRsvpSettings>().AsNoTracking().Where(x => x.WeddingId == weddingId).Select(x => x.PlusOneLimit).SingleOrDefaultAsync(ct);
         var deadline = await Deadline(weddingId, ct);
         var lateForAll = deadline <= clock.GetUtcNow();
-        var occupied = scopedIds is null ? await Occupied(weddingId, ct) : await (from p in db.Set<PlanningParticipant>().AsNoTracking()
-            join g in db.Set<PlanningGuest>().AsNoTracking() on p.GuestId equals g.Id
-            where g.WeddingId == weddingId && g.ArchivedAt == null && scopedIds.Contains(g.GroupId!.Value) && p.AttendanceStatus == Attending select p.Id).LongCountAsync(ct);
+        var occupied = await Occupied(weddingId, ct, scopedIds);
         await tx.CommitAsync(ct);
         return new(weddingId, scopedIds is null ? wedding.MaxCapacity : null, occupied, deadline, guests.Select(g =>
         {
@@ -163,7 +158,6 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
         PlanningRsvpRequest? approved, CancellationToken ct)
     {
         var now = clock.GetUtcNow();
-        var isGuest = actor is null;
 
         // 1. Create vs replace, and the version the client last read (0 = never answered).
         var rsvp = await db.Set<PlanningRsvp>().SingleOrDefaultAsync(x => x.GuestId == guest.Id, ct);
@@ -174,38 +168,119 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
         if (approved is null && (rsvp?.Version ?? 0) != input.ExpectedVersion) throw Conflict("CONCURRENCY_CONFLICT");
 
         // 2. Locked (deadline passed or locked by the couple): a guest change is stored as a request for the couple.
-        if (isGuest)
-        {
-            var reason = await LockReason(wedding.Id, guest.Id, now, ct);
-            if (reason is not null) return await Queue(wedding, guest, input, reason, now, ct);
-        }
+        if (actor is null && await LockReason(wedding.Id, guest.Id, now, ct) is { } reason)
+            return await Queue(wedding, guest, input, reason, now, ct);
 
-        // 3. How many people are confirmed now and how many wait for the couple.
-        //    Guest: up to the invitation's MaxPeople and the room left in the wedding; the rest waits ("Chờ couple quyết").
-        //    Couple / co-host: they decide, so no MaxPeople, but the wedding capacity still holds (422 INSUFFICIENT_SLOTS).
-        //    People already confirmed keep their place even if the wedding filled up meanwhile (walk-ins).
+        // 3-4. How many people come / wait, and who is who.
         var participants = await db.Set<PlanningParticipant>().Where(x => x.GuestId == guest.Id).ToListAsync(ct);
         var places = await db.Set<PlanningPlace>().Where(x => x.GuestId == guest.Id).OrderBy(x => x.Position).ToListAsync(ct);
-        var decision = input.Decision;
-        var size = decision == PlanningRsvp.Declined ? 0 : input.PartySize ?? 1;
-        var held = participants.Count(p => p.AttendanceStatus == Attending);
-        var room = wedding.MaxCapacity is { } capacity ? Math.Max(0L, capacity - (await Occupied(wedding.Id, ct) - held)) : long.MaxValue;
-        int confirm = 0, wait = 0, maybe = 0;
-        if (decision == PlanningRsvp.Maybe) maybe = size;
-        else if (decision == Attending && isGuest)
+        var (confirm, wait, maybe) = await Headcount(wedding, guest, input, participants, places.Count, guestAnswer: actor is null, ct);
+        var plan = await PlanPeople(guest, participants, places, input.Decision, confirm, wait, ct);
+
+        // 5. Notes (optional; omitted = unchanged). The dietary note lives on the recipient. Never copied into RSVP history.
+        var wantedNote = input.Note is null ? rsvp?.Note : Normalize(input.Note);
+        var dietary = await db.Set<PlanningDietaryNote>().SingleOrDefaultAsync(x => x.ParticipantId == plan.Primary.Id, ct);
+        var wantedDietary = input.DietaryNote is null ? dietary?.Note : Normalize(input.DietaryNote);
+        var notesChanged = wantedNote != rsvp?.Note || wantedDietary != dietary?.Note;
+
+        var waiting = await db.Set<PlanningWaitlistEntry>().Where(x => x.GuestId == guest.Id && x.Status == "WAITING").ToListAsync(ct);
+        var keepEntry = wait > 0 && waiting.Count == 1 && waiting[0].RequestedSlots == wait;
+        var attendanceUnchanged = rsvp is not null && plan.NewPeople.Count == 0 && plan.Placements.Count == 0 && rsvp.Status == input.Decision
+            && rsvp.ConfirmedPartySize == confirm && rsvp.MaybePartySize == maybe && participants.All(p => p.AttendanceStatus == plan.Targets[p])
+            && (wait == 0 ? waiting.Count == 0 : keepEntry);
+        if (attendanceUnchanged && !notesChanged)
         {
-            var within = Math.Min(size, await MaxPeople(guest, places.Count, ct));
-            confirm = (int)Math.Min(within, Math.Max(room, Math.Min(held, within)));
-            wait = size - confirm;
-        }
-        else if (decision == Attending)
-        {
-            if (size > held && size > room) throw InsufficientSlots(room);
-            confirm = size;
+            if (await Settle(guest.Id, approved, actor, now, ct))
+            {
+                if (approved is not null) db.AuditLogs.Add(Audit(wedding.Id, rsvp!.Id, "RSVP_CHANGE_APPROVED", actor, guest.Id, input, approved));
+                await db.SaveChangesAsync(ct);
+            }
+            return new(wedding.Id, await State(guest, ct)); // no-op: no write, no version bump
         }
 
-        // 4. Who is who: the recipient first, then people already confirmed (seated ones first), then companions in number order.
-        //    Missing companions are created with an automatic name; extra ones simply stop attending (never deleted).
+        if (wantedDietary != dietary?.Note)
+        {
+            if (plan.NewPeople.Remove(plan.Primary)) { db.Add(plan.Primary); participants.Add(plan.Primary); }
+            if (wantedDietary is null) db.Remove(dietary!);
+            else if (dietary is null) db.Add(PlanningDietaryNote.Create(plan.Primary.Id, wantedDietary));
+            else dietary.Rewrite(wantedDietary);
+        }
+        if (attendanceUnchanged)
+        {
+            rsvp!.SetNote(wantedNote, now); rsvp.Advance();
+            await Settle(guest.Id, approved, actor, now, ct);
+            db.AuditLogs.Add(Audit(wedding.Id, rsvp.Id, approved is null ? "RSVP_NOTE_UPDATED" : "RSVP_CHANGE_APPROVED", actor, guest.Id, input, approved));
+            await db.SaveChangesAsync(ct); return new(wedding.Id, await State(guest, ct));
+        }
+
+        var before = Before(rsvp, participants);
+        var oldConfirmed = participants.Where(p => p.AttendanceStatus == Attending).Select(p => p.Id).ToHashSet();
+        var oldPlaceStatus = PlaceStatuses(places, participants, rsvp?.Status, p => p.AttendanceStatus);
+
+        // 6. New people and new reserved places (a place is never given a fake person).
+        foreach (var person in plan.NewPeople) { db.Add(person); participants.Add(person); }
+        var addedPlaces = new List<PlanningPlace>();
+        foreach (var (person, place) in plan.Placements)
+        {
+            if (!places.Contains(place)) { db.Add(place); places.Add(place); addedPlaces.Add(place); }
+            place.ParticipantId = person.Id;
+        }
+        var newPlaceStatus = PlaceStatuses(places, participants, input.Decision, p => plan.Targets[p]);
+        var seatsFlagged = await FlagStoppedSeats(wedding.Id, actor, places, oldPlaceStatus, newPlaceStatus, ct);
+        foreach (var p in participants) p.AttendanceStatus = plan.Targets[p];
+        var grew = await FlagUnseatedGrowth(wedding.Id, guest.Id, addedPlaces, actor, ct);
+
+        // 7. "Chờ couple quyết": one entry per invitation holding the people not accepted yet. Unchanged → kept (queue position).
+        if (!keepEntry)
+        {
+            foreach (var entry in waiting) entry.Cancel(now);
+            if (waiting.Count > 0) await db.SaveChangesAsync(ct); // release uq_planning_rsvp_waitlist_active_guest before inserting
+            if (wait > 0) db.Add(PlanningWaitlistEntry.Create(wedding.Id, guest.Id, wait, now));
+        }
+
+        // 8. RSVP + immutable history. A change of waiting people only writes an audit row, not a history row.
+        var created = rsvp is null;
+        if (rsvp is null) { rsvp = PlanningRsvp.Create(wedding.Id, guest.Id, now); db.Add(rsvp); }
+        var confirmedChanged = created || before.Status != input.Decision || before.Size != confirm || rsvp.MaybePartySize != maybe
+            || !oldConfirmed.SetEquals(participants.Where(p => plan.Targets[p] == Attending).Select(p => p.Id));
+        rsvp.Submit(input.Decision, confirm, maybe, now); rsvp.SetNote(wantedNote, now);
+        var historyReason = approved is not null ? "RSVP_CHANGE_APPROVED" : created ? "RSVP_SUBMITTED" : "RSVP_UPDATED";
+        if (confirmedChanged) AddHistory(rsvp, before, participants, actor, guest.Id, historyReason, now);
+        rsvp.Advance();
+        await Settle(guest.Id, approved, actor, now, ct);
+        db.AuditLogs.Add(Audit(wedding.Id, rsvp.Id, confirmedChanged ? historyReason : "RSVP_WAITLIST_UPDATED", actor, guest.Id, input, approved));
+        await db.SaveChangesAsync(ct);
+        return new(wedding.Id, await State(guest, ct), seatsFlagged || grew, NeedsDecision: wait > 0 && !keepEntry);
+    }
+
+    // How many people are confirmed now, how many wait for the couple, how many a MAYBE guest expects.
+    // Guest: up to the invitation's MaxPeople and the room left in the wedding; the rest waits ("Chờ couple quyết").
+    // Couple / co-host: they decide, so no MaxPeople, but the wedding capacity still holds (422 INSUFFICIENT_SLOTS).
+    // People already confirmed keep their place even if the wedding filled up meanwhile (walk-ins).
+    private async Task<(int Confirm, int Wait, int Maybe)> Headcount(Wedding wedding, PlanningGuest guest, SubmitRsvp input,
+        List<PlanningParticipant> participants, int reservedPlaces, bool guestAnswer, CancellationToken ct)
+    {
+        if (input.Decision == PlanningRsvp.Declined) return (0, 0, 0);
+        var size = input.PartySize ?? 1;
+        if (input.Decision == PlanningRsvp.Maybe) return (0, 0, size);
+        var held = participants.Count(p => p.AttendanceStatus == Attending);
+        var room = wedding.MaxCapacity is { } capacity ? Math.Max(0L, capacity - (await Occupied(wedding.Id, ct) - held)) : long.MaxValue;
+        if (!guestAnswer)
+            return size > held && size > room ? throw InsufficientSlots(room) : (size, 0, 0);
+        var within = Math.Min(size, await MaxPeople(guest, reservedPlaces, ct));
+        var confirm = (int)Math.Min(within, Math.Max(room, Math.Min(held, within)));
+        return (confirm, size - confirm, 0);
+    }
+
+    private sealed record PeoplePlan(PlanningParticipant Primary, List<PlanningParticipant> NewPeople,
+        Dictionary<PlanningParticipant, string> Targets, List<(PlanningParticipant Person, PlanningPlace Place)> Placements);
+
+    // Who is who: the recipient first, then people already confirmed (seated ones first), then companions in number order.
+    // Missing companions are created with an automatic name; extra ones simply stop attending (never deleted).
+    // Every confirmed person holds a reserved place: their own, else an empty one of the invitation, else a new one.
+    private async Task<PeoplePlan> PlanPeople(PlanningGuest guest, List<PlanningParticipant> participants, List<PlanningPlace> places,
+        string decision, int confirm, int wait, CancellationToken ct)
+    {
         var seatedPlaces = await (from seat in db.Set<PlanningSeatAssignment>() join place in db.Set<PlanningPlace>() on seat.PlaceId equals place.Id
                                   where place.GuestId == guest.Id select place.Id).ToListAsync(ct);
         var placeOf = places.Where(x => x.ParticipantId is not null).ToDictionary(x => x.ParticipantId!.Value);
@@ -224,115 +299,34 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
         var targets = ordered.Select((p, i) => (p, Status: decision == PlanningRsvp.Maybe ? Pending
             : i < confirm ? Attending : i < confirm + wait ? Waitlisted : Declined)).ToDictionary(x => x.p, x => x.Status);
 
-        // 5. Every confirmed person holds a reserved place: their own, else an empty one of the invitation, else a new one.
         var open = new Queue<PlanningPlace>(places.Where(x => x.ParticipantId is null));
         var nextPosition = places.Count == 0 ? 1 : places.Max(x => x.Position) + 1;
-        var placements = new List<(PlanningParticipant Person, PlanningPlace Place)>();
-        foreach (var person in ordered.Where(p => targets[p] == Attending && !placeOf.ContainsKey(p.Id)))
-            placements.Add((person, open.Count > 0 ? open.Dequeue() : new PlanningPlace { Id = Guid.NewGuid(), GuestId = guest.Id, Position = nextPosition++ }));
+        var placements = ordered.Where(p => targets[p] == Attending && !placeOf.ContainsKey(p.Id))
+            .Select(p => (p, open.Count > 0 ? open.Dequeue() : new PlanningPlace { Id = Guid.NewGuid(), GuestId = guest.Id, Position = nextPosition++ }))
+            .ToList();
+        return new(ordered.First(p => p.Role == Primary), newPeople, targets, placements);
+    }
 
-        var answered = decision != PlanningRsvp.Maybe;
-        var newPersonOf = placements.ToDictionary(x => x.Place, x => x.Person);
-        string PlaceStatus(PlanningPlace place)
-        {
-            var person = newPersonOf.GetValueOrDefault(place) ?? participants.FirstOrDefault(p => p.Id == place.ParticipantId);
-            return RsvpPlaceStatus.Of(answered, person is not null && targets[person] == Attending);
-        }
+    // Usage of each place for an answer: USED when its person attends; PENDING without a firm answer (none / MAYBE); else UNUSED.
+    private static Dictionary<Guid, string> PlaceStatuses(IEnumerable<PlanningPlace> places, List<PlanningParticipant> people, string? answer,
+        Func<PlanningParticipant, string> attendance) =>
+        places.ToDictionary(x => x.Id, x => RsvpPlaceStatus.Of(answer is not null && answer != PlanningRsvp.Maybe,
+            people.FirstOrDefault(p => p.Id == x.ParticipantId) is { } person && attendance(person) == Attending));
 
-        // 6. Notes (optional; omitted = unchanged). The dietary note lives on the recipient. Never copied into RSVP history.
-        var primary = ordered.First(p => p.Role == Primary);
-        var wantedNote = input.Note is null ? rsvp?.Note : Normalize(input.Note);
-        var dietary = await db.Set<PlanningDietaryNote>().SingleOrDefaultAsync(x => x.ParticipantId == primary.Id, ct);
-        var wantedDietary = input.DietaryNote is null ? dietary?.Note : Normalize(input.DietaryNote);
-        var notesChanged = wantedNote != rsvp?.Note || wantedDietary != dietary?.Note;
-
-        var waiting = await db.Set<PlanningWaitlistEntry>().Where(x => x.GuestId == guest.Id && x.Status == "WAITING").ToListAsync(ct);
-        var keepEntry = wait > 0 && waiting.Count == 1 && waiting[0].RequestedSlots == wait;
-        var attendanceUnchanged = rsvp is not null && newPeople.Count == 0 && placements.Count == 0 && rsvp.Status == decision
-            && rsvp.ConfirmedPartySize == confirm && rsvp.MaybePartySize == maybe && participants.All(p => p.AttendanceStatus == targets[p])
-            && (wait == 0 ? waiting.Count == 0 : keepEntry);
-        if (attendanceUnchanged && !notesChanged)
-        {
-            if (await Settle(guest.Id, approved, actor, now, ct))
-            {
-                if (approved is not null) db.AuditLogs.Add(Audit(wedding.Id, rsvp!.Id, "RSVP_CHANGE_APPROVED", actor, guest.Id, input, approved));
-                await db.SaveChangesAsync(ct);
-            }
-            return new(wedding.Id, await State(guest, ct)); // no-op: no write, no version bump
-        }
-
-        if (wantedDietary != dietary?.Note)
-        {
-            if (newPeople.Contains(primary)) { db.Add(primary); participants.Add(primary); newPeople.Remove(primary); }
-            if (wantedDietary is null) db.Remove(dietary!);
-            else if (dietary is null) db.Add(PlanningDietaryNote.Create(primary.Id, wantedDietary));
-            else dietary.Rewrite(wantedDietary);
-        }
-        if (attendanceUnchanged)
-        {
-            rsvp!.SetNote(wantedNote, now); rsvp.Advance();
-            await Settle(guest.Id, approved, actor, now, ct);
-            db.AuditLogs.Add(Audit(wedding.Id, rsvp.Id, approved is null ? "RSVP_NOTE_UPDATED" : "RSVP_CHANGE_APPROVED", actor, guest.Id, input, approved));
-            await db.SaveChangesAsync(ct); return new(wedding.Id, await State(guest, ct));
-        }
-
-        string? oldStatus = rsvp?.Status; int? oldSize = rsvp?.ConfirmedPartySize;
-        var oldSnapshot = rsvp is null ? null : Snapshot(rsvp.Status, rsvp.ConfirmedPartySize, participants);
-        var oldConfirmed = participants.Where(p => p.AttendanceStatus == Attending).Select(p => p.Id).ToHashSet();
-        var oldAnswered = rsvp is not null && rsvp.Status != PlanningRsvp.Maybe;
-        var oldStatusOf = places.ToDictionary(x => x.Id, x => RsvpPlaceStatus.Of(oldAnswered,
-            participants.Any(p => p.Id == x.ParticipantId && p.AttendanceStatus == Attending)));
-
-        // 7. New people and new reserved places (a place is never given a fake person).
-        foreach (var person in newPeople) { db.Add(person); participants.Add(person); }
-        var addedPlaces = new List<PlanningPlace>();
-        foreach (var (person, place) in placements)
-        {
-            if (!places.Contains(place)) { db.Add(place); places.Add(place); addedPlaces.Add(place); }
-            place.ParticipantId = person.Id;
-        }
-
-        // 8. Seated places that stop being used KEEP their seat: RSVP never moves or removes guests from tables
-        //    (committee Q8 / F3-E2). They are flagged for the couple (red in seating) who may clear the seat themselves.
-        var newStatusOf = places.ToDictionary(x => x.Id, PlaceStatus);
-        //    "Stops" = a place that was (or could still be) used and now is not: PENDING/USED → UNUSED, or USED → PENDING (MAYBE).
-        var stopped = places.Where(x => oldStatusOf.TryGetValue(x.Id, out var old) && old != RsvpPlaceStatus.Unused
-                && newStatusOf[x.Id] != RsvpPlaceStatus.Used && newStatusOf[x.Id] != old)
-            .Select(x => x.Id).ToList();
+    // Seated places that stop being used KEEP their seat: RSVP never moves or removes guests from tables (committee Q8 / F3-E2).
+    // They are flagged for the couple (red in seating), who may clear the seat themselves.
+    // "Stops" = a place that was (or could still be) used and now is not: PENDING/USED → UNUSED, or USED → PENDING (MAYBE).
+    private async Task<bool> FlagStoppedSeats(Guid weddingId, Guid? actor, List<PlanningPlace> places, Dictionary<Guid, string> before,
+        Dictionary<Guid, string> after, CancellationToken ct)
+    {
+        var stopped = places.Where(x => before.TryGetValue(x.Id, out var old) && old != RsvpPlaceStatus.Unused
+            && after[x.Id] != RsvpPlaceStatus.Used && after[x.Id] != old).Select(x => x.Id).ToList();
         var seats = await db.Set<PlanningSeatAssignment>().AsNoTracking().Where(x => stopped.Contains(x.PlaceId)).ToListAsync(ct);
         foreach (var seat in seats)
-        {
-            var place = places.Single(x => x.Id == seat.PlaceId);
-            db.AuditLogs.Add(AuditLog.ForEntity(wedding.Id, "planning_seat_assignments", seat.PlaceId, "SEAT_NEEDS_ATTENTION", actor, null,
-                JsonSerializer.Serialize(new { placeId = seat.PlaceId, participantId = place.ParticipantId, seat.TableId, seat.SeatNumber,
-                    placeStatus = newStatusOf[place.Id] }, SnapshotJson)));
-        }
-        foreach (var p in participants) p.AttendanceStatus = targets[p];
-        var grew = await FlagUnseatedGrowth(wedding.Id, guest.Id, addedPlaces, actor, ct);
-
-        // 9. "Chờ couple quyết": one entry per invitation holding the people not accepted yet. Unchanged → kept (queue position).
-        if (!keepEntry)
-        {
-            foreach (var entry in waiting) entry.Cancel(now);
-            if (waiting.Count > 0) await db.SaveChangesAsync(ct); // release uq_planning_rsvp_waitlist_active_guest before inserting
-            if (wait > 0) db.Add(PlanningWaitlistEntry.Create(wedding.Id, guest.Id, wait, now));
-        }
-
-        // 10. RSVP + immutable history. A change of waiting people only writes an audit row, not a history row.
-        var created = rsvp is null;
-        if (rsvp is null) { rsvp = PlanningRsvp.Create(wedding.Id, guest.Id, now); db.Add(rsvp); }
-        var confirmedChanged = created || oldStatus != decision || oldSize != confirm || rsvp.MaybePartySize != maybe
-            || !oldConfirmed.SetEquals(participants.Where(p => targets[p] == Attending).Select(p => p.Id));
-        rsvp.Submit(decision, confirm, maybe, now); rsvp.SetNote(wantedNote, now);
-        var historyReason = approved is not null ? "RSVP_CHANGE_APPROVED" : created ? "RSVP_SUBMITTED" : "RSVP_UPDATED";
-        if (confirmedChanged)
-            db.Add(PlanningRsvpHistory.Record(rsvp.Id, oldStatus, oldSize, rsvp.Status, rsvp.ConfirmedPartySize,
-                oldSnapshot, Snapshot(rsvp.Status, rsvp.ConfirmedPartySize, participants), actor, guest.Id, historyReason, now));
-        rsvp.Advance();
-        await Settle(guest.Id, approved, actor, now, ct);
-        db.AuditLogs.Add(Audit(wedding.Id, rsvp.Id, confirmedChanged ? historyReason : "RSVP_WAITLIST_UPDATED", actor, guest.Id, input, approved));
-        await db.SaveChangesAsync(ct);
-        return new(wedding.Id, await State(guest, ct), seats.Count > 0 || grew, NeedsDecision: wait > 0 && !keepEntry);
+            db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_seat_assignments", seat.PlaceId, "SEAT_NEEDS_ATTENTION", actor, null,
+                JsonSerializer.Serialize(new { placeId = seat.PlaceId, participantId = places.Single(x => x.Id == seat.PlaceId).ParticipantId,
+                    seat.TableId, seat.SeatNumber, placeStatus = after[seat.PlaceId] }, SnapshotJson)));
+        return seats.Count > 0;
     }
 
     // Closes the guest's change request once a host has decided: an approved request is marked APPROVED; a host entering
@@ -398,8 +392,7 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
         if (wedding.MaxCapacity is { } capacity && occupied + waiting.Count > capacity) throw InsufficientSlots(capacity - occupied);
 
         var rsvp = await db.Set<PlanningRsvp>().SingleAsync(x => x.GuestId == guest.Id, ct);
-        var oldStatus = rsvp.Status; var oldSize = rsvp.ConfirmedPartySize;
-        var before = Snapshot(oldStatus, oldSize, party);
+        var before = Before(rsvp, party);
         // Accepted people get a reserved place of their own so seating can place them.
         var places = await db.Set<PlanningPlace>().Where(x => x.GuestId == guest.Id).ToListAsync(ct);
         var next = places.Count == 0 ? 1 : places.Max(x => x.Position) + 1;
@@ -413,8 +406,7 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
         var grew = await FlagUnseatedGrowth(weddingId, guest.Id, addedPlaces, actor, ct);
         var confirmedSize = party.Count(p => p.AttendanceStatus == Attending); // additional members join an already confirmed party
         rsvp.Submit(Attending, confirmedSize, 0, now); entry.Promote(now); rsvp.Advance();
-        db.Add(PlanningRsvpHistory.Record(rsvp.Id, oldStatus, oldSize, rsvp.Status, confirmedSize, before,
-            Snapshot(rsvp.Status, rsvp.ConfirmedPartySize, party), actor, null, "WAITLIST_PROMOTED", now));
+        AddHistory(rsvp, before, party, actor, null, "WAITLIST_PROMOTED", now);
         db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_rsvp_waitlist", entry.Id, "WAITLIST_PROMOTED", actor));
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
         return new(weddingId, await State(guest, ct), grew);
@@ -427,15 +419,13 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
         var now = clock.GetUtcNow();
         var (entry, guest, party, waiting) = await WaitingEntry(weddingId, entryId, ct);
         var rsvp = await db.Set<PlanningRsvp>().SingleAsync(x => x.GuestId == guest.Id, ct);
-        var oldStatus = rsvp.Status; var oldSize = rsvp.ConfirmedPartySize;
-        var before = Snapshot(oldStatus, oldSize, party);
+        var before = Before(rsvp, party);
         foreach (var p in waiting) p.AttendanceStatus = Declined;
         entry.Cancel(now);
         if (rsvp.ConfirmedPartySize == 0) // nobody of the party is confirmed: the whole answer becomes "not attending"
         {
             rsvp.Submit(Declined, 0, 0, now);
-            db.Add(PlanningRsvpHistory.Record(rsvp.Id, oldStatus, oldSize, rsvp.Status, 0, before,
-                Snapshot(rsvp.Status, 0, party), actor, null, "WAITLIST_DECLINED", now));
+            AddHistory(rsvp, before, party, actor, null, "WAITLIST_DECLINED", now);
         }
         rsvp.Advance();
         db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_rsvp_waitlist", entry.Id, "WAITLIST_DECLINED", actor));
@@ -621,6 +611,15 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
 
     private static string? Normalize(string? note) => string.IsNullOrWhiteSpace(note) ? null : note.Trim();
 
+    // State before a change, for the immutable history row written after it.
+    private readonly record struct RsvpBefore(string? Status, int? Size, string? Snapshot);
+    private static RsvpBefore Before(PlanningRsvp? rsvp, IEnumerable<PlanningParticipant> people) =>
+        rsvp is null ? default : new(rsvp.Status, rsvp.ConfirmedPartySize, Snapshot(rsvp.Status, rsvp.ConfirmedPartySize, people));
+    private void AddHistory(PlanningRsvp rsvp, RsvpBefore before, IEnumerable<PlanningParticipant> people, Guid? actor, Guid? guestId,
+        string reason, DateTimeOffset now) =>
+        db.Add(PlanningRsvpHistory.Record(rsvp.Id, before.Status, before.Size, rsvp.Status, rsvp.ConfirmedPartySize, before.Snapshot,
+            Snapshot(rsvp.Status, rsvp.ConfirmedPartySize, people), actor, guestId, reason, now));
+
     // RSVP history snapshot: RSVP state + participant attendance. Never contains names, notes, tokens or contact data.
     private static string Snapshot(string status, int confirmedPartySize, IEnumerable<PlanningParticipant> participants) =>
         JsonSerializer.Serialize(new
@@ -629,10 +628,13 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
             participants = participants.OrderBy(p => p.Id).Select(p => new { id = p.Id, role = p.Role, attendanceStatus = p.AttendanceStatus })
         }, SnapshotJson);
 
-    // Walk-ins added at the counter (Cohost04) are planning participants with ATTENDING, so they are already counted here.
-    private async Task<long> Occupied(Guid weddingId, CancellationToken ct) =>
+    // People coming (ATTENDING), optionally only in some groups. Walk-ins added at the counter (Cohost04) are planning
+    // participants with ATTENDING, so they are already counted here.
+    private async Task<long> Occupied(Guid weddingId, CancellationToken ct, Guid[]? groups = null) =>
         await (from p in db.Set<PlanningParticipant>() join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
-               where g.WeddingId == weddingId && g.ArchivedAt == null && p.AttendanceStatus == Attending select p).LongCountAsync(ct);
+               where g.WeddingId == weddingId && g.ArchivedAt == null && p.AttendanceStatus == Attending
+                     && (groups == null || g.GroupId.HasValue && groups.Contains(g.GroupId.Value))
+               select p).LongCountAsync(ct);
 
     private async Task<Wedding> LockWedding(Guid weddingId, CancellationToken ct)
     {

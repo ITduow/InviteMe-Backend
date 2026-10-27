@@ -23,7 +23,9 @@ public interface IRsvpStore
     Task<RsvpSettingsDto> SaveSettingsAsync(Guid weddingId, SaveRsvpSettings input, CancellationToken ct);
     /// <summary>The couple sets (or clears) "tối đa n người" of one invitation.</summary>
     Task<RsvpDto> SetLimitAsync(Guid weddingId, Guid guestId, Guid actor, SetRsvpLimit input, CancellationToken ct);
-    /// <summary>Read model for the Couple06 dashboard: every planning guest of the wedding with its RSVP, people and places.</summary>
-    Task<RsvpDashboardData> DashboardAsync(Guid weddingId, CancellationToken ct);
-    Task<RsvpDashboardData> DashboardScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<Guid>? groupScope) => DashboardAsync(weddingId, ct);
+    /// <summary>
+    /// Read model for the Couple06 dashboard: every planning guest with its RSVP and people. groupScope = the groups a
+    /// group-limited co-host may see; null = the whole wedding.
+    /// </summary>
+    Task<RsvpDashboardData> DashboardAsync(Guid weddingId, IReadOnlySet<Guid>? groupScope, CancellationToken ct);
 }

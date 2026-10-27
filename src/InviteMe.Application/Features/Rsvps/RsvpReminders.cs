@@ -182,13 +182,13 @@ public sealed class RsvpReminderHandler(IRsvpReminderStore store, IWeddingPermis
 
     public async Task<RsvpReminderSummaryDto> SummaryAsync(Guid weddingId, CancellationToken ct)
     {
-        await RequireWeddingWideAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
+        await permissions.RequireWeddingWideAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
         return Summary(await store.ContextAsync(weddingId, ct), clock.GetUtcNow()) with { EmailConfigured = EmailReady };
     }
 
     public async Task<RsvpReminderSummaryDto> SaveSettingsAsync(Guid weddingId, SaveRsvpReminderSettings input, CancellationToken ct)
     {
-        await RequireWeddingWideAsync(weddingId, WeddingPermission.INVITATION_SEND, ct);
+        await permissions.RequireWeddingWideAsync(weddingId, WeddingPermission.INVITATION_SEND, ct);
         // Automatic reminders need a plan with reminders; switching them off is always allowed.
         if (input.AutoEnabled && InviteMe.Application.Features.Billing.PlanRules.Limit(await plans.LimitsAsync(weddingId, ct), InviteMe.Application.Features.Billing.PlanQuota.ReminderRounds) == 0)
             await plans.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.ReminderRounds, 1, ct);
@@ -199,7 +199,7 @@ public sealed class RsvpReminderHandler(IRsvpReminderStore store, IWeddingPermis
 
     public async Task<RsvpReminderPreviewDto> PreviewAsync(Guid weddingId, CancellationToken ct)
     {
-        await RequireWeddingWideAsync(weddingId, WeddingPermission.INVITATION_SEND, ct);
+        await permissions.RequireWeddingWideAsync(weddingId, WeddingPermission.INVITATION_SEND, ct);
         var context = await store.ContextAsync(weddingId, ct);
         var (sendAt, eligible, skipped) = Manual(context, null, clock.GetUtcNow());
         return new(sendAt, eligible.Select(Candidate).ToList(), skipped);
@@ -207,7 +207,7 @@ public sealed class RsvpReminderHandler(IRsvpReminderStore store, IWeddingPermis
 
     public async Task<RsvpReminderSendResult> SendAsync(Guid weddingId, SendRsvpReminders input, CancellationToken ct)
     {
-        await RequireWeddingWideAsync(weddingId, WeddingPermission.INVITATION_SEND, ct);
+        await permissions.RequireWeddingWideAsync(weddingId, WeddingPermission.INVITATION_SEND, ct);
         await sendValidation.ValidateAsync(input, ct);
         var context = await store.ContextAsync(weddingId, ct);
         if (!context.CanEdit) throw new ApplicationProblemException(ProblemKind.BusinessRule, RsvpReminderRules.WeddingClosed, "Wedding is closed.");
@@ -228,7 +228,7 @@ public sealed class RsvpReminderHandler(IRsvpReminderStore store, IWeddingPermis
 
     public async Task<PagedResult<RsvpReminderDto>> HistoryAsync(Guid weddingId, RsvpReminderHistoryFilter filter, PageRequest page, CancellationToken ct)
     {
-        await RequireWeddingWideAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
+        await permissions.RequireWeddingWideAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
         await historyValidation.ValidateAsync(filter, ct); await pages.ValidateAsync(page, ct);
         var contacts = await permissions.HasPermissionAsync(weddingId, WeddingPermission.GUEST_VIEW, ct);
         return await store.HistoryAsync(weddingId, filter, page, contacts, ct);
@@ -237,20 +237,13 @@ public sealed class RsvpReminderHandler(IRsvpReminderStore store, IWeddingPermis
     /// <summary>Development only: runs the automatic round and the delivery for this wedding now (optionally "as if" at a later time).</summary>
     public async Task<RsvpReminderRunResult> RunNowAsync(Guid weddingId, DateTimeOffset? at, CancellationToken ct)
     {
-        await RequireWeddingWideAsync(weddingId, WeddingPermission.INVITATION_SEND, ct);
+        await permissions.RequireWeddingWideAsync(weddingId, WeddingPermission.INVITATION_SEND, ct);
         await store.ContextAsync(weddingId, ct);
         return await processor.RunAsync(weddingId, at?.ToUniversalTime(), ct);
     }
 
     private bool EmailReady => sender.IsAvailable(PlanningRsvpReminder.Email);
 
-    // Reminders cover the whole guest list, so a co-host limited to some groups (Couple04 scope) may not use them.
-    private async Task RequireWeddingWideAsync(Guid weddingId, WeddingPermission permission, CancellationToken ct)
-    {
-        var scope = await permissions.RequireScopeAsync(weddingId, permission, ct);
-        if (!scope.IsWeddingWide)
-            throw new ApplicationProblemException(ProblemKind.Forbidden, "WEDDING_SCOPE_REQUIRED", "This operation requires wedding-wide permission.");
-    }
 
     private static (DateTimeOffset SendAt, List<RsvpReminderGuest> Eligible, List<RsvpReminderSkipDto> Skipped) Manual(
         RsvpReminderContext context, IReadOnlyList<Guid>? only, DateTimeOffset now)
