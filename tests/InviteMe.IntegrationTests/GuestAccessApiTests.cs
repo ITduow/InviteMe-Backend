@@ -117,7 +117,7 @@ public sealed class GuestAccessApiTests
         var group = Assert.Single(scopes["SEATING_EDIT"].GetProperty("groups").EnumerateArray());
         Assert.Equal((guest.GroupId!.Value, "Họ nhà gái"), (group.GetProperty("id").GetGuid(), group.GetProperty("name").GetString()));
         var ownerScopes = (await Read<JsonElement>(await owner.GetAsync($"/api/weddings/{wedding.Id}/access"))).GetProperty("scopes").EnumerateArray().ToList();
-        Assert.Equal(12, ownerScopes.Count);
+        Assert.Equal(13, ownerScopes.Count); // every wedding permission, GIFT_RECORD included
         Assert.All(ownerScopes, x => Assert.True(x.GetProperty("weddingWide").GetBoolean()));
     });
 

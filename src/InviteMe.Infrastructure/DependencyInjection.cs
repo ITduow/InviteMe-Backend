@@ -84,6 +84,7 @@ public static class DependencyInjection
             .Validate(x => x.AllowedFormats.All(f => new[] { "jpeg", "jpg", "png", "webp" }.Contains(f, StringComparer.OrdinalIgnoreCase)), "WeddingMedia:AllowedFormats may include only JPEG, PNG and WebP.")
             .ValidateOnStart();
         services.AddHttpClient<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage, S3WeddingMediaStorage>();
+        services.AddHttpClient<InviteMe.Application.Features.Gifts.IGiftProofStorage, S3GiftProofStorage>();
         services.AddScoped<InviteMe.Application.Ports.Audit.IAuditReader, AuditReader>();
         services.AddScoped<InviteMe.Application.Features.Admin.IAdminStore, AdminStore>();
         services.AddScoped<InviteMe.Application.Ports.AI.IThankYouTemplateStore, ThankYouTemplateStore>();

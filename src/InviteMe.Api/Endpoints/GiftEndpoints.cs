@@ -39,6 +39,18 @@ internal static class GiftEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
         guest.MapGet("/{giftId:guid}", (string token, Guid giftId, GiftGuestHandler h, CancellationToken ct) => h.GetAsync(token, giftId, ct))
             .WithName("GetMyGift").Produces<GuestGiftDto>().ProducesProblem(StatusCodes.Status404NotFound);
+        // "Đã chuyển" with the photo of the bank receipt (camera or file): the couple checks it before confirming the money.
+        guest.MapPost("/{giftId:guid}/proof", async (string token, Guid giftId, Microsoft.AspNetCore.Http.IFormFile? image, GiftGuestHandler h,
+                CancellationToken ct) =>
+            {
+                if (image is null) throw new InviteMe.Application.Common.Errors.ApplicationProblemException(
+                    InviteMe.Application.Common.Errors.ProblemKind.BadRequest, "GIFT_PROOF_REQUIRED", "An image file is required.");
+                await using var stream = image.OpenReadStream();
+                return await h.SendProofAsync(token, giftId, stream, image.Length, ct);
+            })
+            .DisableAntiforgery().WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(6 * 1024 * 1024))
+            .WithName("SendMyGiftProof").Produces<GuestGiftDto>().ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status413PayloadTooLarge).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
         guest.MapPost("/{giftId:guid}/claim", (string token, Guid giftId, GiftGuestHandler h, CancellationToken ct) => h.ClaimAsync(token, giftId, ct))
             .WithName("ClaimMyGiftTransferred").Produces<GuestGiftDto>().ProducesProblem(StatusCodes.Status404NotFound);
 
@@ -58,6 +70,28 @@ internal static class GiftEndpoints
                 Guid? guestId = null, int page = 1, int pageSize = 25) =>
                 h.LedgerAsync(weddingId, new GiftLedgerFilter(status, method, search, guestId), new PageRequest(page, pageSize), ct))
             .WithName("ListGifts").Produces<PagedResult<GiftDto>>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden);
+        // Reception desk: photo of a guest's transfer screen (camera or file), then RecordGift { method: TRANSFER, proofId }.
+        host.MapPost("/proofs", async (Guid weddingId, Microsoft.AspNetCore.Http.IFormFile? image, GiftHostHandler h, CancellationToken ct) =>
+            {
+                if (image is null) throw new InviteMe.Application.Common.Errors.ApplicationProblemException(
+                    InviteMe.Application.Common.Errors.ProblemKind.BadRequest, "GIFT_PROOF_REQUIRED", "An image file is required.");
+                await using var stream = image.OpenReadStream();
+                return Results.Json(await h.UploadProofAsync(weddingId, stream, image.Length, ct), statusCode: StatusCodes.Status201Created);
+            })
+            .DisableAntiforgery().WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(6 * 1024 * 1024))
+            .WithName("UploadGiftProof").Produces<GiftProofDto>(StatusCodes.Status201Created).ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status413PayloadTooLarge);
+        host.MapGet("/{giftId:guid}/proof", async (Guid weddingId, Guid giftId, GiftHostHandler h, HttpContext http, CancellationToken ct) =>
+            {
+                var file = await h.ProofAsync(weddingId, giftId, ct);
+                http.Response.Headers.CacheControl = "private, no-store";
+                return Results.File(file.Content, file.ContentType);
+            })
+            .WithName("GetGiftProof").Produces(StatusCodes.Status200OK, contentType: "image/jpeg").ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+        // Reception desk (owner or co-host with GIFT_RECORD): cash envelopes, presents and transfers shown at the wedding.
+        host.MapGet("/reception", (Guid weddingId, GiftHostHandler h, CancellationToken ct) => h.ReceptionAsync(weddingId, ct))
+            .WithName("ListReceptionGifts").Produces<IReadOnlyList<GiftDto>>().ProducesProblem(StatusCodes.Status403Forbidden);
         host.MapGet("/summary", (Guid weddingId, GiftHostHandler h, CancellationToken ct) => h.SummaryAsync(weddingId, ct))
             .WithName("GetGiftSummary").Produces<GiftSummaryDto>().ProducesProblem(StatusCodes.Status403Forbidden);
         host.MapGet("/export", async (Guid weddingId, GiftHostHandler h, HttpContext http, CancellationToken ct, string? status = null,

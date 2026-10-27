@@ -1331,6 +1331,19 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(150)")
                         .HasColumnName("idempotency_key");
 
+                    b.Property<string>("ItemName")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("item_name");
+
+                    b.Property<int?>("ItemQuantity")
+                        .HasColumnType("integer")
+                        .HasColumnName("item_quantity");
+
+                    b.Property<long?>("ItemValue")
+                        .HasColumnType("bigint")
+                        .HasColumnName("item_value");
+
                     b.Property<string>("Message")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)")
@@ -1349,6 +1362,14 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("PaidAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("paid_at");
+
+                    b.Property<Guid?>("ParticipantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("participant_id");
+
+                    b.Property<Guid?>("ProofId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("proof_id");
 
                     b.Property<Guid?>("RecordedBy")
                         .HasColumnType("uuid")
@@ -1388,9 +1409,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_planning_gifts_confirmation", "confirmation IS NULL OR confirmation IN ('AUTO','MANUAL')");
 
-                            t.HasCheckConstraint("ck_planning_gifts_method", "method IN ('QR','CASH','TRANSFER')");
+                            t.HasCheckConstraint("ck_planning_gifts_item", "(method = 'ITEM') = (item_name IS NOT NULL) AND (method <> 'ITEM' OR (status = 'PAID' AND amount_expected IS NULL AND amount_received IS NULL AND item_quantity BETWEEN 1 AND 1000 AND (item_value IS NULL OR item_value >= 0)))");
 
-                            t.HasCheckConstraint("ck_planning_gifts_paid", "(status = 'PAID') = (amount_received IS NOT NULL AND paid_at IS NOT NULL)");
+                            t.HasCheckConstraint("ck_planning_gifts_method", "method IN ('QR','CASH','TRANSFER','ITEM')");
+
+                            t.HasCheckConstraint("ck_planning_gifts_paid", "(status = 'PAID') = (paid_at IS NOT NULL AND (method = 'ITEM' OR amount_received IS NOT NULL))");
 
                             t.HasCheckConstraint("ck_planning_gifts_qr_code", "(method = 'QR') = (code IS NOT NULL)");
 
@@ -1454,6 +1477,65 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.ToTable("planning_gift_accounts", "inviteme", t =>
                         {
                             t.HasCheckConstraint("ck_planning_gift_accounts_bin", "bank_bin ~ '^[0-9]{6}$'");
+                        });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Gifts.PlanningGiftProof", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("content_type");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("GiftId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("gift_id");
+
+                    b.Property<Guid?>("GuestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("guest_id");
+
+                    b.Property<int>("Size")
+                        .HasColumnType("integer")
+                        .HasColumnName("size");
+
+                    b.Property<string>("StorageKey")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("storage_key");
+
+                    b.Property<Guid?>("UploadedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("uploaded_by");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GiftId")
+                        .IsUnique()
+                        .HasDatabaseName("uq_planning_gift_proofs_gift")
+                        .HasFilter("gift_id IS NOT NULL");
+
+                    b.HasIndex("WeddingId")
+                        .HasDatabaseName("ix_planning_gift_proofs_wedding");
+
+                    b.ToTable("planning_gift_proofs", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_planning_gift_proofs_size", "size BETWEEN 1 AND 5242880");
                         });
                 });
 
@@ -5585,6 +5667,18 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.SetNull)
                         .HasConstraintName("fk_planning_gifts_guest");
 
+                    b.HasOne("InviteMe.Domain.Guests.PlanningParticipant", null)
+                        .WithMany()
+                        .HasForeignKey("ParticipantId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_planning_gifts_participant");
+
+                    b.HasOne("InviteMe.Domain.Gifts.PlanningGiftProof", null)
+                        .WithMany()
+                        .HasForeignKey("ProofId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_planning_gifts_proof");
+
                     b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("RecordedBy")
@@ -5607,6 +5701,28 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_planning_gift_accounts_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Gifts.PlanningGiftProof", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Guests.PlanningGuest", null)
+                        .WithMany()
+                        .HasForeignKey("GuestId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_planning_gift_proofs_guest");
+
+                    b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("UploadedBy")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_planning_gift_proofs_user");
+
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_gift_proofs_wedding");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Gifts.PlanningGiftTransaction", b =>

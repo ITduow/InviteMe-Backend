@@ -14,5 +14,7 @@ public enum WeddingPermission
     CHECKIN_MANAGE,
     GIFT_VIEW,
     GIFT_EDIT,
-    ANALYTICS_VIEW
+    ANALYTICS_VIEW,
+    /// <summary>Co-host at the reception: records cash envelopes and presents for the whole wedding, never sees totals.</summary>
+    GIFT_RECORD
 }

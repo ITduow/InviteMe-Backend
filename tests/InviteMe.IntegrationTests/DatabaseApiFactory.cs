@@ -52,6 +52,8 @@ internal sealed class DatabaseApiFactory(
             services.AddScoped<ICoHostInvitationEmailSender, CapturingCoHostInvitationEmailSender>();
             services.RemoveAll<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage>();
             services.AddSingleton<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage, InviteMe.Infrastructure.Media.LocalWeddingMediaStorage>();
+            services.RemoveAll<InviteMe.Application.Features.Gifts.IGiftProofStorage>();
+            services.AddSingleton<InviteMe.Application.Features.Gifts.IGiftProofStorage, InviteMe.Infrastructure.Media.LocalGiftProofStorage>();
         });
     }
 
