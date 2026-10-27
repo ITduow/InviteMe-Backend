@@ -48,7 +48,7 @@ internal static class GiftEndpoints
                 await using var stream = image.OpenReadStream();
                 return await h.SendProofAsync(token, giftId, stream, image.Length, ct);
             })
-            .DisableAntiforgery().WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(6 * 1024 * 1024))
+            .DisableAntiforgery().WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(InviteMe.Domain.Weddings.UploadLimits.MaxImageRequestBytes))
             .WithName("SendMyGiftProof").Produces<GuestGiftDto>().ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status413PayloadTooLarge).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
         guest.MapPost("/{giftId:guid}/claim", (string token, Guid giftId, GiftGuestHandler h, CancellationToken ct) => h.ClaimAsync(token, giftId, ct))
@@ -78,7 +78,7 @@ internal static class GiftEndpoints
                 await using var stream = image.OpenReadStream();
                 return Results.Json(await h.UploadProofAsync(weddingId, stream, image.Length, ct), statusCode: StatusCodes.Status201Created);
             })
-            .DisableAntiforgery().WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(6 * 1024 * 1024))
+            .DisableAntiforgery().WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(InviteMe.Domain.Weddings.UploadLimits.MaxImageRequestBytes))
             .WithName("UploadGiftProof").Produces<GiftProofDto>(StatusCodes.Status201Created).ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status413PayloadTooLarge);
         host.MapGet("/{giftId:guid}/proof", async (Guid weddingId, Guid giftId, GiftHostHandler h, HttpContext http, CancellationToken ct) =>

@@ -80,10 +80,13 @@ public static class DependencyInjection
             configuration["Billing:AccountNumber"], configuration["Billing:AccountName"]));
         services.AddScoped<InviteMe.Application.Features.Weddings.Setup.IWeddingListReader, WeddingListReader>();
         services.AddOptions<WeddingMediaOptions>().BindConfiguration(WeddingMediaOptions.SectionName)
-            .Validate(x => x.MaximumFileSizeBytes is > 0 and <= 5 * 1024 * 1024, "WeddingMedia:MaximumFileSizeBytes must be between 1 byte and 5 MB.")
+            .Validate(x => x.MaximumFileSizeBytes is > 0 and <= InviteMe.Domain.Weddings.UploadLimits.MaxImageBytes, "WeddingMedia:MaximumFileSizeBytes must be between 1 byte and 5 MB.")
             .Validate(x => x.AllowedFormats.All(f => new[] { "jpeg", "jpg", "png", "webp" }.Contains(f, StringComparer.OrdinalIgnoreCase)), "WeddingMedia:AllowedFormats may include only JPEG, PNG and WebP.")
             .ValidateOnStart();
         services.AddHttpClient<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage, S3WeddingMediaStorage>();
+        services.AddSingleton(sp => new InviteMe.Application.Features.Weddings.Setup.ImageUploadLimit(Math.Min(
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<WeddingMediaOptions>>().Value.MaximumFileSizeBytes,
+            InviteMe.Domain.Weddings.UploadLimits.MaxImageBytes)));
         services.AddHttpClient<InviteMe.Application.Features.Gifts.IGiftProofStorage, S3GiftProofStorage>();
         services.AddScoped<InviteMe.Application.Ports.Audit.IAuditReader, AuditReader>();
         services.AddScoped<InviteMe.Application.Features.Admin.IAdminStore, AdminStore>();

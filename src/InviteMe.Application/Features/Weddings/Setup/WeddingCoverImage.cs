@@ -6,7 +6,7 @@ internal sealed record DetectedWeddingImage(Stream Content, string Extension);
 
 internal static class WeddingCoverImage
 {
-    public const long MaxBytes = 5 * 1024 * 1024;
+    public const long MaxBytes = InviteMe.Domain.Weddings.UploadLimits.MaxImageBytes;
 
     public static async Task<DetectedWeddingImage> DetectAsync(Stream content, CancellationToken ct)
     {
