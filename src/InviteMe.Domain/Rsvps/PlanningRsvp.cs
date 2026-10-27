@@ -4,8 +4,10 @@ namespace InviteMe.Domain.Rsvps;
 /// RSVP of one Guest Planning v2 party (planning_guests row). Attendance of each person lives on
 /// planning_participants.AttendanceStatus so the planning guest list and seating read the same answer.
 /// Status = the guest's answer: ATTENDING (Có), MAYBE (Phân vân), DECLINED (Không).
-/// ConfirmedPartySize = people already counted as coming (0 when everyone waits for the couple's decision);
-/// MaybePartySize = people a MAYBE guest expects to bring (never counted against the capacity).
+/// ConfirmedPartySize = people coming ("đăng ký bao nhiêu tính bấy nhiêu": every person of an ATTENDING answer counts);
+/// MaybePartySize = people a MAYBE guest expects to bring (shown, never counted).
+/// AcceptedPartySize = the number of people the couple has already seen and accepted for this invitation
+/// (a host entering the answer, or "Đã xem" on an over-threshold invitation). Null = never accepted.
 /// </summary>
 public sealed class PlanningRsvp
 {
@@ -16,6 +18,7 @@ public sealed class PlanningRsvp
     public string Status { get; private set; } = Attending;
     public int ConfirmedPartySize { get; private set; }
     public int MaybePartySize { get; private set; }
+    public int? AcceptedPartySize { get; private set; }
     public string? Note { get; private set; }
     public int Version { get; private set; }
     public DateTimeOffset SubmittedAt { get; private set; }
@@ -39,6 +42,15 @@ public sealed class PlanningRsvp
 
     /// <summary>Two-number form kept for callers outside the RSVP module (reception, tests): no MAYBE people.</summary>
     public void Submit(string status, int confirmed, DateTimeOffset now) => Submit(status, confirmed, 0, now);
+
+    /// <summary>The couple has seen the current number of people: no over-threshold warning until it grows again.</summary>
+    public void Accept(DateTimeOffset now) { AcceptedPartySize = ConfirmedPartySize; UpdatedAt = now; }
+
+    /// <summary>
+    /// "Vượt ngưỡng": an ATTENDING answer with more people than the invitation's threshold that the couple has not accepted yet.
+    /// It never blocks the answer; it only tells the couple to look at it.
+    /// </summary>
+    public bool OverThreshold(int threshold) => Status == Attending && ConfirmedPartySize > threshold && ConfirmedPartySize > (AcceptedPartySize ?? 0);
 
     public void SetNote(string? note, DateTimeOffset now) { Note = string.IsNullOrWhiteSpace(note) ? null : note.Trim(); UpdatedAt = now; }
 
@@ -71,27 +83,6 @@ public sealed class PlanningRsvpHistory
         ActorType = userId is not null ? "USER" : "WEDDING_GUEST", ChangedBy = userId, ActorGuestId = userId is null ? guestId : null,
         Reason = reason, ChangedAt = now
     };
-}
-
-/// <summary>
-/// "Chờ couple quyết": one party-level entry per planning guest holding the people the couple has not accepted yet
-/// (more people than the invitation allows, or no room left in the wedding).
-/// </summary>
-public sealed class PlanningWaitlistEntry
-{
-    public Guid Id { get; private set; }
-    public Guid WeddingId { get; private set; }
-    public Guid GuestId { get; private set; }
-    public int RequestedSlots { get; private set; }
-    public string Status { get; private set; } = "WAITING";
-    public DateTimeOffset RequestedAt { get; private set; }
-    public DateTimeOffset? ResolvedAt { get; private set; }
-
-    public static PlanningWaitlistEntry Create(Guid weddingId, Guid guestId, int slots, DateTimeOffset now) => slots > 0
-        ? new() { Id = Guid.NewGuid(), WeddingId = weddingId, GuestId = guestId, RequestedSlots = slots, RequestedAt = now }
-        : throw new ArgumentOutOfRangeException(nameof(slots));
-    public void Cancel(DateTimeOffset now) { Status = "CANCELLED"; ResolvedAt = now; }
-    public void Promote(DateTimeOffset now) { Status = "PROMOTED"; ResolvedAt = now; }
 }
 
 /// <summary>Dietary note of the RSVP form, stored on the invitation's main person.</summary>
@@ -145,8 +136,8 @@ public sealed class PlanningRsvpLock
 }
 
 /// <summary>
-/// Wedding-wide RSVP rule set at wedding setup. PlusOneLimit = companions an invitation may bring by default
-/// (1 = two people in total including the recipient). An invitation imported with more places (e.g. a family of 4) gets that many.
+/// Wedding-wide RSVP rule set at wedding setup. PlusOneLimit = how many extra people an invitation may bring beyond the people
+/// invited on it before the couple is warned (1 = a one-person invitation may come as two, a family of 4 as five).
 /// </summary>
 public sealed class PlanningRsvpSettings
 {
@@ -164,27 +155,6 @@ public sealed class PlanningRsvpSettings
         PlusOneLimit = plusOneLimit; Version++;
     }
 
-    /// <summary>
-    /// Most people one invitation may confirm without asking the couple: the couple's own number for that invitation
-    /// when set, otherwise its reserved places or 1 + the wedding plus-one limit, whichever is larger.
-    /// </summary>
-    public static int MaxPeople(int? coupleLimit, int reservedPlaces, int plusOneLimit) =>
-        coupleLimit ?? Math.Max(reservedPlaces, 1 + plusOneLimit);
-}
-
-/// <summary>The couple's own "tối đa n người" for one invitation (overrides the default from places / plus-one limit).</summary>
-public sealed class PlanningRsvpLimit
-{
-    public Guid GuestId { get; private set; }
-    public Guid WeddingId { get; private set; }
-    public int MaxPeople { get; private set; }
-    public Guid UpdatedBy { get; private set; }
-    public DateTimeOffset UpdatedAt { get; private set; }
-
-    public static PlanningRsvpLimit Create(Guid weddingId, Guid guestId) => new() { WeddingId = weddingId, GuestId = guestId };
-    public void Set(int maxPeople, Guid actor, DateTimeOffset now)
-    {
-        if (maxPeople is < 1 or > PlanningRsvpSettings.MaxPartySize) throw new ArgumentOutOfRangeException(nameof(maxPeople));
-        MaxPeople = maxPeople; UpdatedBy = actor; UpdatedAt = now;
-    }
+    /// <summary>Threshold ("ngưỡng") of one invitation: the people invited on it + the wedding plus-one limit.</summary>
+    public static int Threshold(int invitedPeople, int plusOneLimit) => Math.Max(1, invitedPeople) + plusOneLimit;
 }

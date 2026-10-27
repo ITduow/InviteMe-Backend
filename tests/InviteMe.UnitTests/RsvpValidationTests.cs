@@ -37,27 +37,38 @@ public sealed class RsvpValidationTests
     }
 
     [Fact]
-    public void WaitingMessageAndThankYouFollowTheAnswer()
+    public void OverLimitMessageAndThankYouFollowTheAnswer()
     {
-        Assert.NotNull(RsvpCapacityOutcome.Message(RsvpCapacityOutcome.Waitlisted));
-        Assert.NotNull(RsvpCapacityOutcome.Message(RsvpCapacityOutcome.PartiallyWaitlisted));
-        Assert.Null(RsvpCapacityOutcome.Message(RsvpCapacityOutcome.Confirmed));
-        Assert.Null(RsvpCapacityOutcome.Message(RsvpCapacityOutcome.None));
-        Assert.StartsWith("Cảm ơn bạn đã xác nhận", RsvpCapacityOutcome.ThankYou("ATTENDING", null));
-        Assert.Contains("Rất tiếc", RsvpCapacityOutcome.ThankYou("DECLINED", null));
-        Assert.Contains("12:00 ngày 30/10/2026", RsvpCapacityOutcome.ThankYou("MAYBE", DateTimeOffset.Parse("2026-10-30T05:00:00Z")));
-        Assert.Null(RsvpCapacityOutcome.ThankYou("PENDING", null));
+        Assert.Contains("tối đa 3 người", RsvpMessages.OverLimit(3));
+        Assert.StartsWith("Cảm ơn bạn đã xác nhận", RsvpMessages.ThankYou("ATTENDING", null));
+        Assert.Contains("Rất tiếc", RsvpMessages.ThankYou("DECLINED", null));
+        Assert.Contains("12:00 ngày 30/10/2026", RsvpMessages.ThankYou("MAYBE", DateTimeOffset.Parse("2026-10-30T05:00:00Z")));
+        Assert.Null(RsvpMessages.ThankYou("PENDING", null));
     }
 
     [Theory]
-    [InlineData(null, 1, 0, 1)]  // single invitation, no plus-one
-    [InlineData(null, 1, 1, 2)]  // global limit 1 = two people including the recipient
-    [InlineData(null, 4, 1, 4)]  // a family imported with 4 places
-    [InlineData(null, 2, 3, 4)]
-    [InlineData(3, 4, 1, 3)]     // the couple's own number for this invitation wins
-    [InlineData(6, 1, 0, 6)]
-    public void MaxPeopleIsTheCouplesNumberOrTheLargerOfPlacesAndGlobalLimit(int? own, int places, int limit, int expected) =>
-        Assert.Equal(expected, InviteMe.Domain.Rsvps.PlanningRsvpSettings.MaxPeople(own, places, limit));
+    [InlineData(1, 0, 1)]  // single invitation, no plus-one
+    [InlineData(1, 1, 2)]  // plus-one limit 1: one person invited may come as two
+    [InlineData(4, 1, 5)]  // a family of 4 may come as five
+    [InlineData(2, 3, 5)]
+    public void ThresholdIsThePeopleInvitedPlusThePlusOneLimit(int invited, int limit, int expected) =>
+        Assert.Equal(expected, InviteMe.Domain.Rsvps.PlanningRsvpSettings.Threshold(invited, limit));
+
+    [Fact]
+    public void OverThresholdWarnsUntilTheCoupleHasSeenTheNumber()
+    {
+        var rsvp = InviteMe.Domain.Rsvps.PlanningRsvp.Create(Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.UtcNow);
+        rsvp.Submit("ATTENDING", 2, 0, DateTimeOffset.UtcNow);
+        Assert.False(rsvp.OverThreshold(2));
+        rsvp.Submit("ATTENDING", 3, 0, DateTimeOffset.UtcNow);
+        Assert.True(rsvp.OverThreshold(2));
+        rsvp.Accept(DateTimeOffset.UtcNow);
+        Assert.Equal((3, false), (rsvp.AcceptedPartySize!.Value, rsvp.OverThreshold(2)));
+        rsvp.Submit("ATTENDING", 4, 0, DateTimeOffset.UtcNow);
+        Assert.True(rsvp.OverThreshold(2)); // more than the number seen
+        rsvp.Submit("MAYBE", 0, 9, DateTimeOffset.UtcNow);
+        Assert.False(rsvp.OverThreshold(2)); // MAYBE is never counted
+    }
 
     [Fact]
     public void RulesSettingsAndLocksAreValidated()
@@ -73,11 +84,6 @@ public sealed class RsvpValidationTests
         Assert.False(locks.Validate(new LockRsvps(true)).IsValid);
         Assert.False(locks.Validate(new LockRsvps(true, [A, A])).IsValid);
         Assert.False(locks.Validate(new LockRsvps(true, GroupId: Guid.Empty)).IsValid);
-        var limit = new SetRsvpLimitValidator();
-        Assert.True(limit.Validate(new SetRsvpLimit(null)).IsValid);
-        Assert.True(limit.Validate(new SetRsvpLimit(50)).IsValid);
-        Assert.False(limit.Validate(new SetRsvpLimit(0)).IsValid);
-        Assert.False(limit.Validate(new SetRsvpLimit(51)).IsValid);
     }
 
     [Fact]
@@ -108,7 +114,6 @@ public sealed class RsvpValidationTests
         rsvp.Submit("ATTENDING", 2, 0, DateTimeOffset.UtcNow); rsvp.SetNote("  hi  ", DateTimeOffset.UtcNow); rsvp.Advance();
         Assert.Equal((1, "ATTENDING", 2, "hi"), (rsvp.Version, rsvp.Status, rsvp.ConfirmedPartySize, rsvp.Note));
         rsvp.SetNote(" ", DateTimeOffset.UtcNow); Assert.Null(rsvp.Note);
-        rsvp.Submit("ATTENDING", 0, 0, DateTimeOffset.UtcNow); // everyone waits for the couple (wedding full)
         rsvp.Submit("MAYBE", 0, 3, DateTimeOffset.UtcNow);
         Assert.Equal((0, 3), (rsvp.ConfirmedPartySize, rsvp.MaybePartySize));
         Assert.Throws<ArgumentException>(() => rsvp.Submit("MAYBE", 1, 3, DateTimeOffset.UtcNow));
@@ -116,13 +121,11 @@ public sealed class RsvpValidationTests
         Assert.Throws<ArgumentException>(() => rsvp.Submit("ATTENDING", 1, 1, DateTimeOffset.UtcNow));
         Assert.Throws<ArgumentException>(() => rsvp.Submit("DECLINED", 1, 0, DateTimeOffset.UtcNow));
         Assert.Throws<ArgumentException>(() => rsvp.Submit("PENDING", 0, 0, DateTimeOffset.UtcNow));
-        Assert.Throws<ArgumentOutOfRangeException>(() => InviteMe.Domain.Rsvps.PlanningWaitlistEntry.Create(Guid.NewGuid(), Guid.NewGuid(), 0, DateTimeOffset.UtcNow));
-        var limit = InviteMe.Domain.Rsvps.PlanningRsvpLimit.Create(Guid.NewGuid(), Guid.NewGuid());
-        Assert.Throws<ArgumentOutOfRangeException>(() => limit.Set(0, Guid.NewGuid(), DateTimeOffset.UtcNow));
     }
 
-    private static RsvpDashboardGuest G(string name, string side, string? status, int maybe = 0, bool request = false, params (string Role, string Attendance, string? Diet)[] people) =>
-        new(Guid.NewGuid(), name, 2, side, null, null, "+84", "a@b.c", status, people.Count(p => p.Attendance == "ATTENDING"), maybe, 4, null, null, null,
+    private static RsvpDashboardGuest G(string name, string side, string? status, int maybe = 0, bool request = false, bool over = false,
+        params (string Role, string Attendance, string? Diet)[] people) =>
+        new(Guid.NewGuid(), name, 2, side, null, null, "+84", "a@b.c", status, people.Count(p => p.Attendance == "ATTENDING"), maybe, 4, over, null, null, null,
             false, request, people.Select(p => new RsvpDashboardPerson(Guid.NewGuid(), p.Role, p.Attendance, p.Diet)).ToList());
 
     [Fact]
@@ -131,7 +134,7 @@ public sealed class RsvpValidationTests
         var guest = G("=HYPERLINK(\"x\")", "BRIDE", "ATTENDING", people: [("PRIMARY", "ATTENDING", "Chay\nít dầu"), ("COMPANION", "ATTENDING", null)]);
         var text = System.Text.Encoding.UTF8.GetString(RsvpDashboardMath.Csv([guest], contacts: true)[3..]);
         var line = text.Split("\r\n")[1];
-        Assert.StartsWith("\"'=HYPERLINK(\"\"x\"\")\",BRIDE,,'+84,a@b.c,ATTENDING,4,2,0,0,\"Chay\nít dầu\",", line);
+        Assert.StartsWith("\"'=HYPERLINK(\"\"x\"\")\",BRIDE,,'+84,a@b.c,ATTENDING,4,2,0,,\"Chay\nít dầu\",", line);
         Assert.Equal(3, text.Split("\r\n").Length); // header + one invitation + trailing newline
         Assert.DoesNotContain("+84", System.Text.Encoding.UTF8.GetString(RsvpDashboardMath.Csv([guest], contacts: false)));
     }
@@ -139,8 +142,8 @@ public sealed class RsvpValidationTests
     [Fact]
     public void DashboardCountsInvitationsByAnswerAndPeopleExpected()
     {
-        var data = new RsvpDashboardData(Guid.NewGuid(), 6, 4, null, [
-            G("Khoa", "GROOM", "ATTENDING", people: [("PRIMARY", "ATTENDING", null), ("COMPANION", "ATTENDING", null), ("COMPANION", "WAITLISTED", null)]),
+        var data = new RsvpDashboardData(Guid.NewGuid(), 6, 5, null, [
+            G("Khoa", "GROOM", "ATTENDING", over: true, people: [("PRIMARY", "ATTENDING", null), ("COMPANION", "ATTENDING", null), ("COMPANION", "ATTENDING", null)]),
             G("Lan", "BRIDE", "DECLINED", people: [("PRIMARY", "DECLINED", null)]),
             G("Mai", "BRIDE", "MAYBE", maybe: 3, people: [("PRIMARY", "PENDING", null)]),
             G("Bao", "BRIDE", "ATTENDING", request: true, people: [("PRIMARY", "ATTENDING", "Chay")]),
@@ -148,15 +151,15 @@ public sealed class RsvpValidationTests
         var d = RsvpDashboardMath.Summarize(data, new RsvpDashboardFilter(), DateTimeOffset.UtcNow);
         Assert.Equal((5, 2, 1, 1, 1, 60.0m), (d.Invitations.Invited, d.Invitations.Attending, d.Invitations.Maybe, d.Invitations.Declined,
             d.Invitations.NotResponded, d.Invitations.ResponseRate));
-        Assert.Equal((2, 1, 1), (d.NeedsDecision.Invitations, d.NeedsDecision.WaitingPeople, d.NeedsDecision.ChangeRequests));
-        Assert.Equal((3, 1, 3, 1), (d.People.Expected, d.People.Companions, d.People.Maybe, d.People.Waiting));
-        Assert.Equal((2L, true), (d.Capacity.Remaining!.Value, d.Capacity.MaybeMayExceed)); // 4 coming + 3 maybe > 6
+        Assert.Equal((2, 1, 1), (d.NeedsAction.Invitations, d.NeedsAction.OverLimit, d.NeedsAction.ChangeRequests));
+        Assert.Equal((4, 2, 3), (d.People.Expected, d.People.Companions, d.People.Maybe));
+        Assert.Equal((1L, false, true), (d.Capacity.Remaining!.Value, d.Capacity.OverCapacity, d.Capacity.MaybeMayExceed)); // 5 coming + 3 maybe > 6
         Assert.Equal(1, d.Notes.InvitationsWithDietaryNote);
         Assert.Equal(4, RsvpDashboardMath.Summarize(data, new RsvpDashboardFilter(Side: "BRIDE"), DateTimeOffset.UtcNow).Invitations.Invited);
-        Assert.Equal(["Bao", "Khoa"], RsvpDashboardMath.Filter(data, new RsvpDashboardFilter(Status: RsvpGuestStatus.NeedsDecision)).Select(g => g.RecipientName));
+        Assert.Equal(["Bao", "Khoa"], RsvpDashboardMath.Filter(data, new RsvpDashboardFilter(Status: RsvpGuestStatus.NeedsAction)).Select(g => g.RecipientName));
         Assert.Equal(["Bao", "Khoa"], RsvpDashboardMath.Filter(data, new RsvpDashboardFilter(Status: RsvpGuestStatus.Attending)).Select(g => g.RecipientName));
         Assert.Equal(["Mai"], RsvpDashboardMath.Filter(data, new RsvpDashboardFilter(Status: RsvpGuestStatus.Maybe)).Select(g => g.RecipientName));
         var row = RsvpDashboardMath.Row(data.Guests[0], contacts: false);
-        Assert.Equal((4, 2, 1, true, (string?)null), (row.MaxPeople, row.ConfirmedPeople, row.WaitingPeople, row.NeedsDecision, row.Phone));
+        Assert.Equal((4, 3, true, true, (string?)null), (row.MaxPeople, row.People, row.OverLimit, row.NeedsAction, row.Phone));
     }
 }

@@ -25,7 +25,7 @@ using Npgsql;
 namespace InviteMe.IntegrationTests;
 
 /// <summary>
-/// RSVP module (Guest03 + Guest04 + Couple06 rules) through the real HTTP pipeline against real PostgreSQL, on Guest
+/// RSVP module (Guest03 + Couple06 rules) through the real HTTP pipeline against real PostgreSQL, on Guest
 /// Planning v2 data. Guests are created with the Guest Planning import API and answer with their planning invitation token
 /// (the same token as /invite/{token}). Weddings are seeded directly to keep each test focused.
 /// </summary>
@@ -34,7 +34,7 @@ public sealed class RsvpApiTests
     private const string Password = "Test-only-Pass123!";
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
-    public Task WeddingWithThirtyImportedInvitationsFlowsThroughRsvpWaitlistAndSeating() => WithApi(async (db, factory, owner, _) =>
+    public Task WeddingWithThirtyImportedInvitationsFlowsThroughRsvpAndSeating() => WithApi(async (db, factory, owner, _) =>
     {
         var eventAt = DateTimeOffset.UtcNow.AddMonths(6);
         var wedding = await Read<WeddingSetupDto>(await owner.PostAsJsonAsync("/api/weddings",
@@ -81,7 +81,7 @@ public sealed class RsvpApiTests
         var initial = (await guest.GetFromJsonAsync<RsvpDto>(family.Url))!;
         Assert.Equal((4, "PENDING", 4), (initial.Places.Count, initial.Status, initial.MaxPeople));
         var answered = await Created(await guest.PostAsJsonAsync(family.Url, new SubmitRsvp(0, "ATTENDING", 3, Note: "Gần lối đi")));
-        Assert.Equal((3, "UNUSED"), (answered.ConfirmedPartySize, answered.Places[3].Status));
+        Assert.Equal((3, "UNUSED", false), (answered.PartySize, answered.Places[3].Status, answered.OverLimit));
         Assert.Equal(["QA guest 01", "Khách đi kèm 1 của QA guest 01", "Khách đi kèm 2 của QA guest 01"], answered.Participants.Select(p => p.FullName));
         Assert.Contains(events.Changes, e => e.WeddingId == w && e.Change.Type == RsvpHandler.RsvpChanged);
         Assert.Contains(events.Changes, e => e.WeddingId == w && e.Change.Type == RsvpHandler.SeatingNeedsAttention);
@@ -91,20 +91,20 @@ public sealed class RsvpApiTests
 
         await Created(await guest.PostAsJsonAsync(individual.Url, new SubmitRsvp(0, "DECLINED")));
         await Created(await guest.PostAsJsonAsync(undecided.Url, new SubmitRsvp(0, "MAYBE", 2)));
-        var waiting = await Created(await guest.PostAsJsonAsync(group.Url, new SubmitRsvp(0, "ATTENDING", 3)));
-        Assert.Equal((2, 1, RsvpCapacityOutcome.PartiallyWaitlisted), (waiting.ConfirmedPartySize, waiting.WaitlistedPartySize, waiting.CapacityOutcome));
-        Assert.Contains(events.Changes, e => e.Change.Type == RsvpHandler.RsvpDecisionNeeded && e.Change.EntityId == group.GuestId);
-        var waitlist = (await owner.GetFromJsonAsync<PagedResult<WaitlistDto>>($"/api/weddings/{w}/rsvps/waitlist"))!;
-        var entry = Assert.Single(waitlist.Items);
-        Assert.Equal((group.GuestId, "QA guest 02"), (entry.GuestId, entry.RecipientName));
-        var promoted = await Read<RsvpDto>(await owner.PostAsync($"/api/weddings/{w}/rsvps/waitlist/{entry.Id}/promote", null));
-        Assert.Equal((3, 0), (promoted.ConfirmedPartySize, promoted.WaitlistedPartySize));
-        Assert.Empty((await owner.GetFromJsonAsync<PagedResult<WaitlistDto>>($"/api/weddings/{w}/rsvps/waitlist"))!.Items);
+        // 2 people invited, plus-one limit 0: an answer of 3 is saved and counted, the couple is warned.
+        var over = await Created(await guest.PostAsJsonAsync(group.Url, new SubmitRsvp(0, "ATTENDING", 3)));
+        Assert.Equal((3, 2, true), (over.PartySize, over.MaxPeople, over.OverLimit));
+        Assert.Contains(events.Changes, e => e.Change.Type == RsvpHandler.RsvpOverLimit && e.Change.EntityId == group.GuestId);
+        var row = Assert.Single((await owner.GetFromJsonAsync<PagedResult<RsvpGuestRowDto>>($"/api/weddings/{w}/rsvps/dashboard/guests?status=NEEDS_ACTION"))!.Items);
+        Assert.Equal((group.GuestId, "QA guest 02", 3, true), (row.GuestId, row.RecipientName, row.People, row.OverLimit));
+        var seen = await Read<RsvpDto>(await owner.PostAsync($"/api/weddings/{w}/rsvps/{group.GuestId}/acknowledge", null));
+        Assert.Equal((3, false), (seen.PartySize, seen.OverLimit));
+        Assert.Empty((await owner.GetFromJsonAsync<PagedResult<RsvpGuestRowDto>>($"/api/weddings/{w}/rsvps/dashboard/guests?status=NEEDS_ACTION"))!.Items);
 
         await Read<LockRsvpsResult>(await owner.PutAsJsonAsync($"/api/weddings/{w}/rsvps/locks", new LockRsvps(true, [lockedGuest.GuestId])));
         var queued = await guest.PostAsJsonAsync(lockedGuest.Url, new SubmitRsvp(0, "ATTENDING", 1));
         Assert.Equal(HttpStatusCode.Accepted, queued.StatusCode);
-        Assert.Equal(1, (await owner.GetFromJsonAsync<RsvpDashboardDto>($"/api/weddings/{w}/rsvps/dashboard"))!.NeedsDecision.ChangeRequests);
+        Assert.Equal(1, (await owner.GetFromJsonAsync<RsvpDashboardDto>($"/api/weddings/{w}/rsvps/dashboard"))!.NeedsAction.ChangeRequests);
         var request = Assert.Single((await owner.GetFromJsonAsync<PagedResult<RsvpRequestDto>>($"/api/weddings/{w}/rsvps/requests"))!.Items);
         await Read<RsvpDto>(await owner.PostAsync($"/api/weddings/{w}/rsvps/requests/{request.Id}/approve", null));
 
@@ -112,7 +112,7 @@ public sealed class RsvpApiTests
         Assert.Equal((30, 3, 1, 1, 25), (dashboard.Invitations.Invited, dashboard.Invitations.Attending, dashboard.Invitations.Maybe,
             dashboard.Invitations.Declined, dashboard.Invitations.NotResponded));
         Assert.Equal((7, 2, 73L), (dashboard.People.Expected, dashboard.People.Maybe, dashboard.Capacity.Remaining!.Value));
-        Assert.Equal(0, dashboard.NeedsDecision.Invitations);
+        Assert.Equal(0, dashboard.NeedsAction.Invitations);
         Assert.Equal(15, dashboard.BySide.Single(x => x.Side == "BRIDE").Invited);
         Assert.Equal(15, dashboard.BySide.Single(x => x.Side == "GROOM").Invited);
         Assert.Equal(25, (await owner.GetFromJsonAsync<PagedResult<RsvpGuestRowDto>>(
@@ -129,16 +129,16 @@ public sealed class RsvpApiTests
         using var c = factory.CreateHttpsClient();
 
         var initial = (await c.GetFromJsonAsync<RsvpDto>(a.Url))!;
-        Assert.Equal(("PENDING", (Guid?)null, 0, RsvpCapacityOutcome.None, 2, false, (string?)null),
-            (initial.Status, initial.RsvpId, initial.Version, initial.CapacityOutcome, initial.MaxPeople, initial.Locked, initial.ThankYouMessage));
+        Assert.Equal(("PENDING", (Guid?)null, 0, 0, 2, false, (string?)null),
+            (initial.Status, initial.RsvpId, initial.Version, initial.PartySize, initial.MaxPeople, initial.Locked, initial.ThankYouMessage));
         Assert.Equal(new[] { RsvpPlaceStatus.Pending, RsvpPlaceStatus.Pending }, initial.Places.Select(p => p.Status).ToArray());
         Assert.Equal(("Anh Nam", a.Main), (initial.RecipientName, Assert.Single(initial.Participants).Id));
 
         var created = await c.PostAsJsonAsync(a.Url, new SubmitRsvp(0, "ATTENDING", 2));
         Assert.Equal(HttpStatusCode.Created, created.StatusCode); Assert.Null(created.Headers.Location);
         var first = (await created.Content.ReadFromJsonAsync<RsvpDto>())!;
-        Assert.Equal(("ATTENDING", 2, 2, 1, RsvpCapacityOutcome.Confirmed, (string?)null),
-            (first.Status, first.PartySize, first.ConfirmedPartySize, first.Version, first.CapacityOutcome, first.Message));
+        Assert.Equal(("ATTENDING", 2, 1, false, (string?)null),
+            (first.Status, first.PartySize, first.Version, first.OverLimit, first.Message));
         Assert.StartsWith("Cảm ơn bạn đã xác nhận", first.ThankYouMessage);
         Assert.All(first.Places, p => Assert.Equal(RsvpPlaceStatus.Used, p.Status));
         var companion = first.Participants.Single(p => p.Role == "COMPANION");
@@ -155,14 +155,14 @@ public sealed class RsvpApiTests
 
         await AssertProblem(HttpStatusCode.Conflict, "RSVP_ALREADY_EXISTS", await c.PostAsJsonAsync(a.Url, new SubmitRsvp(first.Version, "DECLINED")));
         var reduced = await Read<RsvpDto>(await c.PutAsJsonAsync(a.Url, new SubmitRsvp(first.Version, "ATTENDING", 1)));
-        Assert.Equal((1, "DECLINED"), (reduced.ConfirmedPartySize, reduced.Participants.Single(p => p.Id == companion.Id).AttendanceStatus));
+        Assert.Equal((1, "DECLINED"), (reduced.PartySize, reduced.Participants.Single(p => p.Id == companion.Id).AttendanceStatus));
         Assert.Equal(new[] { RsvpPlaceStatus.Used, RsvpPlaceStatus.Unused }, reduced.Places.Select(p => p.Status).ToArray());
         Assert.Equal(first.SubmittedAt, reduced.SubmittedAt);
         var same = await Read<RsvpDto>(await c.PutAsJsonAsync(a.Url, new SubmitRsvp(reduced.Version, "ATTENDING", 1)));
         Assert.Equal(reduced.Version, same.Version); // no-op
         await AssertProblem(HttpStatusCode.Conflict, "CONCURRENCY_CONFLICT", await c.PutAsJsonAsync(a.Url, new SubmitRsvp(first.Version, "DECLINED")));
         var declined = await Read<RsvpDto>(await c.PutAsJsonAsync(a.Url, new SubmitRsvp(same.Version, "DECLINED")));
-        Assert.Equal(("DECLINED", 0), (declined.Status, declined.ConfirmedPartySize));
+        Assert.Equal(("DECLINED", 0), (declined.Status, declined.PartySize));
         Assert.Contains("Rất tiếc", declined.ThankYouMessage);
         Assert.All(declined.Places, p => Assert.Equal(RsvpPlaceStatus.Unused, p.Status));
         var all = await History(db);
@@ -174,7 +174,7 @@ public sealed class RsvpApiTests
         var host = (await History(db)).Last();
         Assert.Equal(("USER", ownerId), (host.ActorType, host.ChangedBy!.Value));
         var byHost = (await owner.GetFromJsonAsync<RsvpDto>($"/api/weddings/{w}/rsvps/{a.GuestId}"))!;
-        Assert.Equal((2, 2), (byHost.ConfirmedPartySize, byHost.Participants.Count));
+        Assert.Equal((2, 2), (byHost.PartySize, byHost.Participants.Count));
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
@@ -184,7 +184,7 @@ public sealed class RsvpApiTests
         var w = await Wedding(db, ownerId, "rsvp-places", 10); var an = await Party(db, owner, w, "Nguyễn Văn An", people: 4);
         using var c = factory.CreateHttpsClient();
         var first = await Created(await c.PostAsJsonAsync(an.Url, new SubmitRsvp(0, "ATTENDING", 3)));
-        Assert.Equal((3, 3, 4), (first.ConfirmedPartySize, first.Participants.Count, first.Places.Count));
+        Assert.Equal((3, 3, 4), (first.PartySize, first.Participants.Count, first.Places.Count));
         Assert.Equal(new[] { "USED", "USED", "USED", "UNUSED" }, first.Places.Select(p => p.Status).ToArray());
         Assert.Null(first.Places[3].ParticipantId);
         Assert.Equal(3, await db.Set<PlanningParticipant>().CountAsync(x => x.GuestId == an.GuestId));
@@ -193,20 +193,20 @@ public sealed class RsvpApiTests
 
         // Later the fourth person comes after all: the empty place is filled, no new place is created.
         var later = await Read<RsvpDto>(await c.PutAsJsonAsync(an.Url, new SubmitRsvp(first.Version, "ATTENDING", 4)));
-        Assert.Equal((4, 4), (later.ConfirmedPartySize, later.Places.Count));
+        Assert.Equal((4, 4), (later.PartySize, later.Places.Count));
         Assert.All(later.Places, p => Assert.Equal(RsvpPlaceStatus.Used, p.Status));
         Assert.Equal("Khách đi kèm 3 của Nguyễn Văn An", later.Participants[3].FullName);
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
-    public Task MaybeTakesNoPlaceIsCountedApartAndALaterYesWaitsWhenTheWeddingIsFull() => WithApi(async (db, factory, owner, ownerId) =>
+    public Task MaybeTakesNoPlaceIsCountedApartAndALaterYesIsCountedEvenOverCapacity() => WithApi(async (db, factory, owner, ownerId) =>
     {
         // Meeting 26/10: "Phân vân" is not counted in the capacity, only shown as "Phân vân: n người".
         var w = await Wedding(db, ownerId, "rsvp-maybe", 3);
         var a = await Party(db, owner, w, "Mai", people: 2); var b = await Party(db, owner, w, "Bảo", people: 2);
         using var c = factory.CreateHttpsClient();
         var maybe = await Created(await c.PostAsJsonAsync(a.Url, new SubmitRsvp(0, "MAYBE", 2)));
-        Assert.Equal(("MAYBE", 2, 0, RsvpCapacityOutcome.None), (maybe.Status, maybe.PartySize, maybe.ConfirmedPartySize, maybe.CapacityOutcome));
+        Assert.Equal(("MAYBE", 2, false), (maybe.Status, maybe.PartySize, maybe.OverLimit));
         Assert.Contains("đổi câu trả lời", maybe.ThankYouMessage);
         Assert.All(maybe.Places, p => Assert.Equal(RsvpPlaceStatus.Pending, p.Status));
         Assert.Equal("PENDING", Assert.Single(maybe.Participants).AttendanceStatus); // no companion is created for a MAYBE
@@ -217,85 +217,75 @@ public sealed class RsvpApiTests
         Assert.Equal((1, 1, 2, 2), (dashboard.Invitations.Maybe, dashboard.Invitations.Attending, dashboard.People.Maybe, dashboard.People.Expected));
         Assert.True(dashboard.Capacity.MaybeMayExceed); // 2 coming + 2 maybe > 3
 
-        // Mai now says yes for 2 but only 1 place is left: no error for the guest, the second person waits for the couple.
+        // Mai now says yes for 2 although only 1 place is left: both are counted, the couple only sees a capacity warning.
         var yes = await Read<RsvpDto>(await c.PutAsJsonAsync(a.Url, new SubmitRsvp(maybe.Version, "ATTENDING", 2)));
-        Assert.Equal(("ATTENDING", 2, 1, 1, RsvpCapacityOutcome.PartiallyWaitlisted),
-            (yes.Status, yes.PartySize, yes.ConfirmedPartySize, yes.WaitlistedPartySize, yes.CapacityOutcome));
-        Assert.NotNull(yes.Message);
-        Assert.Equal(3, await Confirmed(db, w));
-        var needs = (await owner.GetFromJsonAsync<RsvpDashboardDto>($"/api/weddings/{w}/rsvps/dashboard"))!.NeedsDecision;
-        Assert.Equal((1, 1), (needs.Invitations, needs.WaitingPeople));
-        var row = Assert.Single((await owner.GetFromJsonAsync<PagedResult<RsvpGuestRowDto>>($"/api/weddings/{w}/rsvps/dashboard/guests?status=NEEDS_DECISION"))!.Items);
-        Assert.Equal((a.GuestId, "ATTENDING", 1), (row.GuestId, row.RsvpStatus, row.WaitingPeople));
+        Assert.Equal(("ATTENDING", 2, false, (string?)null), (yes.Status, yes.PartySize, yes.OverLimit, yes.Message));
+        Assert.Equal(4, await Confirmed(db, w));
+        var capacity = (await owner.GetFromJsonAsync<RsvpDashboardDto>($"/api/weddings/{w}/rsvps/dashboard"))!.Capacity;
+        Assert.Equal((3, 4L, 0L, true, 1L), (capacity.Max, capacity.Expected, capacity.Remaining, capacity.OverCapacity, capacity.OverBy));
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
-    public Task PlusOneLimitAllowsCompanionsAndPeopleBeyondTheInvitationWaitForTheHosts() => WithApi(async (db, factory, owner, ownerId) =>
+    public Task AnswersOverTheThresholdAreSavedAndFlaggedUntilTheCoupleHandlesThem() => WithApi(async (db, factory, owner, ownerId) =>
     {
-        // Couple06: global plus-one limit at wedding setup (1 = two people per invitation); a bigger imported family gets its places;
-        // people beyond what the invitation allows wait for the couple even when the wedding still has room.
+        // 27/10: "đăng ký bao nhiêu cho đi bấy nhiêu". Threshold = people invited on the invitation + plus-one limit (wedding setup).
+        // Going over it is never refused: the couple is warned and either enters the number again or marks it as seen.
         var w = await Wedding(db, ownerId, "rsvp-plus-one", 100);
         var settings = await Read<RsvpSettingsDto>(await owner.PutAsJsonAsync($"/api/weddings/{w}/rsvp-settings", new SaveRsvpSettings(0, 1)));
         Assert.Equal((1, 1), (settings.PlusOneLimit, settings.Version));
         await AssertProblem(HttpStatusCode.Conflict, "CONCURRENCY_CONFLICT", await owner.PutAsJsonAsync($"/api/weddings/{w}/rsvp-settings", new SaveRsvpSettings(0, 2)));
         Assert.Equal(HttpStatusCode.BadRequest, (await owner.PutAsJsonAsync($"/api/weddings/{w}/rsvp-settings", new SaveRsvpSettings(1, 21))).StatusCode);
         var single = await Party(db, owner, w, "Lan"); var other = await Party(db, owner, w, "Hùng"); var family = await Party(db, owner, w, "Bác An", people: 4);
-        using var c = factory.CreateHttpsClient();
+        var events = new RecordingPublisher();
+        await using var app = factory.WithWebHostBuilder(b => b.ConfigureTestServices(s =>
+        { s.RemoveAll<IPlanningChangePublisher>(); s.AddSingleton<IPlanningChangePublisher>(events); }));
+        using var c = app.CreateClient(new() { BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false, HandleCookies = false });
+        using var host = app.CreateClient(new() { BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false, HandleCookies = false });
+        host.DefaultRequestHeaders.Authorization = owner.DefaultRequestHeaders.Authorization;
 
-        Assert.Equal(2, (await c.GetFromJsonAsync<RsvpDto>(single.Url))!.MaxPeople);
-        Assert.Equal(4, (await c.GetFromJsonAsync<RsvpDto>(family.Url))!.MaxPeople); // the family keeps its 4 places
+        Assert.Equal(2, (await c.GetFromJsonAsync<RsvpDto>(single.Url))!.MaxPeople); // 1 invited + 1
+        Assert.Equal(5, (await c.GetFromJsonAsync<RsvpDto>(family.Url))!.MaxPeople); // 4 invited + 1
         var lan = await Created(await c.PostAsJsonAsync(single.Url, new SubmitRsvp(0, "ATTENDING", 2)));
-        Assert.Equal((2, 2, RsvpCapacityOutcome.Confirmed), (lan.ConfirmedPartySize, lan.Places.Count, lan.CapacityOutcome)); // a new place within the limit
+        Assert.Equal((2, 2, false), (lan.PartySize, lan.Places.Count, lan.OverLimit)); // a new place for the companion
 
         var hung = await Created(await c.PostAsJsonAsync(other.Url, new SubmitRsvp(0, "ATTENDING", 3)));
-        Assert.Equal(("ATTENDING", 2, 1, RsvpCapacityOutcome.PartiallyWaitlisted), (hung.Status, hung.ConfirmedPartySize, hung.WaitlistedPartySize, hung.CapacityOutcome));
-        Assert.NotNull(hung.Message);
-        var waitingPerson = hung.Participants.Single(p => p.AttendanceStatus == "WAITLISTED");
-        Assert.Equal("Khách đi kèm 2 của Hùng", waitingPerson.FullName);
-        Assert.Equal(2, hung.Places.Count); // the waiting person has no place yet
-        var entry = Assert.Single((await owner.GetFromJsonAsync<PagedResult<WaitlistDto>>($"/api/weddings/{w}/rsvps/waitlist"))!.Items);
-        Assert.Equal((other.GuestId, 1, WaitlistKind.AdditionalMember), (entry.GuestId, entry.RequestedSlots, entry.Kind));
+        Assert.Equal(("ATTENDING", 3, 3, true), (hung.Status, hung.PartySize, hung.Places.Count, hung.OverLimit));
+        Assert.All(hung.Participants, p => Assert.Equal("ATTENDING", p.AttendanceStatus));
+        Assert.Contains("tối đa 2 người", hung.Message);
+        Assert.Single(events.Changes, e => e.Change.Type == RsvpHandler.RsvpOverLimit && e.Change.EntityId == other.GuestId);
+        Assert.False((await Created(await c.PostAsJsonAsync(family.Url, new SubmitRsvp(0, "ATTENDING", 5)))).OverLimit); // exactly the threshold
+        var familyOver = (await c.GetFromJsonAsync<RsvpDto>(family.Url))!;
+        familyOver = await Read<RsvpDto>(await c.PutAsJsonAsync(family.Url, new SubmitRsvp(familyOver.Version, "ATTENDING", 6)));
+        Assert.True(familyOver.OverLimit);
 
-        var bigFamily = await Created(await c.PostAsJsonAsync(family.Url, new SubmitRsvp(0, "ATTENDING", 5)));
-        Assert.Equal((4, 1), (bigFamily.ConfirmedPartySize, bigFamily.WaitlistedPartySize)); // a 5th person waits
+        var dashboard = (await owner.GetFromJsonAsync<RsvpDashboardDto>($"/api/weddings/{w}/rsvps/dashboard"))!;
+        Assert.Equal((2, 2, 0), (dashboard.NeedsAction.Invitations, dashboard.NeedsAction.OverLimit, dashboard.NeedsAction.ChangeRequests));
+        Assert.Equal(11, dashboard.People.Expected); // 2 + 3 + 6: everyone counts
 
-        // The couple accepts Hùng's third person (gets a place) and turns down the family's fifth person.
-        var promoted = await Read<RsvpDto>(await owner.PostAsync($"/api/weddings/{w}/rsvps/waitlist/{entry.Id}/promote", null));
-        Assert.Equal((3, 0, 3), (promoted.ConfirmedPartySize, promoted.WaitlistedPartySize, promoted.Places.Count));
-        Assert.Equal(waitingPerson.Id, promoted.Places[2].ParticipantId);
-        var familyEntry = (await owner.GetFromJsonAsync<PagedResult<WaitlistDto>>($"/api/weddings/{w}/rsvps/waitlist"))!.Items.Single();
-        var turnedDown = await Read<RsvpDto>(await owner.PostAsync($"/api/weddings/{w}/rsvps/waitlist/{familyEntry.Id}/decline", null));
-        Assert.Equal(("ATTENDING", 4, 0, RsvpCapacityOutcome.Confirmed), (turnedDown.Status, turnedDown.ConfirmedPartySize, turnedDown.WaitlistedPartySize, turnedDown.CapacityOutcome));
-        Assert.Equal("CANCELLED", (await db.Set<PlanningWaitlistEntry>().AsNoTracking().SingleAsync(x => x.Id == familyEntry.Id)).Status);
-        await AssertProblem(HttpStatusCode.UnprocessableEntity, "WAITLIST_NOT_WAITING", await owner.PostAsync($"/api/weddings/{w}/rsvps/waitlist/{familyEntry.Id}/promote", null));
+        // "Đã xem": the warning goes off, the number stays, and the guest's version is unchanged (no conflict on the form).
+        var seen = await Read<RsvpDto>(await host.PostAsync($"/api/weddings/{w}/rsvps/{other.GuestId}/acknowledge", null));
+        Assert.Equal((3, false, hung.Version, (string?)null), (seen.PartySize, seen.OverLimit, seen.Version, seen.Message));
+        await Read<RsvpDto>(await host.PostAsync($"/api/weddings/{w}/rsvps/{other.GuestId}/acknowledge", null)); // twice = no-op
+        Assert.Equal(1, await db.AuditLogs.CountAsync(x => x.Action == "RSVP_OVER_LIMIT_ACCEPTED"));
+        Assert.False((await Read<RsvpDto>(await c.PutAsJsonAsync(other.Url, new SubmitRsvp(seen.Version, "ATTENDING", 2)))).OverLimit);
+        var again = (await c.GetFromJsonAsync<RsvpDto>(other.Url))!;
+        var grew = await Read<RsvpDto>(await c.PutAsJsonAsync(other.Url, new SubmitRsvp(again.Version, "ATTENDING", 4)));
+        Assert.True(grew.OverLimit); // more than the number the couple has seen → warned again
+        Assert.Equal(2, events.Changes.Count(e => e.Change.Type == RsvpHandler.RsvpOverLimit && e.Change.EntityId == other.GuestId));
+
+        // Or the couple calls the guest and enters the number on his behalf: that number counts as seen.
+        var byHost = await Read<RsvpDto>(await host.PutAsJsonAsync($"/api/weddings/{w}/rsvps/{family.GuestId}",
+            new SubmitRsvp(familyOver.Version, "ATTENDING", 6, Source: RsvpSource.Phone)));
+        Assert.Equal((6, false), (byHost.PartySize, byHost.OverLimit));
+        Assert.Equal(1, (await owner.GetFromJsonAsync<RsvpDashboardDto>($"/api/weddings/{w}/rsvps/dashboard"))!.NeedsAction.OverLimit);
+
+        // Only an ATTENDING answer can be marked as seen.
+        var nobody = await Party(db, owner, w, "Chưa trả lời");
+        await AssertProblem(HttpStatusCode.UnprocessableEntity, "RSVP_NOT_ATTENDING", await host.PostAsync($"/api/weddings/{w}/rsvps/{nobody.GuestId}/acknowledge", null));
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
-    public Task CoupleSetsTheMaximumOfOneInvitation() => WithApi(async (db, factory, owner, ownerId) =>
-    {
-        // Meeting 26/10: the number of people per invitation is managed by the couple.
-        var w = await Wedding(db, ownerId, "rsvp-limit", 10); var a = await Party(db, owner, w, "Hùng");
-        using var c = factory.CreateHttpsClient();
-        var url = $"/api/weddings/{w}/rsvps/{a.GuestId}/limit";
-        var first = await Created(await c.PostAsJsonAsync(a.Url, new SubmitRsvp(0, "ATTENDING", 3)));
-        Assert.Equal((1, 1, 2), (first.MaxPeople, first.ConfirmedPartySize, first.WaitlistedPartySize));
-
-        var raised = await Read<RsvpDto>(await owner.PutAsJsonAsync(url, new SetRsvpLimit(3)));
-        Assert.Equal((3, 1, 2), (raised.MaxPeople, raised.ConfirmedPartySize, raised.WaitlistedPartySize)); // raising does not accept anyone by itself
-        var within = await Read<RsvpDto>(await c.PutAsJsonAsync(a.Url, new SubmitRsvp(raised.Version, "ATTENDING", 2)));
-        Assert.Equal((2, 0, RsvpCapacityOutcome.Confirmed), (within.ConfirmedPartySize, within.WaitlistedPartySize, within.CapacityOutcome));
-        Assert.Equal(0, await db.Set<PlanningWaitlistEntry>().CountAsync(x => x.Status == "WAITING"));
-
-        Assert.Equal(HttpStatusCode.BadRequest, (await owner.PutAsJsonAsync(url, new SetRsvpLimit(0))).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await owner.PutAsJsonAsync(url, new SetRsvpLimit(51))).StatusCode);
-        await AssertProblem(HttpStatusCode.UnprocessableEntity, "RSVP_LIMIT_BELOW_CONFIRMED", await owner.PutAsJsonAsync(url, new SetRsvpLimit(1)));
-        var reset = await Read<RsvpDto>(await owner.PutAsJsonAsync(url, new SetRsvpLimit(null)));
-        Assert.Equal(2, reset.MaxPeople); // back to the default: its 2 places now (1 + plus-one limit 0 = 1)
-        Assert.Equal(0, await db.Set<PlanningRsvpLimit>().CountAsync());
-    });
-
-    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
-    public Task WalkInsAddedAtReceptionUseTheSameCapacity() => WithApi(async (db, factory, owner, ownerId) =>
+    public Task WalkInsAddedAtReceptionAreCountedInTheExpectedPeople() => WithApi(async (db, factory, owner, ownerId) =>
     {
         // Cohost04 walk-ins are planning people with ATTENDING, so RSVP counts them (the old walk_ins table is not used).
         var w = await Wedding(db, ownerId, "rsvp-walkin-capacity", 3);
@@ -306,41 +296,28 @@ public sealed class RsvpApiTests
         Assert.True((await owner.SendAsync(walkIn)).IsSuccessStatusCode);
         using var c = factory.CreateHttpsClient();
         var answer = await Created(await c.PostAsJsonAsync(a.Url, new SubmitRsvp(0, "ATTENDING", 2)));
-        Assert.Equal((1, 1), (answer.ConfirmedPartySize, answer.WaitlistedPartySize)); // one place left
+        Assert.Equal(2, answer.PartySize); // only one place was left: still saved
         var dashboard = (await owner.GetFromJsonAsync<RsvpDashboardDto>($"/api/weddings/{w}/rsvps/dashboard"))!;
-        Assert.Equal((3, 3L, 0L), (dashboard.Capacity.Max, dashboard.Capacity.Occupied, dashboard.Capacity.Remaining));
+        Assert.Equal((3, 4L, 0L, true, 1L), (dashboard.Capacity.Max, dashboard.Capacity.Expected, dashboard.Capacity.Remaining,
+            dashboard.Capacity.OverCapacity, dashboard.Capacity.OverBy));
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
-    public Task WhenTheWeddingIsFullGuestsWaitAndTheCoupleIsToldTheRemainingSlots() => WithApi(async (db, factory, owner, ownerId) =>
+    public Task AFullWeddingNeverRefusesAnAnswerItOnlyWarnsTheCouple() => WithApi(async (db, factory, owner, ownerId) =>
     {
-        // Meeting 26/10: a guest is never turned away by an error; people who do not fit wait for the couple.
-        // The couple entering an answer still gets INSUFFICIENT_SLOTS ("Số lượng người đi vượt quá, slot còn lại {n} người").
         var w = await Wedding(db, ownerId, "rsvp-slots", 3);
         var a = await Party(db, owner, w, "A", people: 2); var b = await Party(db, owner, w, "B", people: 2); var z = await Party(db, owner, w, "Z");
         using var c = factory.CreateHttpsClient();
-        var ra = await Created(await c.PostAsJsonAsync(a.Url, new SubmitRsvp(0, "ATTENDING", 2)));
-        var rb = await Created(await c.PostAsJsonAsync(b.Url, new SubmitRsvp(0, "ATTENDING", 2)));
-        Assert.Equal((1, 1), (rb.ConfirmedPartySize, rb.WaitlistedPartySize));
+        await Created(await c.PostAsJsonAsync(a.Url, new SubmitRsvp(0, "ATTENDING", 2)));
+        Assert.Equal(2, (await Created(await c.PostAsJsonAsync(b.Url, new SubmitRsvp(0, "ATTENDING", 2)))).PartySize);
         var rz = await Created(await c.PostAsJsonAsync(z.Url, new SubmitRsvp(0, "ATTENDING", 1)));
-        Assert.Equal(("ATTENDING", 0, 1, RsvpCapacityOutcome.Waitlisted), (rz.Status, rz.ConfirmedPartySize, rz.WaitlistedPartySize, rz.CapacityOutcome));
-        Assert.Equal(3, await Confirmed(db, w));
-        var kinds = (await owner.GetFromJsonAsync<PagedResult<WaitlistDto>>($"/api/weddings/{w}/rsvps/waitlist"))!.Items;
-        Assert.Equal(new[] { WaitlistKind.AdditionalMember, WaitlistKind.FullParty }, kinds.Select(x => x.Kind).ToArray());
-
-        var full = await owner.PutAsJsonAsync($"/api/weddings/{w}/rsvps/{z.GuestId}", new SubmitRsvp(rz.Version, "ATTENDING", 1, Source: RsvpSource.Phone));
-        await AssertProblem(HttpStatusCode.UnprocessableEntity, "INSUFFICIENT_SLOTS", full);
-        Assert.Contains("slot còn lại 0 người", JsonDocument.Parse(await full.Content.ReadAsStringAsync()).RootElement.GetProperty("detail").GetString());
-        Assert.Equal(1, (await c.GetFromJsonAsync<RsvpDto>(z.Url))!.WaitlistedPartySize); // nothing changed
-
-        // A comes alone: the freed place lets the couple accept B's second person.
-        await Read<RsvpDto>(await c.PutAsJsonAsync(a.Url, new SubmitRsvp(ra.Version, "ATTENDING", 1)));
-        var bEntry = (await owner.GetFromJsonAsync<PagedResult<WaitlistDto>>($"/api/weddings/{w}/rsvps/waitlist"))!.Items.Single(x => x.GuestId == b.GuestId);
-        Assert.Equal(2, (await Read<RsvpDto>(await owner.PostAsync($"/api/weddings/{w}/rsvps/waitlist/{bEntry.Id}/promote", null))).ConfirmedPartySize);
-        Assert.Equal(3, await Confirmed(db, w));
-        // Z is turned down by the couple: the whole answer becomes "not attending".
-        var zEntry = (await owner.GetFromJsonAsync<PagedResult<WaitlistDto>>($"/api/weddings/{w}/rsvps/waitlist"))!.Items.Single();
-        Assert.Equal("DECLINED", (await Read<RsvpDto>(await owner.PostAsync($"/api/weddings/{w}/rsvps/waitlist/{zEntry.Id}/decline", null))).Status);
+        Assert.Equal(("ATTENDING", 1, (string?)null), (rz.Status, rz.PartySize, rz.Message));
+        // The couple entering an answer is not refused either.
+        Assert.Equal(2, (await Read<RsvpDto>(await owner.PutAsJsonAsync($"/api/weddings/{w}/rsvps/{z.GuestId}",
+            new SubmitRsvp(rz.Version, "ATTENDING", 2, Source: RsvpSource.Phone)))).PartySize);
+        Assert.Equal(6, await Confirmed(db, w));
+        var capacity = (await owner.GetFromJsonAsync<RsvpDashboardDto>($"/api/weddings/{w}/rsvps/dashboard"))!.Capacity;
+        Assert.Equal((3, 6L, 0L, true, 3L), (capacity.Max, capacity.Expected, capacity.Remaining, capacity.OverCapacity, capacity.OverBy));
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
@@ -358,7 +335,7 @@ public sealed class RsvpApiTests
         var late = await c.PutAsJsonAsync(a.Url, new SubmitRsvp(first.Version, "ATTENDING", 1));
         Assert.Equal(HttpStatusCode.Accepted, late.StatusCode);
         var queued = (await late.Content.ReadFromJsonAsync<RsvpDto>())!;
-        Assert.Equal((first.Version, 2, true, RsvpCapacityOutcome.LockedMessage), (queued.Version, queued.ConfirmedPartySize, queued.Locked, queued.Message));
+        Assert.Equal((first.Version, 2, true, RsvpMessages.Locked), (queued.Version, queued.PartySize, queued.Locked, queued.Message));
         Assert.Equal(("DEADLINE_PASSED", "PENDING"), (queued.PendingRequest!.Reason, queued.PendingRequest.Status));
         var newer = (await (await c.PutAsJsonAsync(a.Url, new SubmitRsvp(first.Version, "DECLINED"))).Content.ReadFromJsonAsync<RsvpDto>())!;
         Assert.Equal("DECLINED", newer.PendingRequest!.Change.Decision); // the latest change replaces the older request
@@ -369,7 +346,7 @@ public sealed class RsvpApiTests
         Assert.Equal(("A", "DECLINED"), (request.RecipientName, request.Change.Decision));
         Assert.Single((await owner.GetFromJsonAsync<PagedResult<RsvpRequestDto>>($"/api/weddings/{w}/rsvps/requests?status=SUPERSEDED"))!.Items);
         var applied = await Read<RsvpDto>(await owner.PostAsync($"/api/weddings/{w}/rsvps/requests/{request.Id}/approve", null));
-        Assert.Equal(("DECLINED", 0, (RsvpRequestDto?)null), (applied.Status, applied.ConfirmedPartySize, applied.PendingRequest));
+        Assert.Equal(("DECLINED", 0, (RsvpRequestDto?)null), (applied.Status, applied.PartySize, applied.PendingRequest));
         Assert.Equal(("RSVP_CHANGE_APPROVED", "USER"), ((await History(db)).Last().Reason, (await History(db)).Last().ActorType));
         await AssertProblem(HttpStatusCode.UnprocessableEntity, "REQUEST_NOT_PENDING", await owner.PostAsync($"/api/weddings/{w}/rsvps/requests/{request.Id}/approve", null));
 
@@ -411,7 +388,7 @@ public sealed class RsvpApiTests
         await db.SaveChangesAsync();
         var old = Assert.Single((await owner.GetFromJsonAsync<PagedResult<RsvpRequestDto>>($"/api/weddings/{open}/rsvps/requests"))!.Items);
         Assert.Equal(("ATTENDING", (int?)2), (old.Change.Decision, old.Change.PartySize));
-        Assert.Equal(2, (await Read<RsvpDto>(await owner.PostAsync($"/api/weddings/{open}/rsvps/requests/{old.Id}/approve", null))).ConfirmedPartySize);
+        Assert.Equal(2, (await Read<RsvpDto>(await owner.PostAsync($"/api/weddings/{open}/rsvps/requests/{old.Id}/approve", null))).PartySize);
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
@@ -476,12 +453,12 @@ public sealed class RsvpApiTests
         foreach (var sql in new[] { "UPDATE inviteme.planning_rsvp_history SET reason = 'x'", "DELETE FROM inviteme.planning_rsvp_history", "TRUNCATE inviteme.planning_rsvp_history" })
             Assert.Equal(PostgresErrorCodes.RestrictViolation, (await Assert.ThrowsAsync<PostgresException>(() => db.Database.ExecuteSqlRawAsync(sql))).SqlState);
 
-        // Failing history / waitlist inserts: RSVP, people, places, notes, waitlist, history and audit all roll back.
+        // Failing history / place / person inserts: RSVP, people, places, notes, history and audit all roll back.
         foreach (var (table, call) in new (string, Func<Task<HttpResponseMessage>>)[]
                  {
                      ("planning_rsvp_history", () => c.PutAsJsonAsync(a.Url, new SubmitRsvp(first.Version, "DECLINED", Note: "x"))),
-                     ("planning_rsvp_waitlist", () => c.PutAsJsonAsync(a.Url, new SubmitRsvp(first.Version, "ATTENDING", 2))),
-                     ("planning_rsvp_waitlist", () => c.PostAsJsonAsync(d.Url, new SubmitRsvp(0, "ATTENDING", 2)))
+                     ("planning_places", () => c.PutAsJsonAsync(a.Url, new SubmitRsvp(first.Version, "ATTENDING", 2))),
+                     ("planning_participants", () => c.PostAsJsonAsync(d.Url, new SubmitRsvp(0, "ATTENDING", 2)))
                  })
         {
             // Table names are fixed test constants (not user input).
@@ -495,11 +472,10 @@ public sealed class RsvpApiTests
             Assert.DoesNotContain("simulated", await failed.Content.ReadAsStringAsync());
         }
         var state = (await c.GetFromJsonAsync<RsvpDto>(a.Url))!;
-        Assert.Equal((first.Version, "ATTENDING", 1, 0, (string?)null, 1), (state.Version, state.Status, state.ConfirmedPartySize, state.WaitlistedPartySize, state.Note, state.Participants.Count));
+        Assert.Equal((first.Version, "ATTENDING", 1, (string?)null, 1, 1), (state.Version, state.Status, state.PartySize, state.Note, state.Participants.Count, state.Places.Count));
         Assert.Equal(0, await db.Set<PlanningRsvp>().CountAsync(x => x.GuestId == d.GuestId));
         Assert.Equal(("PENDING", 1), ((await db.Set<PlanningParticipant>().AsNoTracking().SingleAsync(x => x.GuestId == d.GuestId)).AttendanceStatus,
             await db.Set<PlanningPlace>().CountAsync(x => x.GuestId == d.GuestId)));
-        Assert.Equal(0, await db.Set<PlanningWaitlistEntry>().CountAsync());
         Assert.Equal(frozen, await HistoryFingerprint(db)); Assert.Equal(audits, await db.AuditLogs.CountAsync());
     });
 
@@ -562,13 +538,12 @@ public sealed class RsvpApiTests
         Assert.Equal(("USER", RsvpSource.Phone), (sources[1].ActorType, JsonDocument.Parse(sources[1].Metadata!).RootElement.GetProperty("source").GetString()));
     });
 
-    // ---------------- Guest04: capacity under concurrency ----------------
+    // ---------------- concurrency ----------------
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
-    public Task ConcurrentRequestsForTheLastPlacesNeverOverbook() => WithApi(async (db, factory, owner, ownerId) =>
+    public Task ConcurrentAnswersAreAllCountedAndTheSameInvitationIsWrittenOnce() => WithApi(async (db, factory, owner, ownerId) =>
     {
-        // architecture.md acceptance: capacity 150 with 148 attending, two independent +2 requests at once.
-        // One gets the two places, the other waits for the couple; never 152.
+        // Capacity 150 with 148 coming, two +2 answers at once: both are saved (152), the dashboard warns the couple.
         var w = await Wedding(db, ownerId, "rsvp-race", 150);
         var filler = await Party(db, owner, w, "FILL");
         await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE inviteme.planning_participants SET \"AttendanceStatus\"='ATTENDING' WHERE \"GuestId\"={filler.GuestId}");
@@ -576,42 +551,16 @@ public sealed class RsvpApiTests
         var a = await Party(db, owner, w, "A", people: 2); var b = await Party(db, owner, w, "B", people: 2);
         using var ca = factory.CreateHttpsClient(); using var cb = factory.CreateHttpsClient();
         var races = await Task.WhenAll(ca.PostAsJsonAsync(a.Url, new SubmitRsvp(0, "ATTENDING", 2)), cb.PostAsJsonAsync(b.Url, new SubmitRsvp(0, "ATTENDING", 2)));
-        var answers = new List<RsvpDto>();
-        foreach (var r in races) answers.Add(await Created(r));
-        Assert.Single(answers, x => x.ConfirmedPartySize == 2 && x.CapacityOutcome == RsvpCapacityOutcome.Confirmed);
-        Assert.Single(answers, x => x.WaitlistedPartySize == 2 && x.CapacityOutcome == RsvpCapacityOutcome.Waitlisted);
-        Assert.Equal(150, await Confirmed(db, w));
-    });
+        foreach (var r in races) Assert.Equal(2, (await Created(r)).PartySize);
+        Assert.Equal(152, await Confirmed(db, w));
+        Assert.Equal(2L, (await owner.GetFromJsonAsync<RsvpDashboardDto>($"/api/weddings/{w}/rsvps/dashboard"))!.Capacity.OverBy);
 
-    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
-    public Task ConcurrentPromotionsCannotOverfillCapacity() => WithApi(async (db, factory, owner, ownerId) =>
-    {
-        // Plus-one limit 0: each extra companion waits; capacity 3 leaves room for only one of them.
-        var w = await Wedding(db, ownerId, "rsvp-promote", 3);
-        var a = await Party(db, owner, w, "A"); var b = await Party(db, owner, w, "B");
-        using var c = factory.CreateHttpsClient();
-        await Created(await c.PostAsJsonAsync(a.Url, new SubmitRsvp(0, "ATTENDING", 2)));
-        var rb = await Created(await c.PostAsJsonAsync(b.Url, new SubmitRsvp(0, "ATTENDING", 2)));
-        var entries = (await owner.GetFromJsonAsync<PagedResult<WaitlistDto>>($"/api/weddings/{w}/rsvps/waitlist"))!.Items;
-        Assert.Equal(new[] { a.GuestId, b.GuestId }, entries.Select(e => e.GuestId).ToArray()); // request order
-
-        using var second = await SignIn(factory, "owner", register: false);
-        var races = await Task.WhenAll(owner.PostAsync($"/api/weddings/{w}/rsvps/waitlist/{entries[0].Id}/promote", null),
-            second.PostAsync($"/api/weddings/{w}/rsvps/waitlist/{entries[1].Id}/promote", null));
-        Assert.Single(races, r => r.StatusCode == HttpStatusCode.OK);
-        await AssertProblem(HttpStatusCode.UnprocessableEntity, "INSUFFICIENT_SLOTS", Assert.Single(races, r => r.StatusCode != HttpStatusCode.OK));
-        Assert.Equal(3, await Confirmed(db, w));
-
-        var winner = (await db.Set<PlanningWaitlistEntry>().AsNoTracking().SingleAsync(e => e.Status == "PROMOTED")).GuestId == a.GuestId ? a : b;
-        var ws = (await c.GetFromJsonAsync<RsvpDto>(winner.Url))!;
-        await Read<RsvpDto>(await c.PutAsJsonAsync(winner.Url, new SubmitRsvp(ws.Version, "DECLINED")));
-        var waitingId = (await db.Set<PlanningWaitlistEntry>().AsNoTracking().SingleAsync(e => e.Status == "WAITING")).Id;
-        var twice = await Task.WhenAll(owner.PostAsync($"/api/weddings/{w}/rsvps/waitlist/{waitingId}/promote", null),
-            second.PostAsync($"/api/weddings/{w}/rsvps/waitlist/{waitingId}/promote", null));
-        Assert.Single(twice, r => r.StatusCode == HttpStatusCode.OK);
-        await AssertProblem(HttpStatusCode.UnprocessableEntity, "WAITLIST_NOT_WAITING", Assert.Single(twice, r => r.StatusCode != HttpStatusCode.OK));
-        Assert.Equal(2, await Confirmed(db, w));
-        Assert.Equal(2, rb.Participants.Count);
+        // Two first answers for the same invitation at once (double click): one is saved, the other is told to refresh.
+        var c2 = await Party(db, owner, w, "C", people: 2);
+        var twice = await Task.WhenAll(ca.PostAsJsonAsync(c2.Url, new SubmitRsvp(0, "ATTENDING", 2)), cb.PostAsJsonAsync(c2.Url, new SubmitRsvp(0, "ATTENDING", 1)));
+        Assert.Single(twice, r => r.StatusCode == HttpStatusCode.Created);
+        Assert.Single(twice, r => r.StatusCode == HttpStatusCode.Conflict);
+        Assert.Equal(1, await db.Set<PlanningRsvpHistory>().CountAsync(x => db.Set<PlanningRsvp>().Any(r => r.Id == x.RsvpId && r.GuestId == c2.GuestId)));
     });
 
     // ---------------- Couple06: dashboard ----------------
@@ -636,19 +585,20 @@ public sealed class RsvpApiTests
         using var c = factory.CreateHttpsClient();
         await Created(await c.PostAsJsonAsync(nam.Url, new SubmitRsvp(0, "ATTENDING", 2, Note: "Gần sân khấu", DietaryNote: "Ăn chay")));
         await Created(await c.PostAsJsonAsync(lan.Url, new SubmitRsvp(0, "DECLINED")));
-        await Created(await c.PostAsJsonAsync(hung.Url, new SubmitRsvp(0, "ATTENDING", 2, Note: "=1+1"))); // plus-one limit 0 → one waits
+        await Created(await c.PostAsJsonAsync(hung.Url, new SubmitRsvp(0, "ATTENDING", 2, Note: "=1+1"))); // plus-one limit 0 → over the threshold
         await Created(await c.PostAsJsonAsync(mai.Url, new SubmitRsvp(0, "MAYBE", 3)));
         // Cô Hoa has not answered.
 
         var all = (await owner.GetFromJsonAsync<RsvpDashboardDto>($"/api/weddings/{w}/rsvps/dashboard"))!;
         Assert.Equal((5, 2, 1, 1, 1, 60.0m), (all.Invitations.Invited, all.Invitations.Attending, all.Invitations.Maybe,
             all.Invitations.Declined, all.Invitations.NotResponded, all.Invitations.ResponseRate));
-        Assert.Equal((1, 1, 0), (all.NeedsDecision.Invitations, all.NeedsDecision.WaitingPeople, all.NeedsDecision.ChangeRequests));
-        Assert.Equal((3, 1, 3, 1), (all.People.Expected, all.People.Companions, all.People.Maybe, all.People.Waiting));
-        Assert.Equal((10, 3L, 7L, false), (all.Capacity.Max!.Value, all.Capacity.Occupied, all.Capacity.Remaining!.Value, all.Capacity.MaybeMayExceed));
+        Assert.Equal((1, 1, 0), (all.NeedsAction.Invitations, all.NeedsAction.OverLimit, all.NeedsAction.ChangeRequests));
+        Assert.Equal((4, 2, 3), (all.People.Expected, all.People.Companions, all.People.Maybe));
+        Assert.Equal((10, 4L, 6L, false, 0L, false), (all.Capacity.Max!.Value, all.Capacity.Expected, all.Capacity.Remaining!.Value,
+            all.Capacity.OverCapacity, all.Capacity.OverBy, all.Capacity.MaybeMayExceed));
         Assert.Equal((1, 2), (all.Notes.InvitationsWithDietaryNote, all.Notes.InvitationsWithNote));
         Assert.Equal(new RsvpNoteCount("Ăn chay", 1), Assert.Single(all.Notes.TopDietaryNotes));
-        Assert.Equal(new[] { new RsvpSideStats("BRIDE", 3, 2, 0), new RsvpSideStats("GROOM", 2, 2, 3) }, all.BySide.ToArray());
+        Assert.Equal(new[] { new RsvpSideStats("BRIDE", 3, 2, 0), new RsvpSideStats("GROOM", 2, 2, 4) }, all.BySide.ToArray());
         var bride = (await owner.GetFromJsonAsync<RsvpDashboardDto>($"/api/weddings/{w}/rsvps/dashboard?side=BRIDE"))!;
         Assert.Equal((3, 1), (bride.Invitations.Invited, bride.Invitations.NotResponded));
         Assert.Equal(HttpStatusCode.BadRequest, (await owner.GetAsync($"/api/weddings/{w}/rsvps/dashboard?side=LEFT")).StatusCode);
@@ -658,11 +608,11 @@ public sealed class RsvpApiTests
         var row = Assert.Single(notAnswered.Items);
         Assert.Equal((hoa.GuestId, "NOT_RESPONDED", "0901234567"), (row.GuestId, row.RsvpStatus, row.Phone));
         var namRow = Assert.Single((await owner.GetFromJsonAsync<PagedResult<RsvpGuestRowDto>>($"/api/weddings/{w}/rsvps/dashboard/guests?search=nam"))!.Items);
-        Assert.Equal((nam.GuestId, 2, 2, "Ăn chay"), (namRow.GuestId, namRow.ConfirmedPeople, namRow.MaxPeople, namRow.DietaryNote));
+        Assert.Equal((nam.GuestId, 2, 2, "Ăn chay"), (namRow.GuestId, namRow.People, namRow.MaxPeople, namRow.DietaryNote));
         var maiRow = Assert.Single((await owner.GetFromJsonAsync<PagedResult<RsvpGuestRowDto>>($"/api/weddings/{w}/rsvps/dashboard/guests?status=MAYBE"))!.Items);
         Assert.Equal((mai.GuestId, 3), (maiRow.GuestId, maiRow.MaybePeople));
-        var hungRow = Assert.Single((await owner.GetFromJsonAsync<PagedResult<RsvpGuestRowDto>>($"/api/weddings/{w}/rsvps/dashboard/guests?status=NEEDS_DECISION"))!.Items);
-        Assert.Equal((hung.GuestId, 1, 1), (hungRow.GuestId, hungRow.ConfirmedPeople, hungRow.WaitingPeople));
+        var hungRow = Assert.Single((await owner.GetFromJsonAsync<PagedResult<RsvpGuestRowDto>>($"/api/weddings/{w}/rsvps/dashboard/guests?status=NEEDS_ACTION"))!.Items);
+        Assert.Equal((hung.GuestId, 2, 1, true, true), (hungRow.GuestId, hungRow.People, hungRow.MaxPeople, hungRow.OverLimit, hungRow.NeedsAction));
         Assert.Equal(HttpStatusCode.BadRequest, (await owner.GetAsync($"/api/weddings/{w}/rsvps/dashboard/guests?status=WAITING")).StatusCode);
 
         // A co-host with RSVP_VIEW but no GUEST_VIEW sees the numbers but not phone/email.
@@ -695,7 +645,7 @@ public sealed class RsvpApiTests
         db.Add(new PlanningSeatAssignment { PlaceId = place.Id, TableId = table.Id, SeatNumber = 1 }); await db.SaveChangesAsync();
 
         var grown = await Read<RsvpDto>(await c.PutAsJsonAsync(a.Url, new SubmitRsvp(first.Version, "ATTENDING", 2)));
-        Assert.Equal((2, 2), (grown.ConfirmedPartySize, grown.Places.Count));
+        Assert.Equal((2, 2), (grown.PartySize, grown.Places.Count));
         var flag = await db.AuditLogs.AsNoTracking().SingleAsync(x => x.Action == "SEAT_NEEDS_ATTENTION");
         Assert.Equal(("planning_places", grown.Places[1].Id), (flag.EntityType, flag.EntityId));
         Assert.Equal("PARTY_GREW", JsonDocument.Parse(flag.Metadata!).RootElement.GetProperty("reason").GetString());
@@ -714,16 +664,16 @@ public sealed class RsvpApiTests
         await CoHostPermissionTests.AddCoHostAsync(owner, viewer, w, "RSVP_VIEW");
         var url = $"/api/weddings/{w}/rsvps/{a.GuestId}"; var body = new SubmitRsvp(0, "ATTENDING", 1);
 
-        foreach (var read in new[] { url, $"/api/weddings/{w}/rsvps/waitlist", $"/api/weddings/{w}/rsvps/requests", $"/api/weddings/{w}/rsvp-settings" })
+        foreach (var read in new[] { url, $"/api/weddings/{w}/rsvps/requests", $"/api/weddings/{w}/rsvp-settings" })
             Assert.Equal(HttpStatusCode.OK, (await viewer.GetAsync(read)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await viewer.PutAsJsonAsync(url, body)).StatusCode); // needs GUEST_EDIT
-        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.PutAsJsonAsync(url + "/limit", new SetRsvpLimit(3))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.PostAsync(url + "/acknowledge", null)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await viewer.PutAsJsonAsync($"/api/weddings/{w}/rsvp-settings", new SaveRsvpSettings(0, 1))).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await viewer.PutAsJsonAsync($"/api/weddings/{w}/rsvps/locks", new LockRsvps(true, [a.GuestId]))).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await outsider.GetAsync(url)).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync(url)).StatusCode);
         await AssertProblem(HttpStatusCode.NotFound, "GUEST_NOT_FOUND", await owner.GetAsync($"/api/weddings/{other}/rsvps/{a.GuestId}")); // other wedding
-        await AssertProblem(HttpStatusCode.NotFound, "GUEST_NOT_FOUND", await owner.PutAsJsonAsync($"/api/weddings/{other}/rsvps/{a.GuestId}/limit", new SetRsvpLimit(3)));
+        await AssertProblem(HttpStatusCode.NotFound, "GUEST_NOT_FOUND", await owner.PostAsync($"/api/weddings/{other}/rsvps/{a.GuestId}/acknowledge", null));
         await AssertProblem(HttpStatusCode.NotFound, "GUEST_NOT_FOUND", await owner.PutAsJsonAsync($"/api/weddings/{other}/rsvps/locks", new LockRsvps(true, [a.GuestId])));
         Assert.Equal(0, await db.Set<PlanningRsvp>().CountAsync());
     });
@@ -740,8 +690,7 @@ public sealed class RsvpApiTests
         Assert.True(guest.GetProperty("put").GetProperty("responses").TryGetProperty("202", out _));
         foreach (var path in new[]
                  {
-                     "/api/weddings/{weddingId}/rsvps/{guestId}", "/api/weddings/{weddingId}/rsvps/{guestId}/limit", "/api/weddings/{weddingId}/rsvps/waitlist",
-                     "/api/weddings/{weddingId}/rsvps/waitlist/{entryId}/promote", "/api/weddings/{weddingId}/rsvps/waitlist/{entryId}/decline",
+                     "/api/weddings/{weddingId}/rsvps/{guestId}", "/api/weddings/{weddingId}/rsvps/{guestId}/acknowledge",
                      "/api/weddings/{weddingId}/rsvps/requests", "/api/weddings/{weddingId}/rsvps/requests/{requestId}/approve",
                      "/api/weddings/{weddingId}/rsvps/requests/{requestId}/reject", "/api/weddings/{weddingId}/rsvps/locks", "/api/weddings/{weddingId}/rsvp-settings"
                  })

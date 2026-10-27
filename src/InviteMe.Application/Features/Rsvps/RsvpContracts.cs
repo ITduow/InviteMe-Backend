@@ -8,7 +8,8 @@ namespace InviteMe.Application.Features.Rsvps;
 /// RSVP form body. <c>expectedVersion</c> is the RSVP version last read by the client (0 before the first answer).
 /// <c>decision</c>: ATTENDING (Có), MAYBE (Phân vân) or DECLINED (Không). <c>partySize</c> = how many people come
 /// (or may come, for MAYBE), the recipient included; companions get automatic names ("Khách đi kèm 1 của …").
-/// People beyond the invitation's <c>maxPeople</c>, or beyond the room left in the wedding, wait for the couple.
+/// Every person of an ATTENDING answer is counted. More people than the invitation's <c>maxPeople</c> is still saved;
+/// the couple only gets a warning to look at it.
 /// <c>note</c> and <c>dietaryNote</c> are optional: omitted = unchanged, empty string = cleared.
 /// </summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -46,37 +47,30 @@ public sealed record RsvpRequestDto(Guid Id, Guid GuestId, string RecipientName,
 
 /// <summary>
 /// Current RSVP of one invitation (planning guest). Status: PENDING (chưa trả lời, RsvpId null, Version 0), ATTENDING, MAYBE, DECLINED.
-/// PartySize = people the guest asked for (ATTENDING: confirmed + waiting; MAYBE: expected). ConfirmedPartySize counts against the
-/// capacity; WaitlistedPartySize waits for the couple. MaxPeople = people the invitation may confirm without asking the couple.
-/// ThankYouMessage = the text the form shows after a saved answer; Message = extra information (waiting / locked).
+/// PartySize = people coming (ATTENDING) or who may come (MAYBE); 0 otherwise. MaxPeople = the invitation's threshold
+/// (people invited on it + plus-one limit). OverLimit = more people than the threshold and the couple has not marked it as seen.
+/// ThankYouMessage = the text the form shows after a saved answer; Message = extra information (over the threshold / locked).
 /// </summary>
-public sealed record RsvpDto(Guid GuestId, string RecipientName, int Version, Guid? RsvpId, string Status, int PartySize,
-    int ConfirmedPartySize, int WaitlistedPartySize, int MaxPeople, string CapacityOutcome, string? ThankYouMessage, string? Message,
-    string? Note, string? DietaryNote, IReadOnlyList<RsvpPlaceDto> Places, IReadOnlyList<RsvpParticipantDto> Participants,
-    bool Locked, DateTimeOffset? RsvpDeadline, RsvpRequestDto? PendingRequest, DateTimeOffset? SubmittedAt, DateTimeOffset? UpdatedAt);
+public sealed record RsvpDto(Guid GuestId, string RecipientName, int Version, Guid? RsvpId, string Status, int PartySize, int MaxPeople,
+    bool OverLimit, string? ThankYouMessage, string? Message, string? Note, string? DietaryNote, IReadOnlyList<RsvpPlaceDto> Places,
+    IReadOnlyList<RsvpParticipantDto> Participants, bool Locked, DateTimeOffset? RsvpDeadline, RsvpRequestDto? PendingRequest,
+    DateTimeOffset? SubmittedAt, DateTimeOffset? UpdatedAt);
 
 /// <summary>
 /// Store result: the wedding is needed for the realtime notification but never shown to the guest.
-/// Queued = the change was stored as a request for the couple (HTTP 202), not applied. NeedsDecision = someone now waits for the couple.
+/// Queued = the change was stored as a request for the couple (HTTP 202), not applied. OverLimit = the answer has just gone over
+/// the invitation's threshold (the couple is told).
 /// </summary>
-public sealed record RsvpWriteResult(Guid WeddingId, RsvpDto Rsvp, bool SeatsNeedAttention = false, bool Queued = false, bool NeedsDecision = false);
+public sealed record RsvpWriteResult(Guid WeddingId, RsvpDto Rsvp, bool SeatsNeedAttention = false, bool Queued = false, bool OverLimit = false);
 
-/// <summary>
-/// NONE: not attending / not answered / MAYBE. CONFIRMED: everyone attending holds a place. PARTIALLY_WAITLISTED: some people are
-/// confirmed and the rest wait for the couple. WAITLISTED: the wedding is full, everyone waits for the couple.
-/// </summary>
-public static class RsvpCapacityOutcome
+/// <summary>Texts shown to the guest after a saved answer.</summary>
+public static class RsvpMessages
 {
-    public const string None = "NONE", Confirmed = "CONFIRMED", PartiallyWaitlisted = "PARTIALLY_WAITLISTED", Waitlisted = "WAITLISTED";
+    public const string Locked = "RSVP đã khóa. Yêu cầu thay đổi của bạn đã được gửi tới cô dâu chú rể.";
 
-    /// <summary>Extra information shown under the thank-you text.</summary>
-    public static string? Message(string outcome) => outcome switch
-    {
-        Waitlisted or PartiallyWaitlisted => "Cô dâu chú rể sẽ sắp xếp chỗ cho những người đi thêm và báo lại cho bạn.",
-        _ => null
-    };
-
-    public const string LockedMessage = "RSVP đã khóa. Yêu cầu thay đổi của bạn đã được gửi tới cô dâu chú rể.";
+    /// <summary>Over the threshold: the answer is saved, the couple is told and may contact the guest.</summary>
+    public static string OverLimit(int maxPeople) =>
+        $"Thiệp này dự kiến tối đa {maxPeople} người. Cô dâu chú rể đã nhận được số người của bạn và sẽ liên hệ nếu cần sắp xếp thêm.";
 
     /// <summary>Polite text after a saved answer (meeting 26/10: "lời cảm ơn lịch sự, tinh tế"). Times are shown in Vietnam time.</summary>
     public static string? ThankYou(string status, DateTimeOffset? deadline) => status switch
@@ -90,14 +84,6 @@ public static class RsvpCapacityOutcome
     };
 }
 
-/// <summary>FULL_PARTY: the wedding was full, nobody of the invitation is confirmed yet. ADDITIONAL_MEMBER: extra people of a confirmed invitation.</summary>
-public static class WaitlistKind
-{
-    public const string FullParty = "FULL_PARTY", AdditionalMember = "ADDITIONAL_MEMBER";
-}
-
-public sealed record WaitlistDto(Guid Id, Guid GuestId, string RecipientName, int RequestedSlots, string Status, string Kind, DateTimeOffset RequestedAt);
-
 /// <summary>Create = first answer only; Replace = change an existing answer; Upsert = couple / co-host route.</summary>
 public enum RsvpWriteMode { Create, Replace, Upsert }
 
@@ -106,10 +92,6 @@ public sealed record RsvpSettingsDto(Guid WeddingId, int PlusOneLimit, int Versi
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SaveRsvpSettings(int ExpectedVersion, int PlusOneLimit);
-
-/// <summary>The couple's "tối đa n người" for one invitation. MaxPeople null = back to the default (places / plus-one limit).</summary>
-[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-public sealed record SetRsvpLimit(int? MaxPeople);
 
 /// <summary>Lock or unlock RSVP changes for some guests and/or every guest of a planning group.</summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -145,12 +127,6 @@ public sealed class SaveRsvpSettingsValidator : AbstractValidator<SaveRsvpSettin
         RuleFor(x => x.ExpectedVersion).GreaterThanOrEqualTo(0);
         RuleFor(x => x.PlusOneLimit).InclusiveBetween(0, PlanningRsvpSettings.MaxPlusOneLimit);
     }
-}
-
-public sealed class SetRsvpLimitValidator : AbstractValidator<SetRsvpLimit>
-{
-    public SetRsvpLimitValidator() =>
-        RuleFor(x => x.MaxPeople).InclusiveBetween(1, PlanningRsvpSettings.MaxPartySize).When(x => x.MaxPeople is not null);
 }
 
 public sealed class LockRsvpsValidator : AbstractValidator<LockRsvps>
