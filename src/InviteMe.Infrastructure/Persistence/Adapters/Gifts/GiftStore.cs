@@ -158,14 +158,15 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
             .FromSqlInterpolated($"SELECT * FROM inviteme.planning_gift_proofs WHERE id = {proofId} AND wedding_id = {weddingId} FOR UPDATE")
             .SingleOrDefaultAsync(ct) is { GiftId: null } found && found.UploadedBy == actor ? found : throw Missing("GIFT_PROOF_NOT_FOUND");
         var message = GiftRules.Clean(input.Message);
-        // A present is handed over at the wedding: it is received when recorded. A transfer shown to a co-host waits for the couple.
+        // A present is handed over at the wedding: it is received when recorded. A transfer shown at the desk, with or without a
+        // photo, waits for the couple to see the money arrive.
         var gift = itemName is not null
             ? PlanningGift.ForItem(weddingId, input.GuestId, giver, itemName, input.Quantity ?? 1, input.EstimatedValue, message, actor,
                 input.ReceivedAt ?? now, now, key)
             : input.Method == PlanningGift.Cash && input.Amount is null
                 ? PlanningGift.Envelope(weddingId, input.GuestId, giver, message, actor, now, key)
-            : atReception && proof is not null
-                ? PlanningGift.FromHallTransfer(weddingId, input.GuestId, giver, input.Amount!.Value, message, proof.Id, actor, now, key)
+            : atReception && input.Method == PlanningGift.Transfer
+                ? PlanningGift.FromHallTransfer(weddingId, input.GuestId, giver, input.Amount!.Value, message, proof?.Id, actor, now, key)
                 : PlanningGift.Recorded(weddingId, input.GuestId, giver, input.Method, input.Amount!.Value, message, actor, input.ReceivedAt ?? now, now, key);
         gift.GivenBy(input.ParticipantId);
         if (proof is not null)

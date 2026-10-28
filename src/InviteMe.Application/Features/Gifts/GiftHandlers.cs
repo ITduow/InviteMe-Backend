@@ -116,12 +116,11 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
     {
         var owner = await RequireRecorder(weddingId, ct);
         await recordValidation.ValidateAsync(input, ct);
-        if (!owner && input.Method == PlanningGift.Transfer && input.ProofId is null)
-            throw new ApplicationProblemException(ProblemKind.BusinessRule, "GIFT_PROOF_REQUIRED",
-                "Chụp hoặc tải ảnh màn hình chuyển khoản của khách trước khi ghi nhận.");
+        // At the desk nobody has checked the bank yet, the owner included: a transfer waits for confirmation, photo or not.
+        var atReception = !owner || input.FromDesk;
         if (idempotencyKey is { Length: > 100 })
             throw new ValidationException([new FluentValidation.Results.ValidationFailure("Idempotency-Key", "At most 100 characters.")]);
-        return await Received(weddingId, await store.RecordAsync(weddingId, input, user.UserId!.Value, idempotencyKey?.Trim(), ct, atReception: !owner), ct);
+        return await Received(weddingId, await store.RecordAsync(weddingId, input, user.UserId!.Value, idempotencyKey?.Trim(), ct, atReception: atReception), ct);
     }
 
     /// <summary>Photo of a transfer screen (JPEG/PNG/WebP, at most 5 MB), owner or co-host with GIFT_RECORD.</summary>
@@ -215,7 +214,8 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
         await Require(weddingId, owner ? WeddingPermission.GIFT_VIEW : WeddingPermission.GIFT_RECORD, ct);
         // Only what is handed over at the desk: guests' online QR gifts (and their receipts) are not part of it.
         var gifts = (await store.GiftsAsync(weddingId, ct))
-            .Where(g => g.Method is PlanningGift.Cash or PlanningGift.Item || (g.Method == PlanningGift.Transfer && g.HasProof));
+            .Where(g => g.Method is PlanningGift.Cash or PlanningGift.Item
+                || (g.Method == PlanningGift.Transfer && (g.HasProof || g.ClaimedAt is not null)));
         return (owner ? gifts : gifts.Select(g => g with { Message = null, Code = null, Confirmation = null, AccountId = null })).ToList();
     }
 

@@ -123,7 +123,7 @@ public sealed class PlanningGift
     public PlanningGift GivenBy(Guid? participantId) { ParticipantId = participantId; return this; }
 
     /// <summary>A transfer a guest shows at the reception desk: the couple still has to see the money and confirm it.</summary>
-    public static PlanningGift FromHallTransfer(Guid weddingId, Guid? guestId, string giverName, long amount, string? message, Guid proofId,
+    public static PlanningGift FromHallTransfer(Guid weddingId, Guid? guestId, string giverName, long amount, string? message, Guid? proofId,
         Guid actor, DateTimeOffset now, string? idempotencyKey = null) => new()
     {
         Id = Guid.NewGuid(), WeddingId = weddingId, GuestId = guestId, GiverName = giverName, Method = Transfer,
