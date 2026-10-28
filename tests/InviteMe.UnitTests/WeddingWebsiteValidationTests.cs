@@ -154,7 +154,7 @@ public sealed class WeddingWebsiteValidationTests
     }
 
     private static WeddingWebsiteHandler Create(Store store, bool isOwner, bool imageRegistered = true) =>
-        new(store, new Access(isOwner), new User(), new Media(), new Catalog(imageRegistered), new Changes(), new TemplateStore(), new AllowAllEntitlements());
+        new(store, new Access(isOwner), new User(), new Media(), new Changes(), new TemplateStore(), new AllowAllEntitlements());
 
     private sealed class TemplateStore : IStoryTemplateStore
     {

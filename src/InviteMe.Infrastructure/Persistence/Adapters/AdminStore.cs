@@ -6,6 +6,7 @@ using InviteMe.Application.Common.Errors;
 using InviteMe.Application.Common.Models;
 using InviteMe.Application.Features.Admin;
 using InviteMe.Application.Features.Audit;
+using InviteMe.Application.Features.Invitations;
 using InviteMe.Domain.Audit;
 using InviteMe.Domain.Guests;
 using InviteMe.Domain.Identity;
@@ -166,16 +167,44 @@ public sealed class AdminStore(InviteMeDbContext db, UserManager<ApplicationUser
         return new(items, input.Page, input.PageSize, checked((int)total));
     }
 
+    public async Task<AdminTemplateDto> GetTemplateAsync(Guid templateId, CancellationToken ct)
+    {
+        var template = await db.Templates.AsNoTracking().SingleOrDefaultAsync(x => x.Id == templateId, ct)
+            ?? throw NotFound("TEMPLATE_NOT_FOUND", "Template not found.");
+        return Describe(template);
+    }
+
     public async Task<IReadOnlyList<AdminTemplateVisibilityDto>> ListTemplateVisibilityAsync(CancellationToken ct) =>
         await db.Templates.AsNoTracking().OrderBy(x => x.Slug)
             .Select(x => new AdminTemplateVisibilityDto(x.Slug, x.Status == "ACTIVE"))
             .ToListAsync(ct);
 
+    public async Task<IReadOnlyList<AdminTemplateDto>> ListPublishedTemplatesAsync(CancellationToken ct)
+    {
+        var rows = await db.Templates.AsNoTracking().Where(x => x.Status == "ACTIVE" && x.PublishedConfiguration != null)
+            .OrderBy(x => x.Name).Select(x => new AdminTemplateDto(x.Id, x.PublishedName ?? x.Name,
+                x.Slug, x.PublishedTheme, x.PublishedPreviewUrl, x.PublishedConfiguration, x.Status,
+                x.CreatedAt, x.UpdatedAt)).ToListAsync(ct);
+        return rows.Where(x => ValidPublishedDocument(x.ConfigurationJson!)).ToArray();
+    }
+
+    private static bool ValidPublishedDocument(string config)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(config);
+            return InvitationDesignHandler.ValidDocument(document.RootElement);
+        }
+        catch (JsonException) { return false; }
+    }
+
     public async Task<AdminTemplateDto> CreateTemplateAsync(Guid actorId, CreateAdminTemplateInput input, CancellationToken ct)
     {
         ValidateTemplate(input.Name, input.Slug, input.PreviewUrl, input.ConfigurationJson, input.Status);
         var template = InvitationTemplate.Create(input.Name, input.Slug, Clean(input.Theme), Clean(input.PreviewUrl),
-            input.ConfigurationJson, input.Status);
+            input.ConfigurationJson, "DRAFT");
+        if (input.Status == "ACTIVE") template.Publish();
+        else template.SetStatus(input.Status);
         db.Templates.Add(template);
         db.AuditLogs.Add(AuditLog.ForPlatform(actorId, "templates", template.Id, "TEMPLATE_CREATED",
             JsonSerializer.Serialize(new { template.Slug, template.Status })));
@@ -189,7 +218,10 @@ public sealed class AdminStore(InviteMeDbContext db, UserManager<ApplicationUser
         var template = await db.Templates.SingleOrDefaultAsync(x => x.Id == templateId, ct)
             ?? throw NotFound("TEMPLATE_NOT_FOUND", "Template not found.");
         var oldSlug = template.Slug; var oldStatus = template.Status;
+        if (template.PublishedVersion > 0 && input.Slug != template.Slug)
+            throw BadRequest("ADMIN_TEMPLATE_SLUG_IMMUTABLE", "A published template slug cannot be changed.");
         template.Update(input.Name, input.Slug, Clean(input.Theme), Clean(input.PreviewUrl), input.ConfigurationJson, input.Status);
+        if (input.Status == "ACTIVE" && oldStatus != "ACTIVE") template.Publish();
         db.AuditLogs.Add(AuditLog.ForPlatform(actorId, "templates", template.Id, "TEMPLATE_UPDATED",
             JsonSerializer.Serialize(new { oldSlug, newSlug = template.Slug, oldStatus, newStatus = template.Status })));
         await SaveTemplateAsync(ct);
@@ -205,9 +237,22 @@ public sealed class AdminStore(InviteMeDbContext db, UserManager<ApplicationUser
         var oldStatus = template.Status;
         if (oldStatus == status) return Describe(template);
         ValidateTemplate(template.Name, template.Slug, template.PreviewUrl, template.Configuration, status);
-        template.SetStatus(status);
+        if (status == "ACTIVE") template.Publish();
+        else template.SetStatus(status);
         db.AuditLogs.Add(AuditLog.ForPlatform(actorId, "templates", template.Id, "TEMPLATE_STATUS_CHANGED",
             JsonSerializer.Serialize(new { oldStatus, newStatus = status, template.Slug })));
+        await SaveTemplateAsync(ct);
+        return Describe(template);
+    }
+
+    public async Task<AdminTemplateDto> PublishTemplateAsync(Guid actorId, Guid templateId, CancellationToken ct)
+    {
+        var template = await db.Templates.SingleOrDefaultAsync(x => x.Id == templateId, ct)
+            ?? throw NotFound("TEMPLATE_NOT_FOUND", "Template not found.");
+        ValidateTemplate(template.Name, template.Slug, template.PreviewUrl, template.Configuration, "ACTIVE");
+        template.Publish();
+        db.AuditLogs.Add(AuditLog.ForPlatform(actorId, "templates", template.Id, "TEMPLATE_PUBLISHED",
+            JsonSerializer.Serialize(new { template.Slug, template.PublishedVersion })));
         await SaveTemplateAsync(ct);
         return Describe(template);
     }
@@ -369,11 +414,10 @@ public sealed class AdminStore(InviteMeDbContext db, UserManager<ApplicationUser
             {
                 using var doc = JsonDocument.Parse(config);
                 if (doc.RootElement.ValueKind != JsonValueKind.Object) throw new JsonException();
-                if (status == "ACTIVE" && (!doc.RootElement.TryGetProperty("schemaVersion", out var version) ||
-                    version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var schemaVersion) || schemaVersion != 1 ||
-                    !doc.RootElement.TryGetProperty("nodes", out var nodes) || nodes.ValueKind != JsonValueKind.Object ||
-                    !nodes.TryGetProperty("ROOT", out var root) || root.ValueKind != JsonValueKind.Object))
-                    throw BadRequest("ADMIN_TEMPLATE_DOCUMENT_REQUIRED", "An active template must include a Studio document with schemaVersion 1 and nodes.ROOT.");
+                if (status == "ACTIVE" && !InvitationDesignHandler.ValidDocument(doc.RootElement))
+                    throw BadRequest("ADMIN_TEMPLATE_DOCUMENT_INVALID", "Template must satisfy the Studio document schema.");
+                if (status == "ACTIVE" && InvitationDesignHandler.UsesTemporaryMedia(doc.RootElement))
+                    throw BadRequest("ADMIN_TEMPLATE_TEMPORARY_ASSET", "Upload permanent assets before publishing.");
             }
             catch (ApplicationProblemException) { throw; }
             catch (JsonException) { throw BadRequest("ADMIN_TEMPLATE_CONFIGURATION_INVALID", "Template configuration must be a valid JSON object."); }

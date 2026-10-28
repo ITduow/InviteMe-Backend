@@ -23,7 +23,7 @@ public interface IWeddingWebsiteStore
 }
 
 public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAccessReader access,
-    ICurrentUser user, IWeddingMediaStorage media, IWeddingMediaCatalog catalog, IPlanningChangePublisher changes,
+    ICurrentUser user, IWeddingMediaStorage media, IPlanningChangePublisher changes,
     IStoryTemplateStore templates,
     InviteMe.Application.Features.Billing.IWeddingEntitlements entitlements)
 {
@@ -102,8 +102,7 @@ public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAc
             var location = $"Node '{reference.NodeId[..Math.Min(reference.NodeId.Length, 100)]}', image '{path[..Math.Min(path.Length, 200)]}'.";
             if (source.StartsWith("/api/template-studio/assets", StringComparison.Ordinal))
                 throw new ApplicationProblemException(ProblemKind.BadRequest, "WEBSITE_MEDIA_TEMPORARY", $"Upload this temporary image to the wedding library before saving. {location}");
-            if (!media.TryGetOwnedFileName(id, source, out var fileName) ||
-                !await catalog.ContainsAsync(id, fileName, ct))
+            if (!media.TryGetOwnedFileName(id, source, out var fileName))
                 throw new ApplicationProblemException(ProblemKind.BadRequest, "WEBSITE_MEDIA_NOT_OWNED", $"Website image must belong to this wedding's media library. {location}");
             await using var stream = await media.OpenReadAsync(id, fileName, ct);
             if (stream is null) throw new ApplicationProblemException(ProblemKind.BadRequest, "WEBSITE_MEDIA_MISSING", $"Website image is no longer available. {location}");

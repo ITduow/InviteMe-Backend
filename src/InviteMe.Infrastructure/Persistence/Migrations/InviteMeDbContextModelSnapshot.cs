@@ -2800,6 +2800,34 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("preview_url");
 
+                    b.Property<DateTimeOffset?>("PublishedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("published_at");
+
+                    b.Property<string>("PublishedConfiguration")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("published_configuration");
+
+                    b.Property<string>("PublishedName")
+                        .HasMaxLength(150)
+                        .HasColumnType("varchar(150)")
+                        .HasColumnName("published_name");
+
+                    b.Property<string>("PublishedPreviewUrl")
+                        .HasColumnType("text")
+                        .HasColumnName("published_preview_url");
+
+                    b.Property<string>("PublishedTheme")
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("published_theme");
+
+                    b.Property<int>("PublishedVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("published_version");
+
                     b.Property<string>("Slug")
                         .IsRequired()
                         .HasMaxLength(160)

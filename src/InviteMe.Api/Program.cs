@@ -67,6 +67,19 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check 
 app.MapApplicationHealth();
 app.MapAccounts();
 app.MapAdminManagement();
+app.MapGet("/media/template-assets/{templateId:guid}/{fileName}", async (Guid templateId, string fileName,
+    InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage media, HttpContext context, CancellationToken ct) =>
+{
+    if (!System.Text.RegularExpressions.Regex.IsMatch(fileName, "^[a-f0-9]{48}\\.(jpg|png|webp)$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+        return Results.NotFound();
+    var stream = await media.OpenReadAsync(templateId, fileName, ct);
+    if (stream is null) return Results.NotFound();
+    context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    var contentType = Path.GetExtension(fileName) switch
+    { ".jpg" => "image/jpeg", ".png" => "image/png", _ => "image/webp" };
+    return Results.File(stream, contentType, enableRangeProcessing: false);
+}).AllowAnonymous().WithTags("Templates").WithName("GetTemplateAsset").Produces(200).Produces(404);
 app.MapWeddingAccess();
 app.MapWeddingSetup(builder.Configuration);
 app.MapGet("/media/wedding-covers/{weddingId:guid}/{fileName}", async (Guid weddingId, string fileName,

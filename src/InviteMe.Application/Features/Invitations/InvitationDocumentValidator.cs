@@ -69,7 +69,8 @@ internal static partial class InvitationDocumentValidator
     // Only explicitly allowed frontend template assets are shared. Everything else
     // must pass wedding ownership checks; absolute URLs are never exempted.
     private static bool IsSharedAsset(string source) =>
-        source.StartsWith("/images/", StringComparison.Ordinal) && AssetPattern().IsMatch(source);
+        source.StartsWith("/images/", StringComparison.Ordinal) && AssetPattern().IsMatch(source) ||
+        TemplateAssetPattern().IsMatch(source);
 
     private static bool Node(string id, JsonElement node)
     {
@@ -162,4 +163,6 @@ internal static partial class InvitationDocumentValidator
     [GeneratedRegex("^#[0-9a-f]{6}$", RegexOptions.IgnoreCase)] private static partial Regex ColorPattern();
     [GeneratedRegex(@"^(?:/images/templates/(?:invite-portrait|story-meadow)\.png|/images/template-studio/minimalism-brown/[a-z0-9-]+\.webp|/images/template-studio/minimalism-burgundy/(?:photo\.png|(?:envelope|paper|botanical)\.svg)|/images/template-studio/collection/[a-z0-9-]+\.(?:webp|svg)|/images/template-studio/story-collection/[a-z0-9-]+\.(?:webp|svg)|/images/template-studio/story-red-velvet/photo\.png|/api/template-studio/assets\?id=[a-f0-9-]{36}|(?:https?://[^/?#]+)?/media/wedding-covers/[a-f0-9]{32}/[a-f0-9]{48}\.(?:jpg|png|webp))$")]
     private static partial Regex AssetPattern();
+    [GeneratedRegex(@"^/media/template-assets/[a-f0-9]{32}/[a-f0-9]{48}\.(?:jpg|png|webp)$")]
+    private static partial Regex TemplateAssetPattern();
 }

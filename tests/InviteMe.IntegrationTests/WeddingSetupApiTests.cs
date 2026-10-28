@@ -133,7 +133,7 @@ public sealed class WeddingSetupApiTests(ApiFactory apiFactory) : IClassFixture<
             await ExpectProblem(HttpStatusCode.Conflict, "WEDDING_CONCURRENCY_CONFLICT", await Upload(owner, created.Id, 1, "stale.jpg", Jpeg));
             var replaced = await Read<WeddingCoverImageResult>(await Upload(owner, created.Id, 2, "x.png", Png));
             Assert.Equal(3, replaced.Version);
-            Assert.Equal(HttpStatusCode.NotFound, (await owner.GetAsync(uploaded.CoverImageUrl)).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await owner.GetAsync(uploaded.CoverImageUrl)).StatusCode);
 
             var webp = await Read<WeddingCoverImageResult>(await Upload(owner, created.Id, 3, "x.webp", Webp));
             Assert.Equal(4, webp.Version);
@@ -144,7 +144,7 @@ public sealed class WeddingSetupApiTests(ApiFactory apiFactory) : IClassFixture<
             Assert.Equal(HttpStatusCode.OK, removed.StatusCode);
             Assert.Null((await owner.GetFromJsonAsync<WeddingSetupDto>($"/api/weddings/{created.Id}"))!.CoverImageUrl);
             Assert.Equal(5, (await owner.GetFromJsonAsync<WeddingSetupDto>($"/api/weddings/{created.Id}"))!.Version);
-            Assert.Equal(HttpStatusCode.NotFound, (await owner.GetAsync(webp.CoverImageUrl)).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await owner.GetAsync(webp.CoverImageUrl)).StatusCode);
             Assert.Contains(await db.AuditLogs.Where(x => x.WeddingId == created.Id).Select(x => x.Action).ToListAsync(), x => x == "WEDDING_COVER_IMAGE_UPDATED");
             Assert.Contains(await db.AuditLogs.Where(x => x.WeddingId == created.Id).Select(x => x.Action).ToListAsync(), x => x == "WEDDING_COVER_IMAGE_REMOVED");
 

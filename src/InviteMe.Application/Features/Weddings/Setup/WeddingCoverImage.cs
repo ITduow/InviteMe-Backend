@@ -2,9 +2,9 @@ using InviteMe.Application.Common.Errors;
 
 namespace InviteMe.Application.Features.Weddings.Setup;
 
-internal sealed record DetectedWeddingImage(Stream Content, string Extension);
+public sealed record DetectedWeddingImage(Stream Content, string Extension);
 
-internal static class WeddingCoverImage
+public static class WeddingCoverImage
 {
     public const long MaxBytes = InviteMe.Domain.Weddings.UploadLimits.MaxImageBytes;
 
