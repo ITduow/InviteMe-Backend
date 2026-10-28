@@ -54,7 +54,7 @@ public sealed class PlanningImportChecksTests
     {
         var check = PlanningImportChecks.Analyze(
         [
-            new(2, "Anh Tuấn", "Anh"),
+            new(2, "Anh Tuấn", "Anh"), // a name that starts like an honorific is written as the couple typed it, no warning
             new(6, "Gia đình ông Nguyễn Văn Đức", ExpectedPeople: 4), // the family label is part of the name: fine without honorific
             new(3, "Mai Hương", ExpectedPeople: 12),
             new(4, "Mai Hương", Phone: "0900000001")
@@ -62,7 +62,7 @@ public sealed class PlanningImportChecksTests
         Assert.Empty(check.Errors);
         Assert.Equal(new[]
             {
-                (2, PlanningImportChecks.NameHasHonorific), (3, PlanningImportChecks.LargeParty), (4, PlanningImportChecks.DuplicateNameInFile)
+                (3, PlanningImportChecks.LargeParty), (4, PlanningImportChecks.DuplicateNameInFile)
             },
             check.Warnings.Select(x => (x.RowNumber, x.Code)).ToArray());
     }

@@ -138,10 +138,16 @@ public sealed class GuestPlanningHandler(IGuestPlanningStore store, IWeddingPerm
         var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
         if (!scope.IsWeddingWide)
             throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.Forbidden, "GUEST_IMPORT_REQUIRES_WEDDING_SCOPE", "Guest import requires wedding-wide guest edit access.");
-        // The format comes first (at most 500 rows, field lengths): duplicates are only looked for in a well-formed file.
+        // Format errors only take their own rows out: the other rows are still checked for duplicates, so the preview
+        // shows every problem at once. A problem with the whole file (no rows, more than 500) stops the check.
+        IReadOnlyList<ImportIssue> formatErrors = [];
         try { await imports.ValidateAsync(input, ct); }
-        catch (ValidationException error) { return new(PlanningImportValidator.Issues(input, error.Errors), [], 0, 0, []); }
-        return PlanningImportChecks.Analyze(input.Rows!.Select(x => x!).ToList(), await store.ExistingContactsAsync(weddingId, ct));
+        catch (ValidationException error) { formatErrors = PlanningImportValidator.Issues(input, error.Errors); }
+        if (formatErrors.Any(x => x.RowNumber == 0)) return new(formatErrors, [], 0, 0, []);
+        var badRows = formatErrors.Select(x => x.RowNumber).ToHashSet();
+        var check = PlanningImportChecks.Analyze(input.Rows!.Where(x => x is not null && !badRows.Contains(x.RowNumber)).Select(x => x!).ToList(),
+            await store.ExistingContactsAsync(weddingId, ct));
+        return check with { Errors = [.. formatErrors, .. check.Errors] };
     }
 
     public async Task<PlanningImportOutcome> ImportAsync(Guid weddingId, string? idempotencyKey, PlanningImport input, CancellationToken ct)
