@@ -192,6 +192,9 @@ public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePla
         RuleFor(x => x.Row).InclusiveBetween(1, 20).When(x => x.Row.HasValue);
         RuleFor(x => x.Column).InclusiveBetween(1, 6).When(x => x.Column.HasValue);
         RuleFor(x => x.ExtraSeats).InclusiveBetween(0, 2).When(x => x.ExtraSeats.HasValue);
+        RuleFor(x => x.Number).InclusiveBetween(1, 999).When(x => x.Number.HasValue).WithMessage("Số bàn phải từ 1 đến 999.");
+        RuleFor(x => x.Side).Must(x => x is "GROOM" or "BRIDE" or "MUTUAL").When(x => x.Action == "CREATE_TABLES" && !string.IsNullOrEmpty(x.Side))
+            .WithMessage("Phía của bàn chỉ là GROOM, BRIDE hoặc MUTUAL.");
 
         When(x => x.Action == "CREATE_TABLE", () =>
         {
@@ -330,6 +333,19 @@ public sealed class PlanningSeatingHandler(
                 "Automatic seating suggestions require wedding-wide seating access.");
         await suggestions.ValidateAsync(input, ct);
         return SeatingSuggestions.Generate(await store.GetAsync(weddingId, ct), input);
+    }
+
+    public async Task<TableEstimateDto> GetTableEstimateAsync(Guid weddingId, int capacity, int reservePercent, CancellationToken ct)
+    {
+        var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
+        if (!TableEstimates.KnownCapacity(capacity))
+            throw new InviteMe.Application.Common.Errors.ApplicationProblemException(
+                InviteMe.Application.Common.Errors.ProblemKind.BadRequest, "INVALID_TABLE_CAPACITY", "Sức chứa bàn phải là 10 hoặc 12 ghế.");
+        if (reservePercent is < 0 or > 50)
+            throw new InviteMe.Application.Common.Errors.ApplicationProblemException(
+                InviteMe.Application.Common.Errors.ProblemKind.BadRequest, "INVALID_RESERVE_PERCENT", "Tỉ lệ bàn dự phòng phải từ 0 đến 50%.");
+        var source = await store.GetScopedAsync(weddingId, ct, scope.IsWeddingWide ? null : scope.GroupIds);
+        return TableEstimates.Estimate(source, capacity, reservePercent);
     }
 
     public async Task<IReadOnlyList<UnattendedGuestDto>> GetUnattendedGuestsAsync(Guid weddingId, Guid tableId, CancellationToken ct)

@@ -140,7 +140,46 @@ public sealed class SeatingReviewFixesIntegrationTests
             plan.Version, "OPERATIONAL_MOVE", TableId: table2.Id, PlaceId: pB));
         Assert.Equal(HttpStatusCode.OK, opMoveRes.StatusCode);
         plan = (await opMoveRes.Content.ReadFromJsonAsync<PlanningSeatingDto>())!;
-        Assert.Equal(table2.Id, plan.Assignments.Single(a => a.PlaceId == pB).TableId);
+        var movedB = plan.Assignments.Single(a => a.PlaceId == pB);
+        Assert.Equal(table2.Id, movedB.TableId);
+        // The frozen baseline survives the day-of move so planned vs actual can be compared
+        Assert.Equal(table1.Id, movedB.PlannedTableId);
+        Assert.NotNull(movedB.PlannedSeatNumber);
+
+        var swapDayOf = await owner.PatchAsJsonAsync(planUrl, new ChangePlanningSeating(
+            plan.Version, "SWAP_PLACES", PlaceId: pB, TargetPlaceId: pA));
+        Assert.Equal(HttpStatusCode.OK, swapDayOf.StatusCode);
+        plan = (await swapDayOf.Content.ReadFromJsonAsync<PlanningSeatingDto>())!;
+        Assert.Equal(table1.Id, plan.Assignments.Single(a => a.PlaceId == pB).PlannedTableId);
+        Assert.Equal(table2.Id, plan.Assignments.Single(a => a.PlaceId == pA).PlannedTableId);
+
+        // Checked-in guests can still be moved manually on the day
+        db.Add(new InviteMe.Domain.CheckIn.PlanningCheckIn
+        {
+            Id = Guid.NewGuid(),
+            WeddingId = wedding.Id,
+            PlaceId = pB,
+            GuestId = plan.Places.Single(p => p.Id == pB).GuestId,
+            Kind = InviteMe.Domain.CheckIn.PlanningCheckInKind.Invited,
+            CheckedInAt = DateTimeOffset.UtcNow,
+            CheckedInBy = wedding.OwnerUserId
+        });
+        await db.SaveChangesAsync();
+        var checkedInMoveRes = await owner.PatchAsJsonAsync(planUrl, new ChangePlanningSeating(
+            plan.Version, "OPERATIONAL_MOVE", TableId: table1.Id, PlaceId: pB));
+        Assert.Equal(HttpStatusCode.OK, checkedInMoveRes.StatusCode);
+        plan = (await checkedInMoveRes.Content.ReadFromJsonAsync<PlanningSeatingDto>())!;
+        Assert.Equal(table1.Id, plan.Assignments.Single(a => a.PlaceId == pB).TableId);
+
+        // Auto-seating is rejected once the event has started
+        var suggestionRes = await owner.PostAsJsonAsync(root + "/seating-suggestions", new SuggestPlanningSeating("KEEP_GROUPS", "REPLACE_ALL"));
+        Assert.Equal(HttpStatusCode.OK, suggestionRes.StatusCode);
+        var suggestion = (await suggestionRes.Content.ReadFromJsonAsync<PlanningSeatingSuggestion>())!;
+        var applyAfterStart = await owner.PatchAsJsonAsync(planUrl, new ChangePlanningSeating(
+            plan.Version, "APPLY_SUGGESTION", Strategy: "KEEP_GROUPS", Mode: "REPLACE_ALL",
+            SourceFingerprint: suggestion.SourceFingerprint, ConfirmReplace: true));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, applyAfterStart.StatusCode);
+        Assert.Contains("SEATING_EVENT_STARTED", await applyAfterStart.Content.ReadAsStringAsync());
 
         // Audit logs include SEATING_DAY_OF_CHANGE
         var auditLogs = await owner.GetFromJsonAsync<IReadOnlyList<SeatingAuditLogDto>>(root + "/seating/audit-logs");

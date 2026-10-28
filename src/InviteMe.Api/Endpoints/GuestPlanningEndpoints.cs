@@ -80,6 +80,10 @@ internal static class GuestPlanningEndpoints
         g.MapGet("/seating-summary", (Guid weddingId, PlanningSeatingHandler handler, CancellationToken ct) =>
             handler.GetSummaryAsync(weddingId, ct))
             .WithName("GetSeatingSummary").Produces<SeatingSummaryDto>().ProducesProblem(403);
+        g.MapGet("/table-estimate", (Guid weddingId, int? capacity, int? reservePercent, PlanningSeatingHandler handler, CancellationToken ct) =>
+            handler.GetTableEstimateAsync(weddingId, capacity ?? 10, reservePercent ?? 0, ct))
+            .WithName("GetTableEstimate").WithSummary("Tables to book from the guest count (60 people: 6 tables of 10, 5 of 12).")
+            .Produces<TableEstimateDto>().ProducesProblem(400).ProducesProblem(403);
         // Direct alias routes: /api/weddings/{weddingId}/seating-layout
         var direct = endpoints.MapGroup("/api/weddings/{weddingId:guid}").RequireAuthorization().WithTags("Guest Planning v2");
         direct.MapGet("/seating-layout", (Guid weddingId, PlanningSeatingHandler handler, CancellationToken ct) => handler.GetLayoutAsync(weddingId, ct))

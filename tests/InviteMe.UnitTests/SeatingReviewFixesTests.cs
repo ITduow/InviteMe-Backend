@@ -89,6 +89,34 @@ public sealed class SeatingReviewFixesTests
     }
 
     [Fact]
+    public void AutoSeatingV2_MutualGuestsShareTablesWithEitherFamilyAndFamiliesPreferOwnTables()
+    {
+        var groom = new PlanningGuestDto(Id(1), 1, "Khách Trai", "Anh", "FRIENDS", 3, "GROOM", null, null, null);
+        var mutual = new PlanningGuestDto(Id(2), 1, "Khách Chung", "Anh", "FRIENDS", 3, "MUTUAL", null, null, null);
+        var bride = new PlanningGuestDto(Id(3), 1, "Khách Gái", "Chị", "FRIENDS", 3, "BRIDE", null, null, null);
+        var guests = new[] { groom, mutual, bride };
+        var places = guests.SelectMany(g => Enumerable.Range(1, g.ExpectedPeople)
+            .Select(i => new PlanningSeatingPlace(Guid.NewGuid(), g.Id, i, null))).ToArray();
+        var tables = new[]
+        {
+            new PlanningTableDto(Id(501), "Bàn 01", 10, null, 1),
+            new PlanningTableDto(Id(502), "Bàn 02", 10, null, 2)
+        };
+        // The groom party is already seated at table 01; table 01 still has 7 free seats.
+        var pinned = places.Where(p => p.GuestId == groom.Id)
+            .Select((p, i) => new PlanningAssignmentDto(p.Id, Id(501), i + 1)).ToArray();
+
+        var source = new PlanningSeatingDto(Id(999), 1, tables, guests, places, pinned);
+        var result = SeatingSuggestions.Generate(source, new SuggestPlanningSeating("SIMPLE"));
+
+        Assert.Empty(result.Unassigned);
+        var tableOf = result.Assignments.ToDictionary(a => a.PlaceId, a => a.TableId);
+        Assert.All(places.Where(p => p.GuestId == mutual.Id), p => Assert.Equal(Id(501), tableOf[p.Id]));
+        Assert.All(places.Where(p => p.GuestId == bride.Id), p => Assert.Equal(Id(502), tableOf[p.Id]));
+        Assert.DoesNotContain(result.Warnings, w => w.Contains("ghép khác phía"));
+    }
+
+    [Fact]
     public void AutoSeatingV2_SuggestsAdditionalTablesWithReasonsWhenTablesAreFull()
     {
         // 2 tables of 10 = 20 seats; but we have 25 guests
@@ -118,5 +146,34 @@ public sealed class SeatingReviewFixesTests
         Assert.Equal("BRIDE", suggestion.Side);
         Assert.True(suggestion.NeededTables >= 1);
         Assert.Contains("nhà gái", suggestion.Message);
+    }
+
+    [Fact]
+    public void AutoSeatingV2_AdditionalTablesUseTheCommonTableSize()
+    {
+        var guest = new PlanningGuestDto(Id(1), 1, "Khách A", "Anh", "FRIENDS", 13, "BRIDE", null, null, null);
+        var places = Enumerable.Range(1, 13).Select(i => new PlanningSeatingPlace(Id(100 + i), guest.Id, i, null)).ToArray();
+        var tables = new[] { new PlanningTableDto(Id(501), "Bàn 01", 12, null, 1, "BRIDE") };
+
+        var result = SeatingSuggestions.Generate(new PlanningSeatingDto(Id(999), 1, tables, [guest], places, []), new SuggestPlanningSeating("KEEP_GROUPS"));
+
+        var suggestion = Assert.Single(result.SuggestedAdditionalTables!);
+        Assert.Equal(12, suggestion.RecommendedCapacity);
+        Assert.Equal(2, suggestion.NeededTables);
+        Assert.Contains("bàn 12 chỗ", suggestion.Message);
+    }
+
+    [Fact]
+    public void AutoSeatingV2_ScoreCountsTablesSharedByBothFamilies()
+    {
+        var groom = new PlanningGuestDto(Id(1), 1, "Khách Trai", "Anh", "FRIENDS", 2, "GROOM", null, null, null);
+        var bride = new PlanningGuestDto(Id(2), 1, "Khách Gái", "Chị", "FRIENDS", 2, "BRIDE", null, null, null);
+        var places = new[] { groom, bride }.SelectMany(g => Enumerable.Range(1, 2).Select(i => new PlanningSeatingPlace(Guid.NewGuid(), g.Id, i, null))).ToArray();
+        var tables = new[] { new PlanningTableDto(Id(501), "Bàn 01", 10, null, 1) };
+
+        var result = SeatingSuggestions.Generate(new PlanningSeatingDto(Id(999), 1, tables, [groom, bride], places, []), new SuggestPlanningSeating("KEEP_GROUPS"));
+
+        Assert.Equal(4, result.Assignments.Count);
+        Assert.Equal(1, result.KeepGroups!.ScoreBreakdown.MixedSideTablesCount);
     }
 }

@@ -146,7 +146,7 @@ public sealed class ManualSeatingAndWarningsTests
             plan.Version, "MOVE_PARTY", table1.Id, GuestId: bigParty.Id));
         Assert.Equal(HttpStatusCode.UnprocessableEntity, fullRes.StatusCode);
 
-        // 11. PARTY_SPLIT and SIDE_MIX Warnings:
+        // 11. PARTY_SPLIT warning; groom and bride guests may share a table, so no side warning:
         // GuestGroom has 3 places on Table 1. Move place 1 of GuestGroom to Table 2 (Side: BRIDE, no group)
         var groomPlace1 = plan.Places.First(p => p.GuestId == guestGroom.Id);
         var splitMoveRes = await owner.PatchAsJsonAsync(planUrl, new ChangePlanningSeating(
@@ -156,7 +156,7 @@ public sealed class ManualSeatingAndWarningsTests
 
         Assert.NotNull(plan.Warnings);
         Assert.Contains(plan.Warnings, w => w.Code == "PARTY_SPLIT");
-        Assert.Contains(plan.Warnings, w => w.Code == "SIDE_MIX");
+        Assert.DoesNotContain(plan.Warnings, w => w.Code == "SIDE_MIX");
 
         // 12. GROUP_MIX Warning:
         // Import a Groom guest with a different group ("Nhóm Công Ty")
@@ -223,5 +223,26 @@ public sealed class ManualSeatingAndWarningsTests
         var swapBothTrayRes = await owner.PatchAsJsonAsync(planUrl, new ChangePlanningSeating(
             plan.Version, "SWAP_PLACES", PlaceId: colleaguePlace.Id, TargetPlaceId: bigPartyPlace.Id));
         Assert.Equal(HttpStatusCode.UnprocessableEntity, swapBothTrayRes.StatusCode);
+
+        // 16. A declined guest who shows up is checked in and can then be seated, without a DECLINED_SEATED warning
+        db.Add(new InviteMe.Domain.CheckIn.PlanningCheckIn
+        {
+            Id = Guid.NewGuid(), WeddingId = wedding.Id, GuestId = guestDeclined.Id, PlaceId = declinedPlaceId,
+            ParticipantId = declinedParticipant.Id, Kind = InviteMe.Domain.CheckIn.PlanningCheckInKind.Invited,
+            CheckedInAt = DateTimeOffset.UtcNow, CheckedInBy = wedding.OwnerUserId, ExceptionReason = "Khách báo không đến nhưng vẫn tới"
+        });
+        await db.SaveChangesAsync();
+        var seatArrivedRes = await owner.PatchAsJsonAsync(planUrl, new ChangePlanningSeating(
+            plan.Version, "MOVE_PARTY", table1.Id, GuestId: guestDeclined.Id));
+        Assert.Equal(HttpStatusCode.OK, seatArrivedRes.StatusCode);
+        plan = (await seatArrivedRes.Content.ReadFromJsonAsync<PlanningSeatingDto>())!;
+        Assert.Equal(table1.Id, plan.Assignments.Single(a => a.PlaceId == declinedPlaceId).TableId);
+        Assert.DoesNotContain(plan.Warnings ?? [], w => w.Code == "DECLINED_SEATED" && w.PlaceId == declinedPlaceId);
+
+        // Releasing declined seats keeps the seat of a declined guest who actually came
+        var releaseRes = await owner.PatchAsJsonAsync(planUrl, new ChangePlanningSeating(plan.Version, "RELEASE_DECLINED_SEATS"));
+        Assert.Equal(HttpStatusCode.OK, releaseRes.StatusCode);
+        plan = (await releaseRes.Content.ReadFromJsonAsync<PlanningSeatingDto>())!;
+        Assert.Contains(plan.Assignments, a => a.PlaceId == declinedPlaceId);
     });
 }

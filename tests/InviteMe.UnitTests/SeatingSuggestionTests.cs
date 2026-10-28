@@ -13,17 +13,22 @@ public sealed class SeatingSuggestionTests
         var places = guests.SelectMany((g, i) => Enumerable.Range(1, rows[i].Count).Select(n => new PlanningSeatingPlace(Id(1000 + i * 100 + n), g.Id, n, null))).ToArray();
         return new(Id(999), 0, capacities.Select((c, i) => new PlanningTableDto(Id(500 + i), $"Bàn {i + 1}", c)).ToArray(), guests, places, []);
     }
+    private static void AssertGroomAndBrideNeverShare(PlanningSeatingDto source, IEnumerable<PlanningAssignmentDto> table)
+    {
+        var sides = table.Select(a => source.Guests.Single(g => g.Id == source.Places.Single(p => p.Id == a.PlaceId).GuestId).Side).ToHashSet();
+        Assert.False(sides.Contains("GROOM") && sides.Contains("BRIDE"));
+    }
     private static PlanningSeatingSuggestion Suggest(PlanningSeatingDto source, string strategy = "AFFINITY", string mode = "UNASSIGNED") => SeatingSuggestions.Generate(source, new(strategy, mode));
 
     [Theory]
-    [InlineData("AFFINITY")][InlineData("PARTY")][InlineData("COMPACT")]
-    public void AllStrategiesKeepFourSidesSeparateAndNeverSplitAParty(string strategy)
+    [InlineData("AFFINITY")][InlineData("PARTY")]
+    public void FamiliesStayApartWhenThereIsRoomAndPartiesAreNeverSplit(string strategy)
     {
         var source = Source([4,4,4,4], (2,"BRIDE",1), (2,"GROOM",1), (2,"MUTUAL",1), (2,"UNSPECIFIED",1));
         var result = Suggest(source, strategy);
         Assert.Equal(8, result.Assignments.Count); Assert.Empty(result.Unassigned);
         foreach (var table in result.Assignments.GroupBy(x => x.TableId))
-            Assert.Single(table.Select(a => source.Guests.Single(g => g.Id == source.Places.Single(p => p.Id == a.PlaceId).GuestId).Side).Distinct());
+            AssertGroomAndBrideNeverShare(source, table);
     }
     [Fact]
     public void NoTablesAndOversizedPartiesHaveExplicitReasons()
@@ -53,7 +58,7 @@ public sealed class SeatingSuggestionTests
         Assert.Equal(source.Assignments.OrderBy(a => a.PlaceId), result.Assignments);
         Assert.Equal("PARTY_ALREADY_SPLIT", Assert.Single(result.Unassigned).Code);
         Assert.Equal(0, result.ChangedPlaceCount);
-        Assert.Contains(result.Warnings, x => x.Contains("khác phía"));
+        Assert.DoesNotContain(result.Warnings, x => x.Contains("khác phía"));
     }
     [Fact]
     public void PartiallySeatedPartyIsCompletedBeforeOtherPartiesAndFixedSeatNeverMoves()
@@ -67,15 +72,28 @@ public sealed class SeatingSuggestionTests
         Assert.Equal(6, result.Assignments.Count);
     }
     [Fact]
-    public void DeclinedAndWaitlistedAreNotAutoSeatedAndReplaceRequiresConfirmation()
+    public void DeclinedAreNotAutoSeatedButWaitlistedAreAndReplaceRequiresConfirmation()
     {
         var source = Source([4], (3,"BRIDE",1));
         source = source with { Places = source.Places.Select((p,i) => p with { Person = i == 0 ? null : new PlanningPersonDto(Id(800+i), "Known", "OTHER", i == 1 ? "DECLINED" : "WAITLISTED") }).ToArray() };
-        Assert.Single(Suggest(source).Assignments); Assert.Equal(2, Suggest(source).ExcludedPlaceIds.Count);
+        Assert.Equal(2, Suggest(source).Assignments.Count);
+        Assert.Equal(source.Places[1].Id, Assert.Single(Suggest(source).ExcludedPlaceIds));
         var change = new ChangePlanningSeating(0, "APPLY_SUGGESTION", Strategy: "AFFINITY", Mode: "REPLACE_ALL", SourceFingerprint: SeatingSuggestions.Fingerprint(source));
         var validator = new ChangePlanningSeatingValidator();
         Assert.False(validator.Validate(change).IsValid);
         Assert.True(validator.Validate(change with { ConfirmReplace = true }).IsValid);
+    }
+    [Fact]
+    public void WaitlistedPartiesAreSeatedAfterConfirmedOnes()
+    {
+        // "Khách 1" sorts first by name but is fully waitlisted; only one table of 2 seats exists.
+        var source = Source([2], (2,"BRIDE",1), (2,"BRIDE",1));
+        source = source with { Places = source.Places.Select(p => p.GuestId == Id(1)
+            ? p with { Person = new PlanningPersonDto(Guid.NewGuid(), "Chờ", "OTHER", "WAITLISTED") } : p).ToArray() };
+        var result = Suggest(source, "PARTY");
+        var seatedGuests = result.Assignments.Select(a => source.Places.Single(p => p.Id == a.PlaceId).GuestId).Distinct();
+        Assert.Equal(Id(2), Assert.Single(seatedGuests));
+        Assert.Equal(Id(1), Assert.Single(result.Unassigned).GuestId);
     }
     [Fact]
     public void FingerprintDetectsImportsWithoutVersionChangeAndIgnoresCollectionOrdering()
@@ -87,13 +105,44 @@ public sealed class SeatingSuggestionTests
         Assert.NotEqual(SeatingSuggestions.Fingerprint(source), SeatingSuggestions.Fingerprint(source with { Places = source.Places.Append(new(Id(9000), source.Guests[0].Id, 3, null)).ToArray() }));
     }
     [Fact]
-    public void MixedManualTableDoesNotReceiveAdditionalGuests()
+    public void FamiliesShareATableRatherThanLeaveSomeoneUnseated()
     {
         var source = Source([6], (1,"BRIDE",1), (1,"GROOM",1), (1,"BRIDE",1));
         source = source with { Assignments = [new(source.Places[0].Id,Id(500),1),new(source.Places[1].Id,Id(500),2)] };
         var result = Suggest(source);
-        Assert.Equal(2,result.Assignments.Count);
-        Assert.Equal("SIDE_CONFLICT",Assert.Single(result.Unassigned).Code);
+        Assert.Equal(3,result.Assignments.Count);
+        Assert.Empty(result.Unassigned);
+    }
+    [Fact]
+    public void OtherFamilysTableIsUsedOnlyWhenOwnSideIsFull()
+    {
+        var source = Source([4,4], (3,"GROOM",1), (3,"BRIDE",2), (1,"GROOM",1));
+        source = source with { Tables = [source.Tables[0] with { Side = "GROOM" }, source.Tables[1] with { Side = "BRIDE" }] };
+        var result = Suggest(source);
+        var tableOf = result.Assignments.ToDictionary(a => a.PlaceId, a => a.TableId);
+        Assert.Empty(result.Unassigned);
+        Assert.All(source.Places.Where(p => p.GuestId == Id(2)), p => Assert.Equal(Id(501), tableOf[p.Id]));
+        // The last groom seat goes to the single groom guest; the bride table keeps its free seat.
+        Assert.Equal(Id(500), tableOf[source.Places.Single(p => p.GuestId == Id(3)).Id]);
+    }
+    [Fact]
+    public void GroomPartySpillsOntoBrideTableWhenGroomTablesAreFull()
+    {
+        var source = Source([4,4], (4,"GROOM",1), (2,"GROOM",2));
+        source = source with { Tables = [source.Tables[0] with { Side = "GROOM" }, source.Tables[1] with { Side = "BRIDE", Half = "BRIDE" }] };
+        var result = Suggest(source);
+        Assert.Empty(result.Unassigned);
+        Assert.Equal(2, result.Assignments.Count(a => a.TableId == Id(501)));
+    }
+    [Fact]
+    public void BrideTableStandingOnGroomHalfStillTakesBrideGuestsFirst()
+    {
+        var source = Source([4,4], (3,"BRIDE",1));
+        source = source with { Tables = [
+            source.Tables[0] with { Side = "GROOM", Half = "GROOM", Row = 1, Column = 1 },
+            source.Tables[1] with { Side = "BRIDE", Half = "GROOM", Row = 1, Column = 2 }] };
+        var result = Suggest(source);
+        Assert.All(result.Assignments, a => Assert.Equal(Id(501), a.TableId));
     }
     [Fact]
     public void DeclinedManualPlaceIsRetainedInProtectedModeAndRemovedWhenReplacingAll()
@@ -125,7 +174,6 @@ public sealed class SeatingSuggestionTests
                     var capacity = source.Tables.Single(t => t.Id == table.Key).Capacity;
                     Assert.True(table.Count() <= capacity); Assert.Equal(table.Count(), table.Select(a => a.SeatNumber).Distinct().Count());
                     Assert.All(table, a => Assert.InRange(a.SeatNumber, 1, capacity));
-                    Assert.Single(table.Select(a => source.Guests.Single(g => g.Id == source.Places.Single(p => p.Id == a.PlaceId).GuestId).Side).Distinct());
                 }
                 foreach (var guest in source.Guests)
                 {

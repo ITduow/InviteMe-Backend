@@ -35,7 +35,8 @@ public sealed record SeatingPlanScoreDto(
     int EldersInVipCount,
     int UsedTablesCount,
     int MixedGroupTablesCount,
-    int SplitPartiesCount);
+    int SplitPartiesCount,
+    int MixedSideTablesCount = 0);
 
 public sealed record StrategySuggestionDto(
     string Strategy,
@@ -160,7 +161,8 @@ public static class SeatingSuggestions
         int EffectiveCapacity,
         bool Compatible,
         bool SameGroup,
-        bool SameTier);
+        bool SameTier,
+        int SideRank);
 
     private sealed record SinglePlanResult(
         string Strategy,
@@ -187,7 +189,9 @@ public static class SeatingSuggestions
         var guests = source.Guests.ToDictionary(x => x.Id);
         var places = source.Places.ToDictionary(x => x.Id);
 
-        bool Eligible(PlanningSeatingPlace p) => p.Person?.AttendanceStatus is not ("DECLINED" or "WAITLISTED");
+        // Planning is a projection: waitlisted people are seated too, only declines are left out.
+        bool Eligible(PlanningSeatingPlace p) => p.Person?.AttendanceStatus != "DECLINED";
+        bool Waitlisted(PlanningSeatingPlace p) => p.Person?.AttendanceStatus == "WAITLISTED";
         var eligible = source.Places.Where(Eligible).ToArray();
         var excluded = source.Places.Where(p => !Eligible(p)).Select(p => p.Id).Order().ToArray();
 
@@ -221,6 +225,7 @@ public static class SeatingSuggestions
         // Sort parties according to strategy
         var ordered = parties
             .OrderByDescending(g => g.Pinned.Length > 0)
+            .ThenBy(g => g.Pending.All(Waitlisted))
             .ThenByDescending(g => IsVipGuest(g.Guest) ? 1 : 0)
             .ThenByDescending(g => IsElder(g.Guest.Honorific) ? 1 : 0)
             .ThenByDescending(g => strategy == "KEEP_GROUPS" ? groupSizes[GroupKey(g.Guest)] : strategy == "FEWEST_TABLES" ? g.Places.Length : 0)
@@ -253,16 +258,15 @@ public static class SeatingSuggestions
             var candidates = tables.Select(t =>
             {
                 var occupied = assignments.Where(a => a.TableId == t.Id).ToArray();
-                var sides = occupied.Select(a => guests[places[a.PlaceId].GuestId].Side).Distinct().ToArray();
 
                 bool groupCompatible = t.GroupId == null || (party.Guest.Group != null && t.GroupId == party.Guest.Group.Id);
 
-                bool sideCompatible = sides.Length == 0 || (sides.Length == 1 && sides[0] == party.Guest.Side);
-                if (t.Side == "GROOM" && party.Guest.Side == "BRIDE") sideCompatible = false;
-                else if (t.Side == "BRIDE" && party.Guest.Side == "GROOM") sideCompatible = false;
-
-                if (t.Half == "GROOM" && party.Guest.Side == "BRIDE") sideCompatible = false;
-                else if (t.Half == "BRIDE" && party.Guest.Side == "GROOM") sideCompatible = false;
+                // Families may share a table: the side only ranks tables (own side, then shared, then the other
+                // family's). The hall half is a position, never a side.
+                var opposite = OppositeSide(party.Guest.Side);
+                var sideRank = opposite is null ? 0
+                    : t.Side == opposite || occupied.Any(a => guests[places[a.PlaceId].GuestId].Side == opposite) ? 2
+                    : t.Side == party.Guest.Side ? 0 : 1;
 
                 var effectiveCap = t.Capacity + t.ExtraSeats;
                 var free = effectiveCap - occupied.Length;
@@ -274,9 +278,10 @@ public static class SeatingSuggestions
                     occupied,
                     free,
                     effectiveCap,
-                    groupCompatible && sideCompatible,
+                    groupCompatible,
                     sameGroup,
-                    sameTier);
+                    sameTier,
+                    sideRank);
             }).ToArray();
 
             var fits = candidates.Where(t => t.Compatible && t.Free >= party.Pending.Length &&
@@ -296,12 +301,16 @@ public static class SeatingSuggestions
                 .ThenByDescending(t => t.Table.IsVip && isPartyElder && isPartyFamily)
                 .ThenByDescending(t => t.Table.IsVip && isPartyElder)
                 .ThenByDescending(t => !t.Table.IsVip && !isPartyVip)
+                // Own family first; the other family's tables only when nothing else fits.
+                // Fewest tables mixes families freely and only uses the side to break ties.
+                .ThenBy(t => strategy == "FEWEST_TABLES" ? 0 : t.SideRank)
                 // Affinity & Strategy rules
                 .ThenByDescending(t => wholeGroupFits && t.Free >= groupRemaining)
                 .ThenByDescending(t => strategy == "KEEP_GROUPS" && t.SameGroup)
                 .ThenByDescending(t => strategy == "KEEP_GROUPS" && t.SameTier)
                 // Fewest tables: pick table with minimum free seats (tightest fit)
                 .ThenBy(t => strategy == "FEWEST_TABLES" ? (t.Free - party.Pending.Length) : 0)
+                .ThenBy(t => strategy == "FEWEST_TABLES" ? t.SideRank : 0)
                 // Front rows for elders
                 .ThenBy(t => isPartyElder ? (t.Table.Row ?? 999) : 0)
                 .ThenBy(t => strategy == "SIMPLE" ? (t.Free - party.Pending.Length) : 0)
@@ -325,7 +334,7 @@ public static class SeatingSuggestions
             // If single table did not fit:
             if (pinnedTables.Length > 0)
             {
-                Unplaced("PINNED_PARTY_NO_ROOM", "Bàn đang giữ nhóm không đủ chỗ hoặc khác phía. Không tự chuyển phần đã xếp tay.");
+                Unplaced("PINNED_PARTY_NO_ROOM", "Bàn đang giữ nhóm không đủ chỗ. Không tự chuyển phần đã xếp tay.");
                 continue;
             }
 
@@ -376,7 +385,7 @@ public static class SeatingSuggestions
 
             if (candidates.Any(t => t.Free >= party.Pending.Length && !t.Compatible))
             {
-                Unplaced("SIDE_CONFLICT", "Bàn còn đủ chỗ thuộc phía khác. Thêm bàn hoặc tự ghép bằng tay nếu muốn.");
+                Unplaced("GROUP_CONFLICT", "Bàn còn đủ chỗ đã gán cho nhóm khác. Thêm bàn hoặc tự xếp bằng tay nếu muốn.");
             }
             else
             {
@@ -385,25 +394,23 @@ public static class SeatingSuggestions
         }
 
         if (excluded.Length > 0)
-            warnings.Add($"Không tự xếp thêm {excluded.Length} chỗ đã từ chối/đang chờ. Chế độ giữ chỗ đã xếp vẫn giữ vị trí thủ công của họ.");
+            warnings.Add($"Không tự xếp thêm {excluded.Length} chỗ đã từ chối. Chế độ giữ chỗ đã xếp vẫn giữ vị trí thủ công của họ.");
         if (eligible.Length == 0)
             warnings.Add("Chưa có chỗ đủ điều kiện để gợi ý. Nhập khách hoặc kiểm tra trạng thái tham dự.");
         if (unassigned.Count > 0)
-            warnings.Add("Đây là phương án một phần; các chỗ chưa xếp vẫn để trống, không tự tách nhóm hoặc ghép khác phía.");
+            warnings.Add("Đây là phương án một phần; các chỗ chưa xếp vẫn để trống, không tự tách thiệp.");
 
         var reasons = assignments.GroupBy(a => a.TableId).Select(g =>
         {
             var members = g.Select(a => guests[places[a.PlaceId].GuestId]).ToArray();
             var sides = members.Select(x => x.Side).Distinct().Order().ToArray();
-            if (sides.Length > 1)
-                warnings.Add($"Bàn {tables.Single(t => t.Id == g.Key).Name} đã ghép khác phía bằng tay; gợi ý giữ nguyên và không thêm khách vào bàn đó.");
             return new PlanningTableReason(
                 g.Key,
                 sides,
                 members.Select(x => x.Group?.Name).OfType<string>().Distinct().Order(StringComparer.Ordinal).ToArray(),
                 g.Count(),
                 strategy == "KEEP_GROUPS" ? "Ưu tiên cùng phía và cùng nhóm quen biết."
-                : strategy == "FEWEST_TABLES" ? "Ưu tiên nhóm đông và bàn còn ít chỗ vừa đủ; giữ riêng từng phía."
+                : strategy == "FEWEST_TABLES" ? "Ưu tiên nhóm đông và bàn còn ít chỗ vừa đủ; cho hai họ ngồi chung để bớt bàn."
                 : "Xếp từng nhóm đi cùng vào một bàn, không ưu tiên nhóm quan hệ.");
         }).OrderBy(r => r.TableId).ToArray();
 
@@ -476,6 +483,7 @@ public static class SeatingSuggestions
         var byTable = assignments.GroupBy(a => a.TableId).ToList();
         var sameGroupMatches = 0;
         var mixedGroupTablesCount = 0;
+        var mixedSideTablesCount = 0;
         var eldersInVipCount = 0;
 
         foreach (var tblGroup in byTable)
@@ -485,6 +493,7 @@ public static class SeatingSuggestions
 
             var groupsOnTable = tableGuests.Select(g => g.Group?.Id).Where(id => id.HasValue).Distinct().Count();
             if (groupsOnTable > 1) mixedGroupTablesCount++;
+            if (tableGuests.Any(g => g.Side == "GROOM") && tableGuests.Any(g => g.Side == "BRIDE")) mixedSideTablesCount++;
 
             var groupCounts = tableGuests.GroupBy(g => g.Group?.Id).Where(g => g.Key.HasValue);
             foreach (var grp in groupCounts)
@@ -508,11 +517,12 @@ public static class SeatingSuggestions
         var usedTablesCount = byTable.Count;
         var splitPartiesCount = assignments.GroupBy(a => places[a.PlaceId].GuestId).Count(g => g.Select(a => a.TableId).Distinct().Count() > 1);
 
+        // A table shared by both families is allowed; it only costs a little.
         int totalScore = strategy switch
         {
-            "FEWEST_TABLES" => Math.Max(0, (seatedCount * 100) + (sameGroupMatches * 5) + (eldersInVipCount * 15) - (usedTablesCount * 15) - (mixedGroupTablesCount * 5) - (splitPartiesCount * 50)),
-            "SIMPLE" => Math.Max(0, (seatedCount * 100) + (eldersInVipCount * 10) - (usedTablesCount * 5) - (splitPartiesCount * 50)),
-            _ => Math.Max(0, (seatedCount * 100) + (sameGroupMatches * 10) + (eldersInVipCount * 15) - (usedTablesCount * 2) - (mixedGroupTablesCount * 25) - (splitPartiesCount * 50))
+            "FEWEST_TABLES" => Math.Max(0, (seatedCount * 100) + (sameGroupMatches * 5) + (eldersInVipCount * 15) - (usedTablesCount * 15) - (mixedGroupTablesCount * 5) - (mixedSideTablesCount * 2) - (splitPartiesCount * 50)),
+            "SIMPLE" => Math.Max(0, (seatedCount * 100) + (eldersInVipCount * 10) - (usedTablesCount * 5) - (mixedSideTablesCount * 5) - (splitPartiesCount * 50)),
+            _ => Math.Max(0, (seatedCount * 100) + (sameGroupMatches * 10) + (eldersInVipCount * 15) - (usedTablesCount * 2) - (mixedGroupTablesCount * 25) - (mixedSideTablesCount * 10) - (splitPartiesCount * 50))
         };
 
         return new SeatingPlanScoreDto(
@@ -522,7 +532,8 @@ public static class SeatingSuggestions
             eldersInVipCount,
             usedTablesCount,
             mixedGroupTablesCount,
-            splitPartiesCount);
+            splitPartiesCount,
+            mixedSideTablesCount);
     }
 
     private static IReadOnlyList<SuggestedAdditionalTableDto> ComputeSuggestedAdditionalTables(
@@ -533,6 +544,7 @@ public static class SeatingSuggestions
     {
         if (unassigned.Count == 0) return [];
 
+        var capacity = CommonCapacity(tables);
         var list = new List<SuggestedAdditionalTableDto>();
         var grouped = unassigned.GroupBy(u =>
         {
@@ -545,7 +557,7 @@ public static class SeatingSuggestions
             var totalUnplacedSeats = g.Sum(x => x.PlaceIds.Count);
             if (totalUnplacedSeats == 0) continue;
 
-            var needed = (int)Math.Ceiling(totalUnplacedSeats / 10.0);
+            var needed = (int)Math.Ceiling(totalUnplacedSeats / (double)capacity);
             var side = g.Key.Side;
             var groupName = g.Key.GroupName;
             var sideLabel = side == "GROOM" ? "nhà trai" : side == "BRIDE" ? "nhà gái" : "chung";
@@ -562,12 +574,24 @@ public static class SeatingSuggestions
                     : "SIDE_FULL"
             };
 
-            var message = $"Cần thêm {needed} bàn 10 chỗ cho {sideLabel}{groupLabel}.";
-            list.Add(new SuggestedAdditionalTableDto(side, groupName, needed, 10, reasonCode, message));
+            var message = $"Cần thêm {needed} bàn {capacity} chỗ cho {sideLabel}{groupLabel}.";
+            list.Add(new SuggestedAdditionalTableDto(side, groupName, needed, capacity, reasonCode, message));
         }
 
         return list;
     }
+
+    /// <summary>The capacity most tables already have (larger wins a tie); 10 when there are no tables yet.</summary>
+    public static int CommonCapacity(IEnumerable<PlanningTableDto> tables) =>
+        tables.GroupBy(t => t.Capacity).OrderByDescending(g => g.Count()).ThenByDescending(g => g.Key)
+            .Select(g => g.Key).FirstOrDefault(10);
+
+    private static string? OppositeSide(string? side) => side switch
+    {
+        "GROOM" => "BRIDE",
+        "BRIDE" => "GROOM",
+        _ => null
+    };
 
     public static int HonorificTier(string? honorific)
     {
