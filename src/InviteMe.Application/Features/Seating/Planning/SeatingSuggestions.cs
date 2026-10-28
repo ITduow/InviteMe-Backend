@@ -6,7 +6,9 @@ using InviteMe.Application.Features.Guests.Planning;
 
 namespace InviteMe.Application.Features.Seating.Planning;
 
-public sealed record SuggestPlanningSeating(string Strategy = "KEEP_GROUPS", string Mode = "UNASSIGNED", string? Plan = null);
+/// <param name="PlaceTables">Also put tray tables on free hall cells before seating; off by default because a table
+/// left in the tray (a reserve table, one not decided yet) is usually there on purpose.</param>
+public sealed record SuggestPlanningSeating(string Strategy = "KEEP_GROUPS", string Mode = "UNASSIGNED", string? Plan = null, bool PlaceTables = false);
 
 public sealed record ApplySeatingSuggestionRequest(
     int ExpectedVersion,
@@ -14,11 +16,14 @@ public sealed record ApplySeatingSuggestionRequest(
     string Mode = "UNASSIGNED",
     string? SourceFingerprint = null,
     bool ConfirmReplace = false,
-    string? Plan = null);
+    string? Plan = null,
+    bool PlaceTables = false);
 
 public sealed record UnplacedPlanningGroup(Guid GuestId, IReadOnlyList<Guid> PlaceIds, string Code, string Message);
 
 public sealed record PlanningTableReason(Guid TableId, IReadOnlyList<string> Sides, IReadOnlyList<string> Groups, int Count, string Message);
+
+public sealed record SuggestedTablePlacementDto(Guid TableId, string Half, int Row, int Column);
 
 public sealed record SuggestedAdditionalTableDto(
     string Side,
@@ -50,7 +55,8 @@ public sealed record StrategySuggestionDto(
     IReadOnlyList<PlanningTableReason> Reasons,
     int ChangedPlaceCount,
     int PreservedCount,
-    int UsedTableCount);
+    int UsedTableCount,
+    IReadOnlyList<SuggestedTablePlacementDto>? TablePlacements = null);
 
 public sealed record PlanningSeatingSuggestion(
     string Strategy,
@@ -68,7 +74,8 @@ public sealed record PlanningSeatingSuggestion(
     IReadOnlyList<SuggestedAdditionalTableDto>? SuggestedAdditionalTables = null,
     StrategySuggestionDto? KeepGroups = null,
     StrategySuggestionDto? FewestTables = null,
-    StrategySuggestionDto? Simple = null);
+    StrategySuggestionDto? Simple = null,
+    IReadOnlyList<SuggestedTablePlacementDto>? TablePlacements = null);
 
 public sealed class SuggestPlanningSeatingValidator : AbstractValidator<SuggestPlanningSeating>
 {
@@ -82,10 +89,10 @@ public sealed class SuggestPlanningSeatingValidator : AbstractValidator<SuggestP
 public static class SeatingSuggestions
 {
     public static bool KnownStrategy(string? value) =>
-        value is "KEEP_GROUPS" or "FEWEST_TABLES" or "SIMPLE" or "AFFINITY" or "COMPACT" or "PARTY";
+        value?.ToUpperInvariant() is "KEEP_GROUPS" or "FEWEST_TABLES" or "SIMPLE" or "AFFINITY" or "COMPACT" or "PARTY";
 
     public static bool KnownMode(string? value) =>
-        value is "UNASSIGNED" or "REPLACE_ALL";
+        value?.ToUpperInvariant() is "UNASSIGNED" or "REPLACE_ALL";
 
     public static string NormalizeStrategy(string? value) => value?.ToUpperInvariant() switch
     {
@@ -117,14 +124,171 @@ public static class SeatingSuggestions
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(canonical))));
     }
 
+    public static (IReadOnlyList<PlanningTableDto> EffectiveTables, IReadOnlyList<SuggestedTablePlacementDto> Placements, IReadOnlyList<string> Warnings)
+        ComputeTablePlacements(PlanningSeatingDto source)
+    {
+        var layout = source.Layout ?? new SeatingLayoutDto(6, 3, 6, 3, "BY_ROW", 0, false, null, null, false, null, null);
+        var groomRows = Math.Max(1, layout.GroomRows);
+        var groomCols = Math.Max(1, layout.GroomColumns);
+        var brideRows = Math.Max(1, layout.BrideRows);
+        var brideCols = Math.Max(1, layout.BrideColumns);
+
+        var placedTables = source.Tables
+            .Where(t => t.Row.HasValue && t.Column.HasValue && !string.IsNullOrEmpty(t.Half))
+            .ToList();
+        var unplacedTables = source.Tables
+            .Where(t => !t.Row.HasValue || !t.Column.HasValue || string.IsNullOrEmpty(t.Half))
+            .ToList();
+
+        if (unplacedTables.Count == 0)
+            return (source.Tables, [], []);
+
+        var occupied = placedTables
+            .Select(t => (Half: t.Half!, Row: t.Row!.Value, Column: t.Column!.Value))
+            .ToHashSet();
+
+        // Free cells ordered: front rows first (r = 1..N), aisle-first (c = 1..M)
+        var freeGroom = new List<(string Half, int Row, int Column)>();
+        for (var r = 1; r <= groomRows; r++)
+        {
+            for (var c = 1; c <= groomCols; c++)
+            {
+                if (!occupied.Contains(("GROOM", r, c)))
+                    freeGroom.Add(("GROOM", r, c));
+            }
+        }
+
+        var freeBride = new List<(string Half, int Row, int Column)>();
+        for (var r = 1; r <= brideRows; r++)
+        {
+            for (var c = 1; c <= brideCols; c++)
+            {
+                if (!occupied.Contains(("BRIDE", r, c)))
+                    freeBride.Add(("BRIDE", r, c));
+            }
+        }
+
+        // VIP tables first, then by table number, name, id
+        var orderedUnplaced = unplacedTables
+            .OrderByDescending(t => t.IsVip)
+            .ThenBy(t => t.Number > 0 ? t.Number : int.MaxValue)
+            .ThenBy(t => t.Name, StringComparer.Ordinal)
+            .ThenBy(t => t.Id)
+            .ToList();
+
+        var placements = new List<SuggestedTablePlacementDto>();
+        var effectiveMap = source.Tables.ToDictionary(t => t.Id);
+        var warnings = new List<string>();
+
+        var guestSideMap = source.Guests.ToDictionary(g => g.Id, g => g.Side?.ToUpperInvariant());
+        // Count the same people auto-seating will seat: declines never need a seat.
+        var seatedPlaces = source.Places.Where(p => p.Person?.AttendanceStatus != "DECLINED").ToArray();
+        var groomGuestCount = seatedPlaces.Count(p => guestSideMap.GetValueOrDefault(p.GuestId) == "GROOM");
+        var brideGuestCount = seatedPlaces.Count(p => guestSideMap.GetValueOrDefault(p.GuestId) == "BRIDE");
+        var groomPlacedCap = placedTables.Where(t => t.Half == "GROOM").Sum(t => t.Capacity);
+        var bridePlacedCap = placedTables.Where(t => t.Half == "BRIDE").Sum(t => t.Capacity);
+        var groomNeed = groomGuestCount - groomPlacedCap;
+        var brideNeed = brideGuestCount - bridePlacedCap;
+
+        foreach (var table in orderedUnplaced)
+        {
+            (string Half, int Row, int Column)? targetCell = null;
+            var side = table.Side?.ToUpperInvariant();
+
+            if (side == "GROOM")
+            {
+                if (freeGroom.Count > 0)
+                {
+                    targetCell = freeGroom[0];
+                    freeGroom.RemoveAt(0);
+                    groomNeed -= table.Capacity;
+                }
+            }
+            else if (side == "BRIDE")
+            {
+                if (freeBride.Count > 0)
+                {
+                    targetCell = freeBride[0];
+                    freeBride.RemoveAt(0);
+                    brideNeed -= table.Capacity;
+                }
+            }
+            else // MUTUAL or null
+            {
+                if (brideNeed > groomNeed && freeBride.Count > 0)
+                {
+                    targetCell = freeBride[0];
+                    freeBride.RemoveAt(0);
+                    brideNeed -= table.Capacity;
+                }
+                else if (groomNeed > brideNeed && freeGroom.Count > 0)
+                {
+                    targetCell = freeGroom[0];
+                    freeGroom.RemoveAt(0);
+                    groomNeed -= table.Capacity;
+                }
+                else if (freeGroom.Count >= freeBride.Count && freeGroom.Count > 0)
+                {
+                    targetCell = freeGroom[0];
+                    freeGroom.RemoveAt(0);
+                    groomNeed -= table.Capacity;
+                }
+                else if (freeBride.Count > 0)
+                {
+                    targetCell = freeBride[0];
+                    freeBride.RemoveAt(0);
+                    brideNeed -= table.Capacity;
+                }
+                else if (freeGroom.Count > 0)
+                {
+                    targetCell = freeGroom[0];
+                    freeGroom.RemoveAt(0);
+                    groomNeed -= table.Capacity;
+                }
+            }
+
+            if (targetCell.HasValue)
+            {
+                var (half, row, col) = targetCell.Value;
+                placements.Add(new SuggestedTablePlacementDto(table.Id, half, row, col));
+                effectiveMap[table.Id] = table with
+                {
+                    Half = half,
+                    Row = row,
+                    Column = col,
+                    Side = table.Side
+                };
+            }
+        }
+
+        if (placements.Count < unplacedTables.Count)
+        {
+            var remaining = unplacedTables.Count - placements.Count;
+            warnings.Add($"Sảnh tiệc ({groomRows}x{groomCols} nhà trai, {brideRows}x{brideCols} nhà gái) không đủ ô trống cho tất cả các bàn; {remaining} bàn vẫn được giữ trong khay.");
+        }
+        else if (placements.Count > 0)
+        {
+            warnings.Add($"Tự động sắp {placements.Count} bàn từ khay vào các ô trống trên sơ đồ sảnh.");
+        }
+
+        var effectiveTables = source.Tables.Select(t => effectiveMap[t.Id]).ToArray();
+        return (effectiveTables, placements, warnings);
+    }
+
     public static PlanningSeatingSuggestion Generate(PlanningSeatingDto source, SuggestPlanningSeating input)
     {
         var activeStrategy = NormalizeStrategy(input.Strategy ?? input.Plan);
-        if (!KnownMode(input.Mode)) throw new ArgumentException("Unknown seating mode.");
+        var mode = (input.Mode ?? "UNASSIGNED").ToUpperInvariant();
+        if (!KnownMode(mode)) throw new ArgumentException("Unknown seating mode.");
 
-        var keepGroupsResult = GenerateSingle(source, "KEEP_GROUPS", input.Mode);
-        var fewestTablesResult = GenerateSingle(source, "FEWEST_TABLES", input.Mode);
-        var simpleResult = GenerateSingle(source, "SIMPLE", input.Mode);
+        var (effectiveTables, placements, placementWarnings) = input.PlaceTables
+            ? ComputeTablePlacements(source)
+            : (source.Tables, Array.Empty<SuggestedTablePlacementDto>(), Array.Empty<string>());
+        var planningSource = source with { Tables = effectiveTables };
+
+        var keepGroupsResult = GenerateSingle(planningSource, "KEEP_GROUPS", mode, placements, placementWarnings);
+        var fewestTablesResult = GenerateSingle(planningSource, "FEWEST_TABLES", mode, placements, placementWarnings);
+        var simpleResult = GenerateSingle(planningSource, "SIMPLE", mode, placements, placementWarnings);
 
         var activeResult = activeStrategy switch
         {
@@ -137,7 +301,7 @@ public static class SeatingSuggestions
 
         return new PlanningSeatingSuggestion(
             requestedStrategyLabel,
-            input.Mode,
+            mode,
             source.Version,
             Fingerprint(source),
             activeResult.Assignments,
@@ -151,7 +315,8 @@ public static class SeatingSuggestions
             activeResult.SuggestedAdditionalTables,
             keepGroupsResult.ToStrategyDto("KEEP_GROUPS"),
             fewestTablesResult.ToStrategyDto("FEWEST_TABLES"),
-            simpleResult.ToStrategyDto("SIMPLE"));
+            simpleResult.ToStrategyDto("SIMPLE"),
+            placements);
     }
 
     private sealed record CandidateTableInfo(
@@ -176,15 +341,21 @@ public static class SeatingSuggestions
         int Score,
         SeatingPlanScoreDto ScoreBreakdown,
         IReadOnlyList<SuggestedAdditionalTableDto> SuggestedAdditionalTables,
-        int UsedTableCount)
+        int UsedTableCount,
+        IReadOnlyList<SuggestedTablePlacementDto> TablePlacements)
     {
         public StrategySuggestionDto ToStrategyDto(string canonicalName) =>
             new(canonicalName, StrategyDisplayName(canonicalName), Score, ScoreBreakdown,
                 Assignments, Unassigned, SuggestedAdditionalTables, Warnings, Reasons,
-                ChangedPlaceCount, PreservedCount, UsedTableCount);
+                ChangedPlaceCount, PreservedCount, UsedTableCount, TablePlacements);
     }
 
-    private static SinglePlanResult GenerateSingle(PlanningSeatingDto source, string strategy, string mode)
+    private static SinglePlanResult GenerateSingle(
+        PlanningSeatingDto source,
+        string strategy,
+        string mode,
+        IReadOnlyList<SuggestedTablePlacementDto> tablePlacements,
+        IReadOnlyList<string> placementWarnings)
     {
         var guests = source.Guests.ToDictionary(x => x.Id);
         var places = source.Places.ToDictionary(x => x.Id);
@@ -205,7 +376,7 @@ public static class SeatingSuggestions
             .ThenBy(t => t.Id)
             .ToArray();
 
-        var warnings = new List<string>();
+        var warnings = new List<string>(placementWarnings);
         var unassigned = new List<UnplacedPlanningGroup>();
 
         string GroupKey(PlanningGuestDto g) => $"{g.Side}/{(g.Group is null ? "guest/" + g.Id : "group/" + g.Group.Id)}";
@@ -373,13 +544,9 @@ public static class SeatingSuggestions
                 }
 
                 if (tables.Any(t => t.Row.HasValue))
-                {
                     Unplaced("OVERSIZE_NO_ADJACENT", $"Thiệp {party.Guest.RecipientName} ({party.Pending.Length} người) quá đông nhưng không có 2 bàn liền kề đủ chỗ trống.");
-                }
                 else
-                {
                     Unplaced("PARTY_TOO_LARGE", "Nhóm đông hơn sức chứa mọi bàn. Tăng số ghế hoặc tự chia nhóm bằng tay.");
-                }
                 continue;
             }
 
@@ -435,7 +602,8 @@ public static class SeatingSuggestions
             scoreBreakdown.TotalScore,
             scoreBreakdown,
             additionalTables,
-            usedTableCount);
+            usedTableCount,
+            tablePlacements);
     }
 
     private static (CandidateTableInfo, CandidateTableInfo)? FindAdjacentTablePair(CandidateTableInfo[] candidates, int needed)

@@ -15,21 +15,16 @@ public sealed record PlanningImportCheck(IReadOnlyList<ImportIssue> Errors, IRea
 /// Duplicate checks of an import against itself and against the guests already in the wedding.
 /// Skipped (the rest is imported): a row identical in every field to an existing guest or to an earlier row of the file.
 /// Errors: the same phone or email twice in the file, or already used by another guest (one contact = one invitation).
-/// Warnings: the same name (people can share a name), a name that already starts with a form of address while the
-/// honorific column is filled ("anh Anh ..." on the invitation), an unusually large party.
+/// Warnings: the same name (people can share a name), an unusually large party. The name and the honorific are taken as
+/// written ("Anh Tuấn" is a real name), so they are not compared with each other.
 /// </summary>
 public static class PlanningImportChecks
 {
     public const string DuplicateRowInFile = "DUPLICATE_ROW_IN_FILE", GuestAlreadyExists = "GUEST_ALREADY_EXISTS",
         DuplicatePhoneInFile = "DUPLICATE_PHONE_IN_FILE", DuplicateEmailInFile = "DUPLICATE_EMAIL_IN_FILE",
         PhoneExists = "PHONE_ALREADY_EXISTS", EmailExists = "EMAIL_ALREADY_EXISTS", DuplicateNameInFile = "DUPLICATE_NAME_IN_FILE",
-        PossibleDuplicate = "POSSIBLE_DUPLICATE", NameHasHonorific = "NAME_HAS_HONORIFIC", LargeParty = "LARGE_PARTY";
+        PossibleDuplicate = "POSSIBLE_DUPLICATE", LargeParty = "LARGE_PARTY";
     public const int LargePartySize = 10;
-
-    private static readonly HashSet<string> Honorifics = new(StringComparer.Ordinal)
-    {
-        "ANH", "CHỊ", "EM", "CÔ", "CHÚ", "BÁC", "ÔNG", "BÀ", "BẠN", "CẬU", "DÌ", "MỢ", "THÍM", "DƯỢNG", "GIA ĐÌNH"
-    };
 
     /// <summary>Digits only, with the Vietnamese country code written as a leading 0 (+84 912... = 0912...).</summary>
     public static string PhoneKey(string? phone)
@@ -108,9 +103,6 @@ public static class PlanningImportChecks
                 else if (existingNames.Contains(name))
                     warnings.Add(new(row.RowNumber, "recipientName", PossibleDuplicate, "Đã có khách cùng tên trong danh sách."));
                 names.TryAdd(name, row.RowNumber);
-                if (!string.IsNullOrWhiteSpace(row.Honorific) && Honorifics.Any(h => name.StartsWith(h + " ", StringComparison.Ordinal)))
-                    warnings.Add(new(row.RowNumber, "recipientName", NameHasHonorific,
-                        "Tên đã có danh xưng ở đầu trong khi cột Danh xưng cũng có giá trị; thiệp có thể bị lặp (vd \"anh Anh Tuấn\")."));
             }
             if ((row.ExpectedPeople ?? 1) > LargePartySize)
                 warnings.Add(new(row.RowNumber, "expectedPeople", LargeParty, $"Một thiệp {row.ExpectedPeople} người, kiểm tra lại số người."));

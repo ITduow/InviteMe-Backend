@@ -237,13 +237,25 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
                 throw Conflict("SEATING_SOURCE_CHANGED");
             // Recompute on BE; never accept client-supplied assignments as a trusted suggestion.
             var strat = input.Strategy ?? input.Plan ?? "KEEP_GROUPS";
-            var suggestion = SeatingSuggestions.Generate(source, new(strat, input.Mode));
-            if (suggestion.ChangedPlaceCount == 0) throw Rule("NO_SEATING_CHANGES", "Phương án không thay đổi vị trí nào.");
+            var mode = (input.Mode ?? "UNASSIGNED").ToUpperInvariant();
+            // Tray tables stay in the tray unless the couple asked for them to be placed too.
+            var suggestion = SeatingSuggestions.Generate(source, new(strat, mode, PlaceTables: input.PlaceTables));
+            var placements = suggestion.TablePlacements ?? [];
+            if (suggestion.ChangedPlaceCount == 0 && placements.Count == 0) throw Rule("NO_SEATING_CHANGES", "Phương án không thay đổi vị trí nào.");
+            await ApplyTablePlacements(weddingId, placements, ct);
             var old = await (from a in db.Set<PlanningSeatAssignment>() join t in db.Set<PlanningTable>() on a.TableId equals t.Id
                 where t.WeddingId == weddingId select a).ToListAsync(ct);
             db.RemoveRange(old);
             await db.SaveChangesAsync(ct);
             db.AddRange(suggestion.Assignments.Select(a => new PlanningSeatAssignment { PlaceId = a.PlaceId, TableId = a.TableId, SeatNumber = a.SeatNumber }));
+        }
+        else if (input.Action == "AUTO_PLACE_TABLES")
+        {
+            var source = await Snapshot(weddingId, ct, groupScope);
+            var (_, placements, _) = SeatingSuggestions.ComputeTablePlacements(source);
+            if (placements.Count == 0)
+                throw Rule("NO_TABLE_PLACEMENTS", "Không còn bàn trong khay hoặc sơ đồ sảnh đã hết ô trống.");
+            await ApplyTablePlacements(weddingId, placements, ct);
         }
         else if (input.Action == "CREATE_TABLES")
         {
@@ -319,16 +331,26 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
                 table.Number = newNumber;
             }
             if (!string.IsNullOrWhiteSpace(input.Name)) table.Name = input.Name.Trim();
-            if (input.Capacity.HasValue)
+            if (input.Capacity.HasValue || input.ExtraSeats.HasValue)
             {
+                var newCapacity = input.Capacity ?? table.Capacity;
+                var newExtra = input.ExtraSeats ?? table.ExtraSeats;
                 var assignedCount = await db.Set<PlanningSeatAssignment>().CountAsync(x => x.TableId == table.Id, ct);
-                if (assignedCount > input.Capacity.Value + (input.ExtraSeats ?? table.ExtraSeats))
+                if (assignedCount > newCapacity + newExtra)
                     throw Rule("TABLE_HAS_ASSIGNED_PLACES", "Không thể giảm số ghế xuống dưới số khách đang ngồi.");
-                table.Capacity = input.Capacity.Value;
+
+                var maxSeat = await db.Set<PlanningSeatAssignment>()
+                    .Where(x => x.TableId == table.Id)
+                    .Select(x => (int?)x.SeatNumber)
+                    .MaxAsync(ct) ?? 0;
+                if (maxSeat > newCapacity + newExtra)
+                    throw Rule("SEAT_IN_USE", $"Ghế số {maxSeat} đang có khách ngồi. Vui lòng bỏ xếp trước khi giảm ghế.");
+
+                table.Capacity = newCapacity;
+                table.ExtraSeats = newExtra;
             }
             if (input.GroupId.HasValue) table.GroupId = input.GroupId;
             if (input.IsVip.HasValue) table.IsVip = input.IsVip.Value;
-            if (input.ExtraSeats.HasValue) table.ExtraSeats = input.ExtraSeats.Value;
 
             bool isExplicitMoveToTray = (input.Action is "MOVE_TABLE" or "PLACE_TABLE")
                 && (input.Side == "TRAY" || input.Half == "TRAY" || (input.Row == null && input.Column == null && input.Half == null && input.Side == null));
@@ -1002,6 +1024,21 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         }
 
         return warnings.DistinctBy(w => (w.Code, w.TableId, w.GuestId, w.PlaceId)).ToList();
+    }
+
+    private async Task ApplyTablePlacements(Guid weddingId, IReadOnlyList<SuggestedTablePlacementDto> placements, CancellationToken ct)
+    {
+        if (placements.Count == 0) return;
+        var ids = placements.Select(p => p.TableId).ToArray();
+        var tables = await db.Set<PlanningTable>().Where(x => x.WeddingId == weddingId && ids.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct);
+        foreach (var p in placements)
+        {
+            if (!tables.TryGetValue(p.TableId, out var table)) continue;
+            table.Half = p.Half;
+            table.Row = p.Row;
+            table.Column = p.Column;
+        }
+        await db.SaveChangesAsync(ct);
     }
 
     private async Task EnsureTableNumberFree(Guid weddingId, int number, Guid? exceptTableId, CancellationToken ct)

@@ -18,7 +18,8 @@ public sealed class SeatingSuggestionTests
         var sides = table.Select(a => source.Guests.Single(g => g.Id == source.Places.Single(p => p.Id == a.PlaceId).GuestId).Side).ToHashSet();
         Assert.False(sides.Contains("GROOM") && sides.Contains("BRIDE"));
     }
-    private static PlanningSeatingSuggestion Suggest(PlanningSeatingDto source, string strategy = "AFFINITY", string mode = "UNASSIGNED") => SeatingSuggestions.Generate(source, new(strategy, mode));
+    private static PlanningSeatingSuggestion Suggest(PlanningSeatingDto source, string strategy = "AFFINITY", string mode = "UNASSIGNED", bool placeTables = false) =>
+        SeatingSuggestions.Generate(source, new(strategy, mode, PlaceTables: placeTables));
 
     [Theory]
     [InlineData("AFFINITY")][InlineData("PARTY")]
@@ -35,9 +36,29 @@ public sealed class SeatingSuggestionTests
     {
         var noTables = Suggest(Source([], (4,"BRIDE",1)));
         Assert.Empty(noTables.Assignments); Assert.Equal("NO_TABLES", Assert.Single(noTables.Unassigned).Code);
-        var oversized = Suggest(Source([4,4], (5,"BRIDE",1)));
+        var oversized = Suggest(Source([4], (5,"BRIDE",1)));
         Assert.Empty(oversized.Assignments); Assert.Equal(5, Assert.Single(oversized.Unassigned).PlaceIds.Count);
         Assert.Equal("PARTY_TOO_LARGE", oversized.Unassigned[0].Code);
+    }
+    [Fact]
+    public void OversizedPartySplitsAcrossAdjacentTablesWhenRoomAvailable()
+    {
+        var source = Source([4, 4], (5, "BRIDE", 1));
+        var result = Suggest(source, placeTables: true);
+        Assert.Equal(5, result.Assignments.Count);
+        Assert.Empty(result.Unassigned);
+        Assert.Contains(result.Warnings, w => w.Contains("OVERSIZE_SPLIT"));
+    }
+    [Fact]
+    public void OversizedPartyOnPlacedTablesWithoutAdjacentRoomGetsItsOwnCode()
+    {
+        var source = Source([4, 4], (5, "BRIDE", 1));
+        source = source with { Tables = [
+            source.Tables[0] with { Half = "BRIDE", Row = 1, Column = 1 },
+            source.Tables[1] with { Half = "BRIDE", Row = 3, Column = 1 }] };
+        var result = Suggest(source);
+        Assert.Equal("OVERSIZE_NO_ADJACENT", Assert.Single(result.Unassigned).Code);
+        Assert.Equal("OVERSIZE_NO_ADJACENT", Assert.Single(result.SuggestedAdditionalTables!).ReasonCode);
     }
     [Fact]
     public void AffinityKeepsSmallKnownGroupTogetherAndSupportsDifferentTableSizes()
@@ -184,5 +205,84 @@ public sealed class SeatingSuggestionTests
                 }
             }
         }
+    }
+
+    [Fact]
+    public void CaseInsensitiveModeAndStrategyAreAccepted()
+    {
+        Assert.True(SeatingSuggestions.KnownStrategy("affinity"));
+        Assert.True(SeatingSuggestions.KnownStrategy("keep_groups"));
+        Assert.True(SeatingSuggestions.KnownStrategy("FEWEST_TABLES"));
+        Assert.True(SeatingSuggestions.KnownStrategy("compact"));
+        Assert.True(SeatingSuggestions.KnownStrategy("party"));
+        Assert.True(SeatingSuggestions.KnownStrategy("simple"));
+
+        Assert.True(SeatingSuggestions.KnownMode("unassigned"));
+        Assert.True(SeatingSuggestions.KnownMode("replace_all"));
+        Assert.True(SeatingSuggestions.KnownMode("UNASSIGNED"));
+        Assert.True(SeatingSuggestions.KnownMode("REPLACE_ALL"));
+
+        var change = new ChangePlanningSeating(
+            0,
+            "APPLY_SUGGESTION",
+            Strategy: "affinity",
+            Mode: "replace_all",
+            SourceFingerprint: new string('a', 64),
+            ConfirmReplace: true);
+        var validator = new ChangePlanningSeatingValidator();
+        Assert.True(validator.Validate(change).IsValid);
+    }
+
+    [Fact]
+    public void WhenAllGuestsAreSeated_ChangedPlaceCountIsZero()
+    {
+        var source = Source([4], (4, "BRIDE", 1));
+        var initial = Suggest(source, "KEEP_GROUPS", "UNASSIGNED");
+        var seatedSource = source with { Assignments = initial.Assignments };
+
+        var secondSuggestion = Suggest(seatedSource, "KEEP_GROUPS", "UNASSIGNED");
+        Assert.Equal(0, secondSuggestion.ChangedPlaceCount);
+        Assert.Equal(4, secondSuggestion.PreservedCount);
+    }
+    [Fact]
+    public void TrayTablesStayInTheTrayUnlessPlacementIsRequested()
+    {
+        var source = Source([10, 10], (5, "BRIDE", 1), (5, "GROOM", 1));
+        var result = Suggest(source, "KEEP_GROUPS", "UNASSIGNED");
+        Assert.Empty(result.TablePlacements!);
+        Assert.DoesNotContain(result.Warnings, w => w.Contains("Tự động sắp"));
+        Assert.Equal(10, result.Assignments.Count);
+    }
+    [Fact]
+    public void PlacementCountsOnlyPeopleWhoWillBeSeated()
+    {
+        // Six groom places but five declined: the shared table goes to the bride half, which really needs room.
+        var source = Source([10], (6, "GROOM", 1), (3, "BRIDE", 2));
+        source = source with { Places = source.Places.Select((p, i) => i is >= 1 and <= 5
+            ? p with { Person = new PlanningPersonDto(Guid.NewGuid(), "Từ chối", "OTHER", "DECLINED") } : p).ToArray() };
+        var (_, placements, _) = SeatingSuggestions.ComputeTablePlacements(source);
+        Assert.Equal("BRIDE", Assert.Single(placements).Half);
+    }
+    [Fact]
+    public void UnplacedTablesAreAutoPlacedIntoGridInSuggestions()
+    {
+        var source = Source([10, 10], (5, "BRIDE", 1), (5, "GROOM", 1));
+        var result = Suggest(source, "KEEP_GROUPS", "UNASSIGNED", placeTables: true);
+
+        Assert.NotNull(result.TablePlacements);
+        Assert.Equal(2, result.TablePlacements.Count);
+        // Placements placed on Bride and Groom sides
+        Assert.Contains(result.TablePlacements, p => p.Half == "BRIDE" && p.Row == 1 && p.Column == 1);
+        Assert.Contains(result.TablePlacements, p => p.Half == "GROOM" && p.Row == 1 && p.Column == 1);
+        Assert.Equal(10, result.Assignments.Count);
+    }
+
+    [Fact]
+    public void AutoPlaceTablesActionIsValid()
+    {
+        var change = new ChangePlanningSeating(0, "AUTO_PLACE_TABLES");
+        var validator = new ChangePlanningSeatingValidator();
+        var validationResult = validator.Validate(change);
+        Assert.True(validationResult.IsValid);
     }
 }

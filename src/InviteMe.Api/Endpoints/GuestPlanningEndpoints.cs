@@ -69,7 +69,7 @@ internal static class GuestPlanningEndpoints
         g.MapPatch("/seating-plan", (Guid weddingId, ChangePlanningSeating input, PlanningSeatingHandler handler, CancellationToken ct) => handler.ChangeAsync(weddingId, input, ct));
         g.MapPost("/seating-suggestions", (Guid weddingId, SuggestPlanningSeating input, PlanningSeatingHandler handler, CancellationToken ct) => handler.SuggestAsync(weddingId, input, ct));
         g.MapPost("/seating-suggestions/apply", (Guid weddingId, ApplySeatingSuggestionRequest input, PlanningSeatingHandler handler, CancellationToken ct) =>
-            handler.ChangeAsync(weddingId, new ChangePlanningSeating(input.ExpectedVersion, "APPLY_SUGGESTION", Strategy: input.Strategy, Mode: input.Mode, SourceFingerprint: input.SourceFingerprint, ConfirmReplace: input.ConfirmReplace), ct))
+            handler.ChangeAsync(weddingId, new ChangePlanningSeating(input.ExpectedVersion, "APPLY_SUGGESTION", Strategy: input.Strategy, Mode: input.Mode, SourceFingerprint: input.SourceFingerprint, ConfirmReplace: input.ConfirmReplace, PlaceTables: input.PlaceTables), ct))
             .WithName("ApplySeatingSuggestion").Produces<PlanningSeatingDto>().ProducesProblem(403).ProducesProblem(409).ProducesProblem(422);
         g.MapGet("/seating/audit-logs", (Guid weddingId, PlanningSeatingHandler handler, CancellationToken ct) =>
             handler.GetSeatingAuditLogsAsync(weddingId, ct))

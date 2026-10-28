@@ -200,4 +200,62 @@ public sealed class SeatingLayoutAndGridTests
         Assert.Empty(plan.Assignments);
         Assert.DoesNotContain(plan.Tables, t => t.Id == newT2.Id);
     });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task TrayTablesArePlacedOnlyWhenAsked() => SchemaV2MigrationTests.InDatabase(async db =>
+    {
+        await db.Database.MigrateAsync();
+        await using var factory = new DatabaseApiFactory(db.Database.GetConnectionString()!);
+        var owner = factory.CreateHttpsClient();
+        const string password = "Test-only-Pass123!";
+        Assert.Equal(HttpStatusCode.Created, (await owner.PostAsJsonAsync("/api/auth/register", new RegisterAccount("tray-owner@example.test", password, "tray-owner"))).StatusCode);
+        var login = await owner.PostAsJsonAsync("/api/auth/login", new LoginAccount("tray-owner@example.test", password));
+        owner.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", (await login.Content.ReadFromJsonAsync<TokenDto>())!.AccessToken);
+        var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "tray-test");
+        var root = $"/api/weddings/{wedding.Id}/guest-planning";
+        var planUrl = root + "/seating-plan";
+
+        using var import = new HttpRequestMessage(HttpMethod.Post, root + "/imports")
+        {
+            Content = JsonContent.Create(new PlanningImport([new(2, "Khách Trai", ExpectedPeople: 3, Side: "GROOM"), new(3, "Khách Gái", ExpectedPeople: 3, Side: "BRIDE")]))
+        };
+        import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        Assert.Equal(HttpStatusCode.Created, (await owner.SendAsync(import)).StatusCode);
+        var plan = (await owner.GetFromJsonAsync<PlanningSeatingDto>(planUrl))!;
+        plan = (await (await owner.PatchAsJsonAsync(planUrl, new ChangePlanningSeating(plan.Version, "CREATE_TABLES", Capacity: 10, TableCount: 3))).Content.ReadFromJsonAsync<PlanningSeatingDto>())!;
+
+        // Applying a suggestion seats guests but leaves the tray tables in the tray.
+        var suggestion = (await (await owner.PostAsJsonAsync(root + "/seating-suggestions", new SuggestPlanningSeating())).Content.ReadFromJsonAsync<PlanningSeatingSuggestion>())!;
+        Assert.Empty(suggestion.TablePlacements!);
+        var applied = await owner.PostAsJsonAsync(root + "/seating-suggestions/apply", new ApplySeatingSuggestionRequest(plan.Version, SourceFingerprint: suggestion.SourceFingerprint));
+        Assert.Equal(HttpStatusCode.OK, applied.StatusCode);
+        plan = (await applied.Content.ReadFromJsonAsync<PlanningSeatingDto>())!;
+        Assert.Equal(6, plan.Assignments.Count);
+        Assert.All(plan.Tables, t => Assert.Null(t.Row));
+
+        // Nothing left to seat or place: the apply is refused instead of a silent no-op.
+        suggestion = (await (await owner.PostAsJsonAsync(root + "/seating-suggestions", new SuggestPlanningSeating())).Content.ReadFromJsonAsync<PlanningSeatingSuggestion>())!;
+        var noop = await owner.PostAsJsonAsync(root + "/seating-suggestions/apply", new ApplySeatingSuggestionRequest(plan.Version, SourceFingerprint: suggestion.SourceFingerprint));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, noop.StatusCode);
+        Assert.Contains("NO_SEATING_CHANGES", await noop.Content.ReadAsStringAsync());
+
+        // Asking for placement puts the tray tables on the hall and keeps the seats.
+        suggestion = (await (await owner.PostAsJsonAsync(root + "/seating-suggestions", new SuggestPlanningSeating(PlaceTables: true))).Content.ReadFromJsonAsync<PlanningSeatingSuggestion>())!;
+        Assert.Equal(3, suggestion.TablePlacements!.Count);
+        applied = await owner.PostAsJsonAsync(root + "/seating-suggestions/apply", new ApplySeatingSuggestionRequest(plan.Version, SourceFingerprint: suggestion.SourceFingerprint, PlaceTables: true));
+        Assert.Equal(HttpStatusCode.OK, applied.StatusCode);
+        plan = (await applied.Content.ReadFromJsonAsync<PlanningSeatingDto>())!;
+        Assert.All(plan.Tables, t => Assert.NotNull(t.Row));
+        Assert.Equal(6, plan.Assignments.Count);
+
+        // AUTO_PLACE_TABLES places a new tray table, then refuses when the tray is empty.
+        plan = (await (await owner.PatchAsJsonAsync(planUrl, new ChangePlanningSeating(plan.Version, "CREATE_TABLE", Capacity: 12, IsVip: true))).Content.ReadFromJsonAsync<PlanningSeatingDto>())!;
+        var autoPlace = await owner.PatchAsJsonAsync(planUrl, new ChangePlanningSeating(plan.Version, "AUTO_PLACE_TABLES"));
+        Assert.Equal(HttpStatusCode.OK, autoPlace.StatusCode);
+        plan = (await autoPlace.Content.ReadFromJsonAsync<PlanningSeatingDto>())!;
+        Assert.All(plan.Tables, t => Assert.NotNull(t.Row));
+        var emptyTray = await owner.PatchAsJsonAsync(planUrl, new ChangePlanningSeating(plan.Version, "AUTO_PLACE_TABLES"));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, emptyTray.StatusCode);
+        Assert.Contains("NO_TABLE_PLACEMENTS", await emptyTray.Content.ReadAsStringAsync());
+    });
 }

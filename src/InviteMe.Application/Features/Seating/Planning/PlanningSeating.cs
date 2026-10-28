@@ -143,7 +143,8 @@ public sealed record ChangePlanningSeating(
     Guid? TargetGuestId = null,
     string? Reason = null,
     string? Half = null,
-    string? Plan = null);
+    string? Plan = null,
+    bool PlaceTables = false);
 
 public interface IPlanningSeatingStore
 {
@@ -183,7 +184,7 @@ public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePla
     {
         RuleFor(x => x.ExpectedVersion).GreaterThanOrEqualTo(0);
         RuleFor(x => x.Action).Must(x => x is "CREATE_TABLE" or "CREATE_TABLES" or "UPDATE_TABLE" or "DELETE_TABLE" or "MOVE_PLACES"
-            or "APPLY_SUGGESTION" or "PLACE_TABLE" or "MOVE_TABLE" or "SWAP_TABLES" or "TAG_TABLES" or "RENUMBER_TABLES" or "MOVE_PARTY" or "SWAP_PLACES"
+            or "APPLY_SUGGESTION" or "AUTO_PLACE_TABLES" or "PLACE_TABLE" or "MOVE_TABLE" or "SWAP_TABLES" or "TAG_TABLES" or "RENUMBER_TABLES" or "MOVE_PARTY" or "SWAP_PLACES"
             or "LOCK_PLAN" or "UNLOCK_PLAN" or "RELEASE_DECLINED_SEATS" or "START_EVENT" or "OPERATIONAL_MOVE" or "SWAP_UNATTENDED");
         RuleFor(x => x.TableId).NotEqual(Guid.Empty).When(x => x.TableId.HasValue);
         RuleFor(x => x.GroupId).NotEqual(Guid.Empty).When(x => x.GroupId.HasValue);
@@ -191,7 +192,7 @@ public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePla
         RuleFor(x => x.Side).Must(x => x is "GROOM" or "BRIDE" or "MUTUAL" or "TRAY").When(x => !string.IsNullOrEmpty(x.Side));
         RuleFor(x => x.Row).InclusiveBetween(1, 20).When(x => x.Row.HasValue);
         RuleFor(x => x.Column).InclusiveBetween(1, 6).When(x => x.Column.HasValue);
-        RuleFor(x => x.ExtraSeats).InclusiveBetween(0, 2).When(x => x.ExtraSeats.HasValue);
+        RuleFor(x => x.ExtraSeats).InclusiveBetween(0, 2).When(x => x.ExtraSeats.HasValue).WithMessage("Ghế kê thêm chỉ được từ 0 đến 2 ghế.");
         RuleFor(x => x.Number).InclusiveBetween(1, 999).When(x => x.Number.HasValue).WithMessage("Số bàn phải từ 1 đến 999.");
         RuleFor(x => x.Side).Must(x => x is "GROOM" or "BRIDE" or "MUTUAL").When(x => x.Action == "CREATE_TABLES" && !string.IsNullOrEmpty(x.Side))
             .WithMessage("Phía của bàn chỉ là GROOM, BRIDE hoặc MUTUAL.");
@@ -204,7 +205,7 @@ public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePla
         When(x => x.Action == "UPDATE_TABLE", () =>
         {
             RuleFor(x => x.Name).NotEmpty().MaximumLength(100).When(x => x.Name != null);
-            RuleFor(x => x.Capacity).Must(x => x is 10 or 12).When(x => x.Capacity.HasValue).WithMessage("Sức chứa bàn phải là 10 hoặc 12 ghế.");
+            RuleFor(x => x.Capacity).Must(x => x is 10 or 12).When(x => x.Capacity.HasValue).WithMessage("Loại bàn chỉ hỗ trợ bàn 10 hoặc 12 ghế.");
         });
         When(x => x.Action == "CREATE_TABLES", () =>
         {
@@ -259,7 +260,7 @@ public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePla
             RuleFor(x => x.Strategy ?? x.Plan).Must(SeatingSuggestions.KnownStrategy);
             RuleFor(x => x.Mode).Must(SeatingSuggestions.KnownMode);
             RuleFor(x => x.SourceFingerprint).NotNull().Matches("^[A-Fa-f0-9]{64}$");
-            RuleFor(x => x).Must(x => x.Mode != "REPLACE_ALL" || x.ConfirmReplace)
+            RuleFor(x => x).Must(x => !string.Equals(x.Mode, "REPLACE_ALL", StringComparison.OrdinalIgnoreCase) || x.ConfirmReplace)
                 .WithMessage("Xác nhận thay thế sơ đồ trước khi xếp lại toàn bộ.");
         });
     }
@@ -310,7 +311,7 @@ public sealed class PlanningSeatingHandler(
                 "SEATING_SCOPE_MISMATCH",
                 "Seating edit scope must be contained in the assigned view scope.");
         var groupScope = editScope.IsWeddingWide ? null : editScope.GroupIds;
-        if (groupScope is not null && (input.Action is "APPLY_SUGGESTION" or "RENUMBER_TABLES" or "TAG_TABLES" or "SWAP_TABLES" or "LOCK_PLAN" or "UNLOCK_PLAN" or "START_EVENT" or "RELEASE_DECLINED_SEATS"))
+        if (groupScope is not null && (input.Action is "APPLY_SUGGESTION" or "AUTO_PLACE_TABLES" or "RENUMBER_TABLES" or "TAG_TABLES" or "SWAP_TABLES" or "LOCK_PLAN" or "UNLOCK_PLAN" or "START_EVENT" or "RELEASE_DECLINED_SEATS"))
             throw new InviteMe.Application.Common.Errors.ApplicationProblemException(
                 InviteMe.Application.Common.Errors.ProblemKind.Forbidden,
                 "SEATING_SUGGESTION_REQUIRES_WEDDING_SCOPE",
