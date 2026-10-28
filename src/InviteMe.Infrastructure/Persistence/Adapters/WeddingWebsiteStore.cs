@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using InviteMe.Application.Features.Weddings.Website;
 using InviteMe.Domain.Audit;
 using InviteMe.Domain.Weddings;
@@ -37,12 +38,33 @@ public sealed class WeddingWebsiteStore(InviteMeDbContext db) : IWeddingWebsiteS
         await LockWedding(db, id, ct);
         var settings = await db.WeddingSettings.SingleOrDefaultAsync(x => x.WeddingId == id, ct);
         Version(settings?.WebsiteVersion ?? 0, expectedVersion);
-        if (settings?.WebsiteDraftJson is null || !WeddingWebsiteHandler.Valid(
-            JsonDocument.Parse(settings.WebsiteDraftJson).RootElement))
+        if (settings?.WebsiteDraftJson is null)
             throw Rule("WEBSITE_DRAFT_REQUIRED", "Save valid website content before publishing.");
-        if (settings.WebsiteStatus == WebsitePublicationStatus.PUBLISHED && !await PublicationJson.WebsiteChanged(db, id, ct))
+        using var draft = JsonDocument.Parse(settings.WebsiteDraftJson);
+        PublicStoryTemplateDto? storyTemplate = null;
+        var v3 = StoryV3Contract.IsDraft(draft.RootElement);
+        if (v3 || WeddingStoryDocumentValidator.IsStory(draft.RootElement))
+        {
+            var selectedKey = draft.RootElement.GetProperty(v3 ? "templateKey" : "templateId").GetString()!;
+            var row = await db.StoryTemplates.AsNoTracking().SingleOrDefaultAsync(
+                x => x.Key == (selectedKey == "story-classic" ? "romantic" : selectedKey) && x.PublishedConfigJson != null, ct);
+            if (row is null) throw Rule("STORY_TEMPLATE_UNAVAILABLE", "Publish the selected story template first.");
+            var config = JsonSerializer.Deserialize<StoryTemplateConfig>(row.PublishedConfigJson!, StoryTemplateContract.Json)!;
+            if (v3 ? !StoryV3Contract.ValidDraft(draft.RootElement, config) :
+                !WeddingStoryDocumentValidator.Valid(draft.RootElement, selectedKey == "story-classic" ? null : config))
+                throw Rule("WEBSITE_DRAFT_REQUIRED", "Save valid website content before publishing.");
+            storyTemplate = new(row.Key, row.Name, row.PublishedVersion, config);
+        }
+        else if (!WeddingWebsiteHandler.Valid(draft.RootElement))
+            throw Rule("WEBSITE_DRAFT_REQUIRED", "Save valid website content before publishing.");
+        var templateVersionChanged = storyTemplate is not null && settings.WebsitePublishedJson is { } published &&
+            JsonDocument.Parse(published).RootElement.TryGetProperty(v3 ? "templateVersion" : "storyTemplate", out var prior) &&
+            (v3 ? prior.GetInt32() : prior.GetProperty("version").GetInt32()) != storyTemplate.Version;
+        if (settings.WebsiteStatus == WebsitePublicationStatus.PUBLISHED && !templateVersionChanged && !await PublicationJson.WebsiteChanged(db, id, ct))
         { await tx.CommitAsync(ct); return await GetAsync(id, ct); }
-        settings.PublishWebsite();
+        settings.PublishWebsite(storyTemplate is null ? null : v3
+            ? StoryTemplateSnapshot.BuildV3(settings.WebsiteDraftJson, storyTemplate)
+            : StoryTemplateSnapshot.Build(settings.WebsiteDraftJson, storyTemplate));
         db.AuditLogs.Add(AuditLog.ForEntity(id, "wedding_website", id, "WEBSITE_PUBLISHED", actorId));
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
@@ -79,7 +101,9 @@ public sealed class WeddingWebsiteStore(InviteMeDbContext db) : IWeddingWebsiteS
             where wedding.Slug == slug && owner.Status == "ACTIVE" && (wedding.Status == "DRAFT" || wedding.Status == "PUBLISHED") &&
                 settings.WebsiteStatus == WebsitePublicationStatus.PUBLISHED
             select new { wedding.Slug, settings.WebsitePublishedJson }).SingleOrDefaultAsync(ct);
-        return row?.WebsitePublishedJson is null ? null : new(row.Slug,
-            JsonDocument.Parse(row.WebsitePublishedJson).RootElement.Clone());
+        if (row?.WebsitePublishedJson is null) return null;
+        var publicJson = JsonNode.Parse(row.WebsitePublishedJson)!.AsObject();
+        publicJson.Remove("sourceDraft");
+        return new(row.Slug, JsonDocument.Parse(publicJson.ToJsonString()).RootElement.Clone());
     }
 }

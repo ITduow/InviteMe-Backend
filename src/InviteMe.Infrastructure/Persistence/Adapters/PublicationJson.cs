@@ -10,7 +10,10 @@ internal static class PublicationJson
     public static async Task<bool> WebsiteChanged(InviteMeDbContext db, Guid id, CancellationToken ct) =>
         await db.Database.SqlQuery<bool>($"""
             SELECT website_draft_json IS NOT NULL AND
-                website_draft_json IS DISTINCT FROM website_published_json AS "Value"
+                website_draft_json IS DISTINCT FROM (CASE
+                    WHEN website_draft_json ->> 'schemaVersion' = '2' THEN website_published_json - 'storyTemplate'
+                    WHEN website_draft_json ->> 'schemaVersion' = '3' THEN website_published_json -> 'sourceDraft'
+                    ELSE website_published_json END) AS "Value"
             FROM inviteme.wedding_settings WHERE wedding_id = {id}
             """).SingleOrDefaultAsync(ct);
     public static async Task<bool> InvitationChanged(InviteMeDbContext db, Guid id, CancellationToken ct)

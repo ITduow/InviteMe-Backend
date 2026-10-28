@@ -154,7 +154,20 @@ public sealed class WeddingWebsiteValidationTests
     }
 
     private static WeddingWebsiteHandler Create(Store store, bool isOwner, bool imageRegistered = true) =>
-        new(store, new Access(isOwner), new User(), new Media(), new Catalog(imageRegistered), new Changes(), new AllowAllEntitlements());
+        new(store, new Access(isOwner), new User(), new Media(), new Catalog(imageRegistered), new Changes(), new TemplateStore(), new AllowAllEntitlements());
+
+    private sealed class TemplateStore : IStoryTemplateStore
+    {
+        public Task<IReadOnlyList<StoryTemplateDto>> ListAdminAsync(CancellationToken ct) => throw new NotImplementedException();
+        public Task<StoryTemplateDto> GetAdminAsync(Guid id, CancellationToken ct) => throw new NotImplementedException();
+        public Task<StoryTemplateDto> CreateAsync(CreateStoryTemplate input, Guid actor, CancellationToken ct) => throw new NotImplementedException();
+        public Task<StoryTemplateDto> SaveDraftAsync(Guid id, SaveStoryTemplateDraft input, Guid actor, CancellationToken ct) => throw new NotImplementedException();
+        public Task<StoryTemplateDto> PublishAsync(Guid id, int expectedVersion, Guid actor, CancellationToken ct) => throw new NotImplementedException();
+        public Task<StoryTemplateDto> ArchiveAsync(Guid id, int expectedVersion, bool archived, Guid actor, CancellationToken ct) => throw new NotImplementedException();
+        public Task<IReadOnlyList<PublicStoryTemplateDto>> ListPublicAsync(CancellationToken ct) => throw new NotImplementedException();
+        public Task<PublicStoryTemplateDto?> GetPublicAsync(string key, CancellationToken ct) => throw new NotImplementedException();
+        public Task<PublicStoryTemplateDto?> GetPublishedForStoryAsync(string key, CancellationToken ct) => throw new NotImplementedException();
+    }
 
     private sealed class Access(bool isOwner) : IWeddingAccessReader
     {

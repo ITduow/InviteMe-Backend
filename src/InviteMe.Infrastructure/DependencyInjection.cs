@@ -90,6 +90,7 @@ public static class DependencyInjection
         services.AddHttpClient<InviteMe.Application.Features.Gifts.IGiftProofStorage, S3GiftProofStorage>();
         services.AddScoped<InviteMe.Application.Ports.Audit.IAuditReader, AuditReader>();
         services.AddScoped<InviteMe.Application.Features.Admin.IAdminStore, AdminStore>();
+        services.AddScoped<InviteMe.Application.Features.Weddings.Website.IStoryTemplateStore, StoryTemplateStore>();
         services.AddScoped<InviteMe.Application.Ports.AI.IThankYouTemplateStore, ThankYouTemplateStore>();
         services.AddScoped<InviteMe.Application.Ports.AI.IThankYouGuestReader, ThankYouGuestReader>();
         services.AddOptions<InviteMe.Infrastructure.AI.OpenAiOptions>().Configure(options =>
@@ -111,6 +112,7 @@ public static class DependencyInjection
             configuration["InvitationMessaging:PublicApiUrl"] ?? "http://localhost:5000"));
         services.AddScoped<InviteMe.Application.Features.Invitations.IInvitationDesignStore, InvitationDesignStore>();
         services.AddScoped<InviteMe.Application.Features.Weddings.Website.IWeddingWebsiteStore, WeddingWebsiteStore>();
+        services.AddScoped<InviteMe.Application.Features.Weddings.Website.IStoryWishStore, StoryWishStore>();
         services.AddScoped<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaCatalog, WeddingMediaCatalog>();
         services.AddScoped<InviteMe.Application.Features.Seating.Planning.IPlanningSeatingStore, PlanningSeatingStore>();
         services.AddSingleton(TimeProvider.System);
