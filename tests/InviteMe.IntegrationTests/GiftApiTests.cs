@@ -187,9 +187,10 @@ public sealed class GiftApiTests
         Assert.Equal(("Lan", PlanningGift.Paid), (envelope.GiverName, envelope.Status));
         await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Item, GiverName: "Nhóm bạn đại học", ItemName: "Tranh cưới"), "desk-2"),
             HttpStatusCode.Created);
-        // A transfer shown on the guest's phone: the desk takes a photo, records it, and only the couple confirms the money.
-        await AssertProblem(HttpStatusCode.UnprocessableEntity, "GIFT_PROOF_REQUIRED",
-            await Send(desk, path, new RecordGift(PlanningGift.Transfer, 300_000, GiverName: "Anh Tú"), "desk-3"));
+        // A transfer shown on the guest's phone waits for the couple to confirm the money; the photo helps but is not required.
+        var noPhoto = await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Transfer, 250_000, GiverName: "Anh Tín"), "desk-3a"),
+            HttpStatusCode.Created);
+        Assert.Equal((PlanningGift.Claimed, false, (long?)null), (noPhoto.Status, noPhoto.HasProof, noPhoto.AmountReceived));
         Assert.Equal(HttpStatusCode.BadRequest, (await UploadProof(desk, path + "/proofs", Encoding.UTF8.GetBytes("not an image"))).StatusCode);
         var proof = await Read<GiftProofDto>(await UploadProof(desk, path + "/proofs", Png), HttpStatusCode.Created);
         var shown = await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Transfer, 300_000, GiverName: "Anh Tú", ProofId: proof.Id), "desk-3"),
@@ -205,6 +206,14 @@ public sealed class GiftApiTests
         Assert.Equal(HttpStatusCode.Forbidden, (await desk.PostAsJsonAsync($"{path}/{shown.Id}/confirm", new ConfirmGift())).StatusCode);
         var confirmed = await Read<GiftDto>(await owner.PostAsJsonAsync($"{path}/{shown.Id}/confirm", new ConfirmGift()), HttpStatusCode.OK);
         Assert.Equal((PlanningGift.Paid, (long?)300_000), (confirmed.Status, confirmed.AmountReceived));
+        // The owner at the desk screen has not checked the bank either: the transfer waits, even without a photo.
+        var ownerShown = await Read<GiftDto>(await Send(owner, path, new RecordGift(PlanningGift.Transfer, 400_000, GiverName: "Chị Mai",
+            FromDesk: true), "owner-desk-1"), HttpStatusCode.Created);
+        Assert.Equal((PlanningGift.Claimed, false, (long?)null), (ownerShown.Status, ownerShown.HasProof, ownerShown.AmountReceived));
+        // Recorded in the gift book (not the desk), the owner's transfer is money already seen in the bank app.
+        var seen = await Read<GiftDto>(await Send(owner, path, new RecordGift(PlanningGift.Transfer, 600_000, GiverName: "Anh Quang"), "owner-book-1"),
+            HttpStatusCode.Created);
+        Assert.Equal(PlanningGift.Paid, seen.Status);
         // A sealed envelope in the gift box: only who gave it, here Lan's companion; the couple counts the money later.
         var hoa = new PlanningParticipant { Id = Guid.NewGuid(), GuestId = guests["Lan"].Id, FullName = "Chị Hoa", Role = "COMPANION" };
         db.Add(hoa); await db.SaveChangesAsync();
@@ -222,10 +231,11 @@ public sealed class GiftApiTests
         Assert.Equal((PlanningGift.Paid, (long?)700_000), (counted.Status, counted.AmountReceived));
 
         var reception = (await desk.GetFromJsonAsync<List<GiftDto>>(path + "/reception"))!;
-        Assert.Equal(6, reception.Count); // owner: present + envelope; desk: envelope + present + shown transfer + sealed envelope
-        Assert.All(reception, g => Assert.True(g.Method is PlanningGift.Cash or PlanningGift.Item || g.HasProof));
+        Assert.Equal(8, reception.Count); // owner: present + envelope + desk transfer; desk: envelope + present + 2 shown transfers + sealed envelope
+        Assert.DoesNotContain(reception, g => g.Id == seen.Id); // the gift book's own transfers are not desk records
+        Assert.All(reception, g => Assert.True(g.Method is PlanningGift.Cash or PlanningGift.Item || g.HasProof || g.ClaimedAt is not null));
         Assert.All(reception, g => Assert.Null(g.Message)); // wishes stay with the couple
-        Assert.Equal(300_000, reception.Single(g => g.HasProof).AmountReceived ?? reception.Single(g => g.HasProof).AmountExpected); // checked against the guest's phone
+        Assert.Equal(300_000, reception.Single(g => g.Id == shown.Id).AmountReceived ?? reception.Single(g => g.Id == shown.Id).AmountExpected); // checked against the guest's phone
         Assert.Contains(reception, g => g.ItemName == "Nồi chiên không dầu");
         Assert.Contains(1_000_000L, (await owner.GetFromJsonAsync<List<GiftDto>>(path + "/reception"))!.Select(g => g.AmountReceived ?? 0));
         foreach (var hidden in new[] { path, path + "/summary", path + "/export", path + "/transactions" })

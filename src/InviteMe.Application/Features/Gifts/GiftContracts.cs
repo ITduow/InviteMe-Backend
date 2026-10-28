@@ -38,14 +38,16 @@ public sealed record SaveGiftAccount(string BankBin, string AccountNumber, strin
 /// <summary>
 /// Method CASH (envelope), TRANSFER or ITEM (a present handed over at the wedding: ItemName and Quantity, optional EstimatedValue,
 /// no Amount). GiverName is required without GuestId. TRANSFER by the owner = seen in the bank app (received); TRANSFER by a
-/// co-host = shown at the reception desk, needs ProofId (photo uploaded first) and waits for the couple to confirm the money.
+/// co-host = shown at the reception desk, waits for the couple to confirm the money (ProofId, a photo uploaded first, is optional).
 /// CASH without Amount = a sealed envelope: the couple enters the amount when they confirm it.
 /// ParticipantId (with GuestId) = the person of the invitation who gave, e.g. a companion; their name becomes the giver.
+/// FromDesk = recorded on the reception desk screen: a transfer there is only what the guest's phone shows, so it waits for the
+/// couple to confirm the money even when the owner records it.
 /// </summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record RecordGift(string Method, long? Amount = null, Guid? GuestId = null, string? GiverName = null, string? Message = null,
     DateTimeOffset? ReceivedAt = null, string? ItemName = null, int? Quantity = null, long? EstimatedValue = null, Guid? ProofId = null,
-    Guid? ParticipantId = null);
+    Guid? ParticipantId = null, bool FromDesk = false);
 
 /// <summary>A transfer photo uploaded at the reception desk, to put in RecordGift.ProofId.</summary>
 public sealed record GiftProofDto(Guid Id);
