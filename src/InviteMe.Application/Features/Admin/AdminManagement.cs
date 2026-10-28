@@ -45,10 +45,13 @@ public interface IAdminStore
     Task<AdminUserDto> SetUserRoleAsync(Guid actorId, Guid userId, string role, CancellationToken ct);
     Task<PagedResult<AdminWeddingDto>> ListWeddingsAsync(AdminWeddingQuery query, CancellationToken ct);
     Task<PagedResult<AdminTemplateDto>> ListTemplatesAsync(AdminTemplateQuery query, CancellationToken ct);
+    Task<AdminTemplateDto> GetTemplateAsync(Guid templateId, CancellationToken ct);
     Task<IReadOnlyList<AdminTemplateVisibilityDto>> ListTemplateVisibilityAsync(CancellationToken ct);
     Task<AdminTemplateDto> CreateTemplateAsync(Guid actorId, CreateAdminTemplateInput input, CancellationToken ct);
     Task<AdminTemplateDto> UpdateTemplateAsync(Guid actorId, Guid templateId, UpdateAdminTemplateInput input, CancellationToken ct);
     Task<AdminTemplateDto> SetTemplateStatusAsync(Guid actorId, Guid templateId, string status, CancellationToken ct);
+    Task<AdminTemplateDto> PublishTemplateAsync(Guid actorId, Guid templateId, CancellationToken ct);
+    Task<IReadOnlyList<AdminTemplateDto>> ListPublishedTemplatesAsync(CancellationToken ct);
     Task<AdminAccessControlDto> GetAccessControlAsync(CancellationToken ct);
     Task<AdminAccessControlDto> UpdateRolePermissionsAsync(Guid actorId, string roleCode, UpdateAdminRolePermissionsInput input, CancellationToken ct);
     Task<PagedResult<AdminAuditLogDto>> ListAuditLogsAsync(AuditLogQuery query, PageRequest page, CancellationToken ct);

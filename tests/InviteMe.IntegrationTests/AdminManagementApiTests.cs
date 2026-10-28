@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using InviteMe.Application.Features.Invitations;
 using InviteMe.Application.Features.Identity.Accounts;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Domain.Audit;
@@ -16,6 +18,92 @@ namespace InviteMe.IntegrationTests;
 public sealed class AdminManagementApiTests
 {
     private const string Password = "Test-only-Pass123!";
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task PublishedInvitationTemplateRemainsStableUntilRepublished() =>
+        SchemaV2MigrationTests.InDatabase(async db =>
+        {
+            await db.Database.MigrateAsync();
+            await using var factory = new DatabaseApiFactory(db.Database.GetConnectionString()!);
+            using var admin = await RegisterAndPromote(factory, db, "template-editor");
+            using var ordinary = await SignIn(factory, "template-viewer");
+            var seeded = (await ordinary.GetFromJsonAsync<List<PublicTemplateDto>>("/api/templates"))!;
+            Assert.True(seeded.Count >= 15);
+            Assert.All(seeded, item =>
+                Assert.True(InvitationDesignHandler.ValidDocument(JsonDocument.Parse(item.ConfigurationJson!).RootElement), item.Slug));
+            var slug = $"snapshot-{Guid.NewGuid():N}";
+            static string Document(string color) => JsonSerializer.Serialize(new
+            {
+                schemaVersion = 1,
+                nodes = new Dictionary<string, object>
+                {
+                    ["ROOT"] = new
+                    {
+                        type = new { resolvedName = "StudioFrame" }, isCanvas = true,
+                        props = new { width = 480, height = 800, background = color },
+                        displayName = "StudioFrame", custom = new { }, hidden = false,
+                        nodes = Array.Empty<string>(), linkedNodes = new { }
+                    }
+                }
+            });
+            var original = Document("#fff8ed");
+            var revised = Document("#ffffff");
+            static bool SameDocument(string? actual, string expected) => actual is not null &&
+                JsonElement.DeepEquals(JsonDocument.Parse(actual).RootElement, JsonDocument.Parse(expected).RootElement);
+            var created = await admin.PostAsJsonAsync("/api/admin/templates", new
+            {
+                name = "Snapshot original", slug, configurationJson = original, status = "DRAFT"
+            });
+            Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+            var id = (await created.Content.ReadFromJsonAsync<AdminTemplateDto>())!.Id;
+            Assert.DoesNotContain((await ordinary.GetFromJsonAsync<List<PublicTemplateDto>>("/api/templates"))!, x => x.Id == id);
+            Assert.Equal(HttpStatusCode.Forbidden, (await ordinary.PostAsync($"/api/admin/templates/{id}/publish", null)).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync($"/api/admin/templates/{id}/publish", null)).StatusCode);
+            Assert.Contains((await ordinary.GetFromJsonAsync<List<PublicTemplateDto>>("/api/templates"))!,
+                x => x.Id == id && x.Name == "Snapshot original" && SameDocument(x.ConfigurationJson, original));
+
+            var updated = await admin.PutAsJsonAsync($"/api/admin/templates/{id}", new
+            {
+                name = "Snapshot revised", slug, configurationJson = revised, status = "ACTIVE"
+            });
+            Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+            Assert.Contains((await ordinary.GetFromJsonAsync<List<PublicTemplateDto>>("/api/templates"))!,
+                x => x.Id == id && x.Name == "Snapshot original" && SameDocument(x.ConfigurationJson, original));
+            Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync($"/api/admin/templates/{id}/publish", null)).StatusCode);
+            Assert.Contains((await ordinary.GetFromJsonAsync<List<PublicTemplateDto>>("/api/templates"))!,
+                x => x.Id == id && x.Name == "Snapshot revised" && SameDocument(x.ConfigurationJson, revised));
+            Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync($"/api/admin/templates/{id}/status", new { status = "INACTIVE" })).StatusCode);
+            Assert.DoesNotContain((await ordinary.GetFromJsonAsync<List<PublicTemplateDto>>("/api/templates"))!, x => x.Id == id);
+
+            byte[] photo = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46];
+            using var form = new MultipartFormDataContent();
+            form.Add(new ByteArrayContent(photo), "file", "photo.jpg");
+            var upload = await admin.PostAsync($"/api/admin/templates/{id}/assets", form);
+            Assert.Equal(HttpStatusCode.OK, upload.StatusCode);
+            var asset = (await upload.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("src").GetString()!;
+            Assert.StartsWith($"/media/template-assets/{id:N}/", asset);
+            Assert.Equal(photo, await (await ordinary.GetAsync(asset)).Content.ReadAsByteArrayAsync());
+            var withImage = JsonNode.Parse(revised)!;
+            withImage["nodes"]!["ROOT"]!["props"]!["src"] = asset;
+            Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync($"/api/admin/templates/{id}", new
+            {
+                name = "Snapshot revised", slug, configurationJson = withImage.ToJsonString(), status = "DRAFT"
+            })).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync($"/api/admin/templates/{id}/publish", null)).StatusCode);
+            Assert.Contains((await ordinary.GetFromJsonAsync<List<PublicTemplateDto>>("/api/templates"))!,
+                x => x.Id == id && x.ConfigurationJson!.Contains(asset, StringComparison.Ordinal));
+
+            var invalid = await admin.PostAsJsonAsync("/api/admin/templates", new
+            {
+                name = "Invalid child", slug = $"invalid-{Guid.NewGuid():N}",
+                configurationJson = "{\"schemaVersion\":1,\"nodes\":{\"ROOT\":{\"type\":{\"resolvedName\":\"StudioFrame\"},\"props\":{},\"nodes\":[\"missing\"]}}}",
+                status = "DRAFT"
+            });
+            Assert.Equal(HttpStatusCode.Created, invalid.StatusCode);
+            var invalidId = (await invalid.Content.ReadFromJsonAsync<AdminTemplateDto>())!.Id;
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await admin.PostAsync($"/api/admin/templates/{invalidId}/publish", null)).StatusCode);
+        });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task AdminManagementUsesScopedPermissionsAndAuditsChanges() =>

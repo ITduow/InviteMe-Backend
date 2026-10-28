@@ -165,6 +165,8 @@ public sealed class PublicationLifecycleTests
         {
             using var owner = await CoHostPermissionTests.SignIn(factory, "legacy-website-owner");
             var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "legacy-website-slug");
+            db.WeddingSettings.Add(WeddingSettings.Create(wedding.Id));
+            await db.SaveChangesAsync();
             var legacyJson = JsonSerializer.Serialize(new
             {
                 templateId = "story-red-velvet",
@@ -176,7 +178,7 @@ public sealed class PublicationLifecycleTests
                 venueAddress = "194 Hoàng Văn Thụ"
             });
             await db.Database.ExecuteSqlInterpolatedAsync(
-                $"UPDATE inviteme.wedding_settings SET website_published_json = {legacyJson}::jsonb, website_status = 1 WHERE wedding_id = {wedding.Id}");
+                $"UPDATE inviteme.wedding_settings SET website_published_json = {legacyJson}::jsonb, website_status = 'PUBLISHED' WHERE wedding_id = {wedding.Id}");
             var publicPath = "/api/public/weddings/legacy-website-slug";
             var publicSite = await owner.GetFromJsonAsync<PublicWebsiteDto>(publicPath);
             Assert.NotNull(publicSite);

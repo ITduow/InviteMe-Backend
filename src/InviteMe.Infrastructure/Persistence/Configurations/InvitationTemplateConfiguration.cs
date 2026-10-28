@@ -21,6 +21,12 @@ public sealed class InvitationTemplateConfiguration : IEntityTypeConfiguration<I
         builder.Property(x => x.Theme).HasColumnName("theme").HasColumnType("varchar(100)").HasMaxLength(100);
         builder.Property(x => x.PreviewUrl).HasColumnName("preview_url").HasColumnType("text");
         builder.Property(x => x.Configuration).HasColumnName("configuration").HasColumnType("jsonb");
+        builder.Property(x => x.PublishedConfiguration).HasColumnName("published_configuration").HasColumnType("jsonb");
+        builder.Property(x => x.PublishedName).HasColumnName("published_name").HasColumnType("varchar(150)").HasMaxLength(150);
+        builder.Property(x => x.PublishedTheme).HasColumnName("published_theme").HasColumnType("varchar(100)").HasMaxLength(100);
+        builder.Property(x => x.PublishedPreviewUrl).HasColumnName("published_preview_url").HasColumnType("text");
+        builder.Property(x => x.PublishedVersion).HasColumnName("published_version").HasDefaultValue(0);
+        builder.Property(x => x.PublishedAt).HasColumnName("published_at").HasColumnType("timestamp with time zone");
         builder.Property(x => x.Status).HasColumnName("status").HasColumnType("varchar(20)").HasMaxLength(20).IsRequired().HasDefaultValue("ACTIVE");
         builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasColumnType("timestamp with time zone").IsRequired().HasDefaultValueSql("NOW()");
         builder.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasColumnType("timestamp with time zone").IsRequired().HasDefaultValueSql("NOW()");

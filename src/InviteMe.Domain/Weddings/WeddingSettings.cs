@@ -33,10 +33,10 @@ public sealed class WeddingSettings
     public void SetSettingsJson(string json) => SettingsJson = json;
     public void SaveWebsiteDraft(string json)
     { WebsiteDraftJson = json; WebsiteVersion++; }
-    public void PublishWebsite()
+    public void PublishWebsite(string? snapshot = null)
     {
         if (WebsiteDraftJson is null) throw new InvalidOperationException("Website draft is required.");
-        WebsitePublishedJson = WebsiteDraftJson;
+        WebsitePublishedJson = snapshot ?? WebsiteDraftJson;
         WebsiteStatus = WebsitePublicationStatus.PUBLISHED;
         WebsiteVersion++;
     }

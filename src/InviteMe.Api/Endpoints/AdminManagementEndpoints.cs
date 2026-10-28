@@ -5,6 +5,9 @@ using InviteMe.Application.Features.Audit;
 using InviteMe.Application.Features.Identity.Accounts;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Api.Authentication;
+using InviteMe.Application.Features.Weddings.Setup;
+using InviteMe.Domain.Weddings;
+using Microsoft.AspNetCore.Mvc;
 
 namespace InviteMe.Api.Endpoints;
 
@@ -49,6 +52,9 @@ internal static class AdminManagementEndpoints
                 string? search = null, string? status = null) =>
             Results.Ok(await store.ListTemplatesAsync(new(page, pageSize, search, status), ct)))
             .RequireAuthorization(AdminPolicyNames.TemplatesView).WithName("ListAdminTemplates");
+        group.MapGet("/templates/{templateId:guid}", async (Guid templateId, IAdminStore store, CancellationToken ct) =>
+            Results.Ok(await store.GetTemplateAsync(templateId, ct)))
+            .RequireAuthorization(AdminPolicyNames.TemplatesView).WithName("GetAdminTemplate");
         group.MapPost("/templates", async (CreateAdminTemplateInput input, IAdminStore store, ICurrentUser current, CancellationToken ct) =>
         {
             var template = await store.CreateTemplateAsync(RequireActor(current), input, ct);
@@ -62,6 +68,27 @@ internal static class AdminManagementEndpoints
                 IAdminStore store, ICurrentUser current, CancellationToken ct) =>
             Results.Ok(await store.SetTemplateStatusAsync(RequireActor(current), templateId, input.Status, ct)))
             .RequireAuthorization(AdminPolicyNames.TemplatesManage).WithName("SetAdminTemplateStatus");
+        group.MapPost("/templates/{templateId:guid}/publish", async (Guid templateId, IAdminStore store,
+                ICurrentUser current, CancellationToken ct) =>
+            Results.Ok(await store.PublishTemplateAsync(RequireActor(current), templateId, ct)))
+            .RequireAuthorization(AdminPolicyNames.TemplatesManage).WithName("PublishAdminTemplate");
+        group.MapPost("/templates/{templateId:guid}/assets", async (Guid templateId,
+                [FromForm] AdminTemplateAssetForm form, IAdminStore store, IWeddingMediaStorage media, CancellationToken ct) =>
+        {
+            await store.GetTemplateAsync(templateId, ct);
+            if (form.File is null || form.File.Length is <= 0 or > UploadLimits.MaxImageBytes)
+                return Results.BadRequest(new { code = "TEMPLATE_ASSET_INVALID" });
+            await using var input = form.File.OpenReadStream();
+            using var buffer = new MemoryStream();
+            await input.CopyToAsync(buffer, ct);
+            buffer.Position = 0;
+            var detected = await WeddingCoverImage.DetectAsync(buffer, ct);
+            var stored = await media.SaveAsync(templateId, detected.Content, detected.Extension, ct);
+            return Results.Ok(new { src = $"/media/template-assets/{templateId:N}/{stored.Key}", name = form.File.FileName });
+        }).DisableAntiforgery().RequireRateLimiting("wedding-cover-upload")
+            .WithMetadata(new RequestSizeLimitAttribute(UploadLimits.MaxImageRequestBytes),
+                new RequestFormLimitsAttribute { MultipartBodyLengthLimit = UploadLimits.MaxImageRequestBytes })
+            .RequireAuthorization(AdminPolicyNames.TemplatesManage).WithName("UploadAdminTemplateAsset");
 
         group.MapGet("/access-control", async (IAdminStore store, CancellationToken ct) =>
             Results.Ok(await store.GetAccessControlAsync(ct)))
@@ -79,8 +106,8 @@ internal static class AdminManagementEndpoints
 
         endpoints.MapGet("/api/templates", async (IAdminStore store, CancellationToken ct) =>
         {
-            var page = await store.ListTemplatesAsync(new(1, PageRequest.MaxPageSize, Status: "ACTIVE"), ct);
-            return Results.Ok(page.Items.Where(x => x.ConfigurationJson is not null).Select(x => new PublicTemplateDto(x.Id, x.Name, x.Slug, x.Theme,
+            var templates = await store.ListPublishedTemplatesAsync(ct);
+            return Results.Ok(templates.Select(x => new PublicTemplateDto(x.Id, x.Name, x.Slug, x.Theme,
                 x.PreviewUrl, x.ConfigurationJson)).ToArray());
         }).AllowAnonymous().WithTags("Templates").WithName("ListPublicTemplates");
 
@@ -98,4 +125,5 @@ internal static class AdminManagementEndpoints
 }
 
 internal sealed record TemplateStatusInput(string Status);
+internal sealed class AdminTemplateAssetForm { public IFormFile? File { get; set; } }
 internal sealed record PublicTemplateDto(Guid Id, string Name, string Slug, string? Theme, string? PreviewUrl, string? ConfigurationJson);

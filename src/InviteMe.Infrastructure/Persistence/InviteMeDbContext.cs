@@ -36,9 +36,11 @@ public sealed class InviteMeDbContext(DbContextOptions<InviteMeDbContext> option
     public DbSet<Plan> Plans => Set<Plan>();
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
     public DbSet<InvitationTemplate> Templates => Set<InvitationTemplate>();
+    public DbSet<StoryTemplate> StoryTemplates => Set<StoryTemplate>();
     public DbSet<TemplateSection> TemplateSections => Set<TemplateSection>();
     public DbSet<WeddingSettings> WeddingSettings => Set<WeddingSettings>();
     public DbSet<LoveStory> LoveStories => Set<LoveStory>();
+    public DbSet<InviteMe.Infrastructure.Persistence.Adapters.StoryWishRow> StoryWishes => Set<InviteMe.Infrastructure.Persistence.Adapters.StoryWishRow>();
     public DbSet<Venue> Venues => Set<Venue>();
     public DbSet<WeddingEvent> WeddingEvents => Set<WeddingEvent>();
     public DbSet<WeddingMedia> WeddingMedia => Set<WeddingMedia>();
