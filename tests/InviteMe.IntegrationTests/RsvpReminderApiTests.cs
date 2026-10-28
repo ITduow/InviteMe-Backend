@@ -42,7 +42,7 @@ public sealed class RsvpReminderApiTests
         var guests = await Import(db, owner, w, ("An", "an@example.test"), ("Bình", "binh@example.test"), ("Chi", null), ("Dũng", "dung@example.test"));
         await InvitationEmailed(db, w, ownerId, guests["An"], guests["Bình"]);
         using var guestClient = Client(factory);
-        await Read<RsvpDto>(await guestClient.PostAsJsonAsync("/api/rsvp/" + await Token(db, guests["Bình"]), new SubmitRsvp(0, "DECLINED", [])));
+        await Read<RsvpDto>(await guestClient.PostAsJsonAsync("/api/rsvp/" + await Token(db, guests["Bình"]), new SubmitRsvp(0, "DECLINED")));
         var path = $"/api/weddings/{w}/rsvps/reminders";
 
         var preview = await owner.GetFromJsonAsync<RsvpReminderPreviewDto>(path + "/preview");
@@ -91,6 +91,30 @@ public sealed class RsvpReminderApiTests
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task MaybeGuestsKeepGettingRemindersWithTheirOwnText() => WithApi(async (db, factory, sender, owner, ownerId) =>
+    {
+        // Meeting 26/10: "Phân vân" guests are reminded like guests who have not answered; a firm Có/Không is not asked again.
+        var now = DateTimeOffset.UtcNow;
+        var w = await Wedding(db, ownerId, "reminder-maybe", deadline: now.AddDays(2));
+        var guests = await Import(db, owner, w, ("An", "an@example.test"), ("Bình", "binh@example.test"));
+        await InvitationEmailed(db, w, ownerId, guests["An"], guests["Bình"]);
+        using var guestClient = Client(factory);
+        await Read<RsvpDto>(await guestClient.PostAsJsonAsync("/api/rsvp/" + await Token(db, guests["An"]), new SubmitRsvp(0, "MAYBE", 2)));
+        await Read<RsvpDto>(await guestClient.PostAsJsonAsync("/api/rsvp/" + await Token(db, guests["Bình"]), new SubmitRsvp(0, "ATTENDING", 1)));
+        var path = $"/api/weddings/{w}/rsvps/reminders";
+
+        var summary = (await owner.GetFromJsonAsync<RsvpReminderSummaryDto>(path + "/summary"))!;
+        Assert.Equal((1, 1), (summary.NotResponded, summary.Maybe)); // NotResponded = not settled yet (no answer or MAYBE)
+        var preview = (await owner.GetFromJsonAsync<RsvpReminderPreviewDto>(path + "/preview"))!;
+        Assert.Equal("An", Assert.Single(preview.Eligible).RecipientName);
+        var run = await RunNow(owner, path, null); // the 3-day round is due
+        Assert.Equal((1, 1), (run.Scheduled, run.Sent));
+        var mail = Assert.Single(sender.Messages);
+        Assert.Equal("an@example.test", mail.Recipient);
+        Assert.Contains("Phân vân", mail.Content);
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task RemindersStopWhenTheGuestAnswersOrTheHostsTurnThemOff() => WithApi(async (db, factory, sender, owner, ownerId) =>
     {
         var now = DateTimeOffset.UtcNow;
@@ -110,7 +134,7 @@ public sealed class RsvpReminderApiTests
         // Giang and Hà get a manual reminder first; Giang answers before it goes out → cancelled.
         Assert.Equal(2, (await Read<RsvpReminderSendResult>(await owner.PostAsJsonAsync(path + "/send",
             new SendRsvpReminders([guests["Giang"], guests["Hà"]])))).Queued);
-        await Read<RsvpDto>(await guestClient.PostAsJsonAsync("/api/rsvp/" + await Token(db, guests["Giang"]), new SubmitRsvp(0, "DECLINED", [])));
+        await Read<RsvpDto>(await guestClient.PostAsJsonAsync("/api/rsvp/" + await Token(db, guests["Giang"]), new SubmitRsvp(0, "DECLINED")));
         sender.FailNext = true; // Hà: the mail server is down once
         var run = await RunNow(owner, path, null);
         Assert.Equal((2, 2, 1, 1), (run.Scheduled, run.Sent, run.Cancelled, run.Failed)); // AUTO_3D for Em + Phúc are sent
@@ -126,7 +150,7 @@ public sealed class RsvpReminderApiTests
             sender.Messages.Select(m => m.Recipient).OrderBy(x => x).ToArray());
 
         // Phúc answers: the 1-day round reaches Em and Hà only (Giang and Phúc answered).
-        await Read<RsvpDto>(await guestClient.PostAsJsonAsync("/api/rsvp/" + await Token(db, guests["Phúc"]), new SubmitRsvp(0, "DECLINED", [])));
+        await Read<RsvpDto>(await guestClient.PostAsJsonAsync("/api/rsvp/" + await Token(db, guests["Phúc"]), new SubmitRsvp(0, "DECLINED")));
         run = await RunNow(owner, path, now.AddHours(25));
         Assert.Equal((2, 2), (run.Scheduled, run.Sent));
         Assert.Equal(new[] { "em@example.test", "ha@example.test" }, sender.Messages.Skip(3).Select(m => m.Recipient).OrderBy(x => x).ToArray());

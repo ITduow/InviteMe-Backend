@@ -76,9 +76,8 @@ public sealed class GuestAccessApiTests
 
         // The party answers for the representative only: places 2-4 become UNUSED. RSVP keeps the seat of place 2 for
         // the hosts to clear, but the guest page no longer shows its table.
-        var main = await db.Set<PlanningParticipant>().AsNoTracking().SingleAsync(x => x.GuestId == guest.Id);
         Assert.Equal(HttpStatusCode.Created,
-            (await anonymous.PostAsJsonAsync($"/api/rsvp/{token}", new SubmitRsvp(0, "ATTENDING", [main.Id]))).StatusCode);
+            (await anonymous.PostAsJsonAsync($"/api/rsvp/{token}", new SubmitRsvp(0, "ATTENDING", 1))).StatusCode);
         var answered = (await anonymous.GetFromJsonAsync<GuestSeatsDto>($"/api/guest-invitations/{token}/seats"))!;
         Assert.Equal(new[] { RsvpPlaceStatus.Used, RsvpPlaceStatus.Unused, RsvpPlaceStatus.Unused, RsvpPlaceStatus.Unused },
             answered.Seats.Select(x => x.Status));

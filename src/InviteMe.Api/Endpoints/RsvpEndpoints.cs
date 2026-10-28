@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.RateLimiting;
 namespace InviteMe.Api.Endpoints;
 
 /// <summary>
-/// RSVP module (Guest03 RSVP + Guest04 capacity + Couple06 RSVP rules) on Guest Planning v2 parties. Self-contained: its own
+/// RSVP module (Guest03 RSVP + Couple06 RSVP rules) on Guest Planning v2 parties. Self-contained: its own
 /// routes, Swagger tags and rate-limit policy. Guest routes use the planning guest's invitation token (the same token as
 /// /invite/{token} and GET /api/guest-invitations/{token}); host routes need a JWT and a wedding permission.
 /// </summary>
@@ -89,22 +89,17 @@ internal static class RsvpEndpoints
             .WithName("SubmitGuestRsvp")
             .Produces<RsvpDto>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-        host.MapGet("/rsvps/waitlist", (Guid weddingId, RsvpHandler h, CancellationToken ct, int page = 1, int pageSize = 25) => h.WaitlistAsync(weddingId, new PageRequest(page, pageSize), ct))
-            .WithName("ListRsvpWaitlist")
-            .Produces<PagedResult<WaitlistDto>>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden);
-        host.MapPost("/rsvps/waitlist/{entryId:guid}/promote", (Guid weddingId, Guid entryId, RsvpHandler h, CancellationToken ct) => h.PromoteAsync(weddingId, entryId, ct))
-            .WithName("PromoteRsvpWaitlistEntry")
+        host.MapPost("/rsvps/{guestId:guid}/acknowledge", (Guid weddingId, Guid guestId, RsvpHandler h, CancellationToken ct) =>
+                h.AcknowledgeAsync(weddingId, guestId, ct))
+            .WithName("AcknowledgeRsvpOverLimit")
             .Produces<RsvpDto>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-        host.MapPost("/rsvps/waitlist/{entryId:guid}/decline", (Guid weddingId, Guid entryId, RsvpHandler h, CancellationToken ct) => h.DeclineWaitlistAsync(weddingId, entryId, ct))
-            .WithName("DeclineRsvpWaitlistEntry")
-            .Produces<RsvpDto>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
         // Guest05 reminders (RsvpReminderEndpoints).
         host.MapRsvpReminders(endpoints.ServiceProvider.GetRequiredService<IWebHostEnvironment>().IsDevelopment());
         return endpoints;
     }
 
-    // 202 = stored as a change request for the hosts (RSVP locked); otherwise 201 for the first answer, 200 for a change.
+    // 202 = stored as a change request for the couple (RSVP locked); otherwise 201 for the first answer, 200 for a change.
     private static IResult Written(RsvpWriteResult result, bool created) =>
         result.Queued ? Results.Json(result.Rsvp, statusCode: StatusCodes.Status202Accepted)
         : created ? Results.Json(result.Rsvp, statusCode: StatusCodes.Status201Created) : Results.Ok(result.Rsvp);

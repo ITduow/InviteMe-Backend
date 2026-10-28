@@ -16,10 +16,12 @@ namespace InviteMe.Application.Features.Rsvps;
 /// </summary>
 public sealed class RsvpHandler(IRsvpStore store, IWeddingPermissionService permissions, ICurrentUser user,
     RequestValidation<SubmitRsvp> validation, RequestValidation<PageRequest> pageValidation,
-    RequestValidation<SaveRsvpSettings> settingsValidation, RequestValidation<LockRsvps> lockValidation, IPlanningChangePublisher changes)
+    RequestValidation<SaveRsvpSettings> settingsValidation, RequestValidation<LockRsvps> lockValidation,
+    IPlanningChangePublisher changes)
 {
     public const string RsvpChanged = "RsvpChanged", RsvpRequested = "RsvpChangeRequested", RsvpLocksChanged = "RsvpLocksChanged",
-        RsvpSettingsChanged = "RsvpSettingsChanged", SeatingNeedsAttention = "PlanningSeatingNeedsAttention";
+        RsvpSettingsChanged = "RsvpSettingsChanged", SeatingNeedsAttention = "PlanningSeatingNeedsAttention",
+        RsvpOverLimit = "RsvpOverLimit";
 
     public Task<RsvpDto> PublicGetAsync(string token, CancellationToken ct) => store.PublicGetAsync(token, ct);
 
@@ -47,28 +49,16 @@ public sealed class RsvpHandler(IRsvpStore store, IWeddingPermissionService perm
         return (await Notify(await store.SubmitAsync(weddingId, guestId, user.UserId!.Value, input, ct), ct)).Rsvp;
     }
 
-    public async Task<PagedResult<WaitlistDto>> WaitlistAsync(Guid weddingId, PageRequest page, CancellationToken ct)
+    /// <summary>"Đã xem": the couple has seen an over-threshold invitation and keeps its number of people. Needs GUEST_EDIT for that guest.</summary>
+    public async Task<RsvpDto> AcknowledgeAsync(Guid weddingId, Guid guestId, CancellationToken ct)
     {
-        await RequireWeddingWideAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
-        await pageValidation.ValidateAsync(page, ct);
-        return await store.WaitlistAsync(weddingId, page, ct);
-    }
-
-    public async Task<RsvpDto> PromoteAsync(Guid weddingId, Guid entryId, CancellationToken ct)
-    {
-        await RequireWeddingWideAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
-        return (await Notify(await store.PromoteAsync(weddingId, entryId, user.UserId!.Value, ct), ct)).Rsvp;
-    }
-
-    public async Task<RsvpDto> DeclineWaitlistAsync(Guid weddingId, Guid entryId, CancellationToken ct)
-    {
-        await RequireWeddingWideAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
-        return (await Notify(await store.DeclineWaitlistAsync(weddingId, entryId, user.UserId!.Value, ct), ct)).Rsvp;
+        await permissions.RequireGuestAsync(weddingId, WeddingPermission.GUEST_EDIT, guestId, ct);
+        return (await Notify(await store.AcknowledgeAsync(weddingId, guestId, user.UserId!.Value, ct), ct)).Rsvp;
     }
 
     public async Task<PagedResult<RsvpRequestDto>> RequestsAsync(Guid weddingId, string? status, PageRequest page, CancellationToken ct)
     {
-        await RequireWeddingWideAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
+        await permissions.RequireWeddingWideAsync(weddingId, WeddingPermission.RSVP_VIEW, ct);
         await pageValidation.ValidateAsync(page, ct);
         var wanted = string.IsNullOrWhiteSpace(status) ? Domain.Rsvps.PlanningRsvpRequest.Pending : status.Trim().ToUpperInvariant();
         if (wanted is not (Domain.Rsvps.PlanningRsvpRequest.Pending or Domain.Rsvps.PlanningRsvpRequest.Approved
@@ -79,13 +69,13 @@ public sealed class RsvpHandler(IRsvpStore store, IWeddingPermissionService perm
 
     public async Task<RsvpDto> ResolveRequestAsync(Guid weddingId, Guid requestId, bool approve, CancellationToken ct)
     {
-        await RequireWeddingWideAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
+        await permissions.RequireWeddingWideAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
         return (await Notify(await store.ResolveRequestAsync(weddingId, requestId, user.UserId!.Value, approve, ct), ct)).Rsvp;
     }
 
     public async Task<LockRsvpsResult> LockAsync(Guid weddingId, LockRsvps input, CancellationToken ct)
     {
-        await RequireWeddingWideAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
+        await permissions.RequireWeddingWideAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
         await lockValidation.ValidateAsync(input, ct);
         var result = await store.LockAsync(weddingId, user.UserId!.Value, input, ct);
         await changes.PublishAsync(weddingId, new(RsvpLocksChanged, weddingId), ct);
@@ -93,11 +83,11 @@ public sealed class RsvpHandler(IRsvpStore store, IWeddingPermissionService perm
     }
 
     public async Task<RsvpSettingsDto> SettingsAsync(Guid weddingId, CancellationToken ct)
-    { await RequireWeddingWideAsync(weddingId, WeddingPermission.RSVP_VIEW, ct); return await store.SettingsAsync(weddingId, ct); }
+    { await permissions.RequireWeddingWideAsync(weddingId, WeddingPermission.RSVP_VIEW, ct); return await store.SettingsAsync(weddingId, ct); }
 
     public async Task<RsvpSettingsDto> SaveSettingsAsync(Guid weddingId, SaveRsvpSettings input, CancellationToken ct)
     {
-        await RequireWeddingWideAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
+        await permissions.RequireWeddingWideAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
         await settingsValidation.ValidateAsync(input, ct);
         var result = await store.SaveSettingsAsync(weddingId, input, ct);
         await changes.PublishAsync(weddingId, new(RsvpSettingsChanged, weddingId, result.Version), ct);
@@ -108,12 +98,23 @@ public sealed class RsvpHandler(IRsvpStore store, IWeddingPermissionService perm
     private async Task<RsvpWriteResult> Notify(RsvpWriteResult result, CancellationToken ct)
     {
         await changes.PublishAsync(result.WeddingId, new(result.Queued ? RsvpRequested : RsvpChanged, result.Rsvp.GuestId, result.Rsvp.Version), ct);
+        if (result.OverLimit) // the guest has just answered with more people than the invitation's threshold
+            await changes.PublishAsync(result.WeddingId, new(RsvpOverLimit, result.Rsvp.GuestId, result.Rsvp.Version), ct);
         if (result.SeatsNeedAttention)
             await changes.PublishAsync(result.WeddingId, new(SeatingNeedsAttention, result.WeddingId), ct);
         return result;
     }
 
-    private async Task RequireWeddingWideAsync(Guid weddingId, WeddingPermission permission, CancellationToken ct)
+}
+
+/// <summary>
+/// Change requests, locks, settings and reminders cover the whole guest list, so a co-host limited to some groups
+/// (Couple04 scope) may not use them: 403 WEDDING_SCOPE_REQUIRED.
+/// </summary>
+internal static class RsvpPermissions
+{
+    public static async Task RequireWeddingWideAsync(this IWeddingPermissionService permissions, Guid weddingId, WeddingPermission permission,
+        CancellationToken ct)
     {
         var scope = await permissions.RequireScopeAsync(weddingId, permission, ct);
         if (!scope.IsWeddingWide)

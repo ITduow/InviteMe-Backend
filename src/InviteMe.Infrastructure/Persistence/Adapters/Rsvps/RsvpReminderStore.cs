@@ -27,7 +27,7 @@ public sealed class RsvpReminderStore(InviteMeDbContext db) : IRsvpReminderStore
             .Select(x => (bool?)x.AutoRemindersEnabled).SingleOrDefaultAsync(ct) ?? true;
         var guests = await db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null)
             .Select(x => new { x.Id, x.RecipientName, x.Email, x.InvitationToken }).ToListAsync(ct);
-        var responded = (await db.Set<PlanningRsvp>().AsNoTracking().Where(x => x.WeddingId == weddingId).Select(x => x.GuestId).ToListAsync(ct)).ToHashSet();
+        var answers = await db.Set<PlanningRsvp>().AsNoTracking().Where(x => x.WeddingId == weddingId).ToDictionaryAsync(x => x.GuestId, x => x.Status, ct);
         var locked = (await db.Set<PlanningRsvpLock>().AsNoTracking().Where(x => x.WeddingId == weddingId).Select(x => x.GuestId).ToListAsync(ct)).ToHashSet();
         var invited = (await db.InvitationSendJobs.AsNoTracking()
             .Where(x => x.WeddingId == weddingId && x.PlanningGuestId != null && x.Channel == PlanningRsvpReminder.Email && x.Status == "SENT")
@@ -35,9 +35,10 @@ public sealed class RsvpReminderStore(InviteMeDbContext db) : IRsvpReminderStore
         var reminders = (await db.Set<PlanningRsvpReminder>().AsNoTracking().Where(x => x.WeddingId == weddingId)
             .Select(x => new { x.GuestId, x.Kind, x.Status, x.SentAt, x.NextAttemptAt, x.CreatedAt }).ToListAsync(ct)).ToLookup(x => x.GuestId);
         return new(weddingId, wedding.Title, wedding.CanEdit, settings?.RsvpDeadline, settings?.Timezone ?? DefaultTimezone, auto,
-            guests.Select(g => new RsvpReminderGuest(g.Id, g.RecipientName, g.Email, g.InvitationToken, responded.Contains(g.Id), locked.Contains(g.Id),
-                invited.Contains(g.Id), reminders[g.Id].OrderBy(r => r.CreatedAt)
-                    .Select(r => new RsvpReminderMark(r.Kind, r.Status, r.SentAt ?? r.NextAttemptAt)).ToList())).ToList());
+            guests.Select(g => new RsvpReminderGuest(g.Id, g.RecipientName, g.Email, g.InvitationToken, Firm(answers.GetValueOrDefault(g.Id)),
+                locked.Contains(g.Id), invited.Contains(g.Id), reminders[g.Id].OrderBy(r => r.CreatedAt)
+                    .Select(r => new RsvpReminderMark(r.Kind, r.Status, r.SentAt ?? r.NextAttemptAt)).ToList(),
+                answers.GetValueOrDefault(g.Id) == PlanningRsvp.Maybe)).ToList());
     }
 
     public async Task SetAutoAsync(Guid weddingId, bool enabled, CancellationToken ct)
@@ -112,7 +113,7 @@ public sealed class RsvpReminderStore(InviteMeDbContext db) : IRsvpReminderStore
             .Select(x => new { x.WeddingId, x.RsvpDeadline, x.Timezone }).ToDictionaryAsync(x => x.WeddingId, ct);
         var autoOff = (await db.Set<PlanningRsvpSettings>().AsNoTracking().Where(x => weddingIds.Contains(x.WeddingId) && !x.AutoRemindersEnabled)
             .Select(x => x.WeddingId).ToListAsync(ct)).ToHashSet();
-        var responded = (await db.Set<PlanningRsvp>().AsNoTracking().Where(x => guestIds.Contains(x.GuestId)).Select(x => x.GuestId).ToListAsync(ct)).ToHashSet();
+        var answers = await db.Set<PlanningRsvp>().AsNoTracking().Where(x => guestIds.Contains(x.GuestId)).ToDictionaryAsync(x => x.GuestId, x => x.Status, ct);
         var locked = (await db.Set<PlanningRsvpLock>().AsNoTracking().Where(x => guestIds.Contains(x.GuestId)).Select(x => x.GuestId).ToListAsync(ct)).ToHashSet();
         return claimed.Select(r =>
         {
@@ -120,7 +121,8 @@ public sealed class RsvpReminderStore(InviteMeDbContext db) : IRsvpReminderStore
             var wedding = weddings[r.WeddingId];
             var s = settings.GetValueOrDefault(r.WeddingId);
             return new RsvpReminderJob(r.Id, r.WeddingId, r.GuestId, r.Kind, wedding.Title, wedding.CanEdit, s?.RsvpDeadline, s?.Timezone ?? DefaultTimezone,
-                !autoOff.Contains(r.WeddingId), g.RecipientName, g.Email, g.InvitationToken, responded.Contains(r.GuestId), locked.Contains(r.GuestId));
+                !autoOff.Contains(r.WeddingId), g.RecipientName, g.Email, g.InvitationToken, Firm(answers.GetValueOrDefault(r.GuestId)), locked.Contains(r.GuestId),
+                answers.GetValueOrDefault(r.GuestId) == PlanningRsvp.Maybe);
         }).ToList();
     }
 
@@ -166,4 +168,7 @@ public sealed class RsvpReminderStore(InviteMeDbContext db) : IRsvpReminderStore
     }
 
     private static ApplicationProblemException Missing(string code) => new(ProblemKind.NotFound, code, "Record is unavailable in this wedding.");
+
+    // A firm answer stops the reminders; MAYBE (Phân vân) keeps getting them (meeting 26/10).
+    private static bool Firm(string? status) => status is not null && status != PlanningRsvp.Maybe;
 }
