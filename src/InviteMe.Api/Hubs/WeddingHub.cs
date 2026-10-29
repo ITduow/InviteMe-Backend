@@ -45,16 +45,11 @@ public sealed class WeddingHub(IWeddingPermissionService permissions, ISeatingDr
         if (placeIds.Count is < 1 or > 500) throw new HubException("INVALID_DRAG_PLACES");
         // Only places inside the caller's seating edit scope can be locked: a group co-host cannot hold other groups' guests.
         var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_EDIT, Context.ConnectionAborted);
-        var plan = await seating.GetScopedAsync(weddingId, Context.ConnectionAborted, scope.IsWeddingWide ? null : scope.GroupIds);
-        if (placeIds.Any(id => !plan.Places.Any(p => p.Id == id)))
+        // A light lookup of the dragged places only: the pointer is not shared until this lease exists.
+        switch (await seating.CheckDragPlacesAsync(weddingId, placeIds, scope.IsWeddingWide ? null : scope.GroupIds, Context.ConnectionAborted))
         {
-            if (!scope.IsWeddingWide)
-            {
-                var fullPlan = await seating.GetAsync(weddingId, Context.ConnectionAborted);
-                if (placeIds.All(id => fullPlan.Places.Any(p => p.Id == id)))
-                    throw new HubException("SEATING_SCOPE_DENIED");
-            }
-            throw new HubException("PLACE_NOT_FOUND");
+            case SeatingDragPlaces.OutOfScope: throw new HubException("SEATING_SCOPE_DENIED");
+            case SeatingDragPlaces.NotFound: throw new HubException("PLACE_NOT_FOUND");
         }
         var account = await accounts.GetAsync(UserId, Context.ConnectionAborted);
         return Lease(() => leases.Acquire(weddingId, UserId, Context.ConnectionId, account?.DisplayName ?? "Cohost", placeIds));
@@ -91,7 +86,7 @@ public sealed class WeddingHub(IWeddingPermissionService permissions, ISeatingDr
         Guid? tableId, int? seatNumber, bool hasTarget)
     {
         if (anchor is null || !double.IsFinite(x) || !double.IsFinite(y) || x is < 0 or > 1 || y is < 0 or > 1 || sequence < 0 ||
-            !(anchor is "queue" or "board" || (anchor.StartsWith("table:", StringComparison.Ordinal) && Guid.TryParse(anchor[6..], out _))))
+            !(anchor is "queue" or "board" or "page" || (anchor.StartsWith("table:", StringComparison.Ordinal) && Guid.TryParse(anchor[6..], out _))))
             throw new HubException("INVALID_DRAG_POINTER");
         if (tableId == Guid.Empty || seatNumber is < 1 or > 20 || (seatNumber != null && tableId == null))
             throw new HubException("INVALID_DRAG_TARGET");

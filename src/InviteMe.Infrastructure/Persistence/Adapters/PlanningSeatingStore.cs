@@ -24,6 +24,20 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         return result;
     }
 
+    public async Task<SeatingDragPlaces> CheckDragPlacesAsync(Guid weddingId, IReadOnlyList<Guid> placeIds, IReadOnlySet<Guid>? groupScope,
+        CancellationToken ct)
+    {
+        // Same rule as the snapshot: places of active (not archived) guests of this wedding; a group scope sees its groups only.
+        var ids = placeIds.Distinct().ToArray();
+        var groups = await (from p in db.Set<PlanningPlace>().AsNoTracking()
+            join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
+            where ids.Contains(p.Id) && g.WeddingId == weddingId && g.ArchivedAt == null
+            select g.GroupId).ToListAsync(ct);
+        if (groups.Count != ids.Length) return SeatingDragPlaces.NotFound;
+        return groupScope is null || groups.All(x => x != null && groupScope.Contains(x.Value))
+            ? SeatingDragPlaces.Allowed : SeatingDragPlaces.OutOfScope;
+    }
+
     public async Task<SeatingLayoutDto> GetLayoutAsync(Guid weddingId, CancellationToken ct)
     {
         var plan = await db.Set<PlanningSeatingPlan>().AsNoTracking().SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
