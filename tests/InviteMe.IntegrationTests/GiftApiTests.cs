@@ -118,6 +118,11 @@ public sealed class GiftApiTests
         var gift = await Read<GuestGiftDto>(await Send(guest, an, new CreateGuestGift(500_000), "bh1"), HttpStatusCode.Created);
 
         using var sepay = Client(factory);
+        // The code of this couple's gift, paid into an account that is not theirs (another couple's Bank Hub account): not received.
+        Assert.Equal(HttpStatusCode.OK, (await BankHub(sepay, "40999", $"{gift.Code} mung cuoi", 500_000, account: "9999999999")).StatusCode);
+        Assert.Equal(PlanningGift.Pending, (await guest.GetFromJsonAsync<GuestGiftDto>($"{an}/{gift.Id}"))!.Status);
+        Assert.Equal(PlanningGiftTransaction.Ignored, (await db.Set<PlanningGiftTransaction>().AsNoTracking()
+            .SingleAsync(x => x.Provider == PlanningGiftTransaction.SePayBankHub && x.ProviderTransactionId == 40999)).Status);
         Assert.Equal(HttpStatusCode.Unauthorized, (await BankHub(sepay, "40532", $"{gift.Code} mung cuoi", 500_000, key: "Apikey wrong")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await BankHub(sepay, "40532", $"{gift.Code} mung cuoi", 500_000, key: null)).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await BankHub(sepay, "", $"{gift.Code} mung cuoi", 500_000)).StatusCode);
@@ -128,7 +133,7 @@ public sealed class GiftApiTests
         Assert.True(JsonDocument.Parse(await ok.Content.ReadAsStringAsync()).RootElement.GetProperty("success").GetBoolean());
         Assert.Equal(PlanningGift.Paid, (await guest.GetFromJsonAsync<GuestGiftDto>($"{an}/{gift.Id}"))!.Status);
         Assert.Equal(HttpStatusCode.OK, (await BankHub(sepay, "40532", $"{gift.Code} mung cuoi", 500_000, key: BankHubKey)).StatusCode); // retry, bare key
-        Assert.Equal(1, await db.Set<PlanningGiftTransaction>().CountAsync(x => x.Provider == PlanningGiftTransaction.SePayBankHub));
+        Assert.Equal(1, await db.Set<PlanningGiftTransaction>().CountAsync(x => x.Provider == PlanningGiftTransaction.SePayBankHub && x.ProviderTransactionId == 40532));
 
         // A UUID id, money going out, and the development helper.
         await BankHub(sepay, "b1293181-f086-11f0-b16e-52c7e9b4f41b", "chuyen tien", 300_000);
@@ -139,7 +144,7 @@ public sealed class GiftApiTests
         var simulated = await Read<GiftWebhookResult>(await owner.PostAsJsonAsync(path + "/dev/simulate-bankhub",
             new SimulateSePayTransfer(200_000, gift2.Code + " mung cuoi")), HttpStatusCode.OK);
         Assert.Equal((PlanningGiftTransaction.Matched, true), (simulated.Status, simulated.Paid));
-        Assert.Equal(4, await db.Set<PlanningGiftTransaction>().CountAsync(x => x.Provider == PlanningGiftTransaction.SePayBankHub));
+        Assert.Equal(5, await db.Set<PlanningGiftTransaction>().CountAsync(x => x.Provider == PlanningGiftTransaction.SePayBankHub));
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
@@ -354,11 +359,11 @@ public sealed class GiftApiTests
     }
 
     private static async Task<HttpResponseMessage> BankHub(HttpClient sepay, string transactionId, string content, long amount,
-        string? key = "Apikey " + BankHubKey, string transferType = "credit")
+        string? key = "Apikey " + BankHubKey, string transferType = "credit", string account = "0000000001")
     {
         var body = JsonSerializer.Serialize(new
         {
-            gateway = "MBBank", transaction_date = "2026-10-29 12:24:06", account_number = "0000000001", bank_account_xid = "587eabfb-f086-11f0",
+            gateway = "MBBank", transaction_date = "2026-10-29 12:24:06", account_number = account, bank_account_xid = "587eabfb-f086-11f0",
             va = (string?)null, payment_code = (string?)null, content, transfer_type = transferType, amount, reference_code = "FT26302123",
             accumulated = 0, transaction_id = transactionId
         });

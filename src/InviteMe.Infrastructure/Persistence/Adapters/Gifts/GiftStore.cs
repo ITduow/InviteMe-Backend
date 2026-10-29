@@ -318,8 +318,11 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         var paid = false;
         if (!string.Equals(payload.TransferType, "in", StringComparison.OrdinalIgnoreCase) || payload.TransferAmount <= 0)
             transaction.Resolve(PlanningGiftTransaction.Ignored, null, null);
+        // A code only counts when the money reached one of that wedding's receiving accounts: with Bank Hub every couple links
+        // their own account, so a transfer into someone else's account must not mark this couple's gift as received.
         else if (code is not null && await db.Set<PlanningGift>()
-                     .FromSqlInterpolated($"SELECT * FROM inviteme.planning_gifts WHERE code = {code} FOR UPDATE").SingleOrDefaultAsync(ct) is { } gift)
+                     .FromSqlInterpolated($"SELECT * FROM inviteme.planning_gifts WHERE code = {code} FOR UPDATE").SingleOrDefaultAsync(ct) is { } gift
+                 && await db.Set<PlanningGiftAccount>().AnyAsync(x => x.WeddingId == gift.WeddingId && x.AccountNumber == transaction.AccountNumber, ct))
         {
             if (gift.Status == PlanningGift.Paid) transaction.Resolve(PlanningGiftTransaction.Duplicate, gift.WeddingId, gift.Id);
             else if (gift.Status == PlanningGift.Cancelled) transaction.Resolve(PlanningGiftTransaction.Unmatched, gift.WeddingId, null);
