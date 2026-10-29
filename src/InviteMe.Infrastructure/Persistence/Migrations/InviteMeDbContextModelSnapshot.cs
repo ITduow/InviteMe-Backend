@@ -2978,6 +2978,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("varchar(30)")
                         .HasColumnName("notification_type");
 
+                    b.Property<DateTimeOffset?>("ReadAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("read_at");
+
                     b.Property<Guid?>("RecipientGuestId")
                         .HasColumnType("uuid")
                         .HasColumnName("recipient_guest_id");
@@ -3025,6 +3029,9 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.HasIndex(new[] { "RecipientUserId" }, "ix_notifications_recipient_user")
                         .HasDatabaseName("ix_notifications_recipient_user");
+
+                    b.HasIndex(new[] { "RecipientUserId", "CreatedAt" }, "ix_notifications_recipient_user_created")
+                        .HasDatabaseName("ix_notifications_recipient_user_created");
 
                     b.HasIndex(new[] { "Status", "ScheduledAt" }, "ix_notifications_status_schedule")
                         .HasDatabaseName("ix_notifications_status_schedule");

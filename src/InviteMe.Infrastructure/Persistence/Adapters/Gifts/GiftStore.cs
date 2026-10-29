@@ -1,3 +1,4 @@
+using InviteMe.Application.Features.Notifications;
 using System.Text.Json;
 using InviteMe.Application.Common.Errors;
 using InviteMe.Application.Features.Gifts;
@@ -16,7 +17,8 @@ namespace InviteMe.Infrastructure.Persistence.Adapters.Gifts;
 /// notification (SePay webhook) or the couple confirms it. Writes on a gift lock its row (FOR UPDATE) so the webhook
 /// and a manual confirmation cannot both pay it.
 /// </summary>
-public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe.Application.Features.Billing.IWeddingEntitlements plans) : IGiftStore
+public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe.Application.Features.Billing.IWeddingEntitlements plans,
+    InviteMe.Infrastructure.Notifications.WeddingNotifier notifier) : IGiftStore
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -83,6 +85,9 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         var gift = await LockGift(wedding.Id, giftId, ct);
         if (gift is null || gift.GuestId != guest.Id) throw Missing("GIFT_NOT_FOUND");
         var changed = gift.Claim(clock.GetUtcNow());
+        if (changed)
+            await notifier.GiftAsync(wedding.Id, NotificationTypes.GiftClaimed,
+                new(gift.Id, gift.GiverName, gift.Method, gift.AmountExpected), null, ct);
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
         return new(GuestDto(gift, (await Accounts(wedding.Id, ct)).FirstOrDefault(a => a.Id == gift.AccountId)), changed, wedding.Id);
     }
@@ -176,6 +181,10 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         }
         db.Add(gift);
         db.AuditLogs.Add(Audit(gift, "GIFT_RECORDED", actor));
+        // Reception recorded a transfer or a sealed envelope: it waits for the couple to confirm.
+        if (atReception && gift.Status == PlanningGift.Claimed)
+            await notifier.GiftAsync(weddingId, NotificationTypes.GiftDeskPending,
+                new(gift.Id, gift.GiverName, gift.Method, gift.AmountExpected), actor, ct);
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
         return Dto(gift, now);
     }
