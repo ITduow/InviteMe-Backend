@@ -26,8 +26,13 @@ public sealed class WeddingSettingsConfiguration : IEntityTypeConfiguration<Wedd
         builder.Property(x => x.Visibility).HasColumnName("visibility").HasColumnType("varchar(20)").HasMaxLength(20).IsRequired().HasDefaultValue("PRIVATE");
         builder.Property(x => x.Timezone).HasColumnName("timezone").HasColumnType("varchar(100)").HasMaxLength(100).IsRequired().HasDefaultValue("Asia/Ho_Chi_Minh");
         builder.Property(x => x.RsvpDeadline).HasColumnName("rsvp_deadline").HasColumnType("timestamp with time zone");
+        builder.Property(x => x.MainEventAt).HasColumnName("main_event_at").HasColumnType("timestamp with time zone");
+        builder.Property(x => x.VenueName).HasColumnName("venue_name").HasColumnType("varchar(200)").HasMaxLength(200);
+        builder.Property(x => x.VenueAddress).HasColumnName("venue_address").HasColumnType("varchar(2000)").HasMaxLength(2000);
         builder.Property(x => x.RsvpReminderDaysBefore).HasColumnName("rsvp_reminder_days_before").HasColumnType("smallint").IsRequired().HasDefaultValue((short)2);
         builder.Property(x => x.SettingsJson).HasColumnName("settings_json").HasColumnType("jsonb");
+        builder.Property(x => x.MediaCatalogJson).HasColumnName("media_catalog_json").HasColumnType("jsonb").IsRequired().HasDefaultValueSql("'[]'::jsonb");
+        builder.Property(x => x.PreviousSlugsJson).HasColumnName("previous_slugs_json").HasColumnType("jsonb").IsRequired().HasDefaultValueSql("'[]'::jsonb");
         builder.Property(x => x.WebsiteDraftJson).HasColumnName("website_draft_json").HasColumnType("jsonb");
         builder.Property(x => x.WebsitePublishedJson).HasColumnName("website_published_json").HasColumnType("jsonb");
         builder.Property(x => x.WebsiteStatus).HasColumnName("website_status").HasConversion<string>().HasColumnType("varchar(20)").HasDefaultValue(WebsitePublicationStatus.DRAFT);

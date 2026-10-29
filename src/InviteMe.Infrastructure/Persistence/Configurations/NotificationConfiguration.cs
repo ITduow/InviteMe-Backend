@@ -1,4 +1,3 @@
-using InviteMe.Domain.Guests;
 using InviteMe.Domain.Notifications;
 using InviteMe.Domain.Weddings;
 using InviteMe.Infrastructure.Identity;
@@ -41,7 +40,6 @@ public sealed class NotificationConfiguration : IEntityTypeConfiguration<Notific
         builder.Property(x => x.UpdatedAt).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Ignore);
         builder.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_notifications_wedding");
         builder.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.RecipientUserId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_notifications_user");
-        builder.HasOne<WeddingGuest>().WithMany().HasForeignKey(x => x.RecipientGuestId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_notifications_guest");
         builder.HasIndex(x => x.WeddingId, "ix_notifications_wedding_id").HasDatabaseName("ix_notifications_wedding_id");
         builder.HasIndex(x => new { x.Status, x.ScheduledAt }, "ix_notifications_status_schedule").HasDatabaseName("ix_notifications_status_schedule");
         builder.HasIndex(x => x.RecipientUserId, "ix_notifications_recipient_user").HasDatabaseName("ix_notifications_recipient_user");

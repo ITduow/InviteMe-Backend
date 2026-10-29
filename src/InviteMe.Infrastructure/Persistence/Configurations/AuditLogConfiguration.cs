@@ -1,5 +1,4 @@
 using InviteMe.Domain.Audit;
-using InviteMe.Domain.Guests;
 using InviteMe.Domain.Weddings;
 using InviteMe.Infrastructure.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -29,7 +28,6 @@ public sealed class AuditLogConfiguration : IEntityTypeConfiguration<AuditLog>
         builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasColumnType("timestamp with time zone").IsRequired().HasDefaultValueSql("NOW()");
         builder.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.SetNull).HasConstraintName("fk_audit_logs_wedding");
         builder.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ActorUserId).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_audit_logs_actor_user");
-        builder.HasOne<WeddingGuest>().WithMany().HasForeignKey(x => x.ActorGuestId).OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_audit_logs_actor_guest");
         builder.HasIndex(x => x.WeddingId, "ix_audit_logs_wedding_id").HasDatabaseName("ix_audit_logs_wedding_id");
         builder.HasIndex(x => new { x.EntityType, x.EntityId }, "ix_audit_logs_entity").HasDatabaseName("ix_audit_logs_entity");
         builder.HasIndex(x => x.CreatedAt, "ix_audit_logs_created_at").HasDatabaseName("ix_audit_logs_created_at");

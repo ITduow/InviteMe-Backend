@@ -135,6 +135,8 @@ public sealed class SpeedSmsChannelProvider(HttpClient client, IOptions<SpeedSms
     public async Task<InvitationDeliveryReceipt> SendAsync(InvitationOutboundMessage item, CancellationToken ct)
     {
         var config = options.Value;
+        if (!config.IsConfigured)
+            throw new InvitationDeliveryException("SMS_NOT_CONFIGURED", transient: false);
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(config.BaseUrl.TrimEnd('/') + "/"), "sms/send"));
         var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes(config.AccessToken + ":x"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
@@ -153,12 +155,14 @@ public sealed class SpeedSmsChannelProvider(HttpClient client, IOptions<SpeedSms
         {
             if ((int)response.StatusCode >= 500 || response.StatusCode is System.Net.HttpStatusCode.RequestTimeout or System.Net.HttpStatusCode.TooManyRequests)
                 throw new InvitationDeliveryException("SPEEDSMS_TEMPORARY_FAILURE", transient: true);
+            if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+                throw new InvitationDeliveryException("SPEEDSMS_AUTHORIZATION_FAILED", transient: false);
 
             try
             {
                 using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
                 var root = json.RootElement;
-                if (!root.TryGetProperty("status", out var status) || status.ValueKind != JsonValueKind.String)
+                if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("status", out var status) || status.ValueKind != JsonValueKind.String)
                     throw new InvitationDeliveryException("SPEEDSMS_INVALID_RESPONSE", transient: true);
                 root.TryGetProperty("code", out var code);
                 if (status.GetString() != "success" || code.ToString() != "00")
@@ -168,12 +172,14 @@ public sealed class SpeedSmsChannelProvider(HttpClient client, IOptions<SpeedSms
                         ? reason.GetString() : null;
                     throw ProviderFailure(providerCode, response.IsSuccessStatusCode, providerReason);
                 }
-                if (!response.IsSuccessStatusCode || !root.TryGetProperty("data", out var data))
+                if (!response.IsSuccessStatusCode || !root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
                     throw new InvitationDeliveryException("SPEEDSMS_INVALID_RESPONSE", transient: true);
                 if (data.TryGetProperty("invalidPhone", out var invalidPhone) &&
                     invalidPhone.ValueKind == JsonValueKind.Array && invalidPhone.GetArrayLength() > 0)
                     throw new InvitationDeliveryException("SPEEDSMS_INVALID_PHONE", transient: false);
                 var transactionId = data.TryGetProperty("tranId", out var id) ? id.ToString() : null;
+                if (string.IsNullOrWhiteSpace(transactionId))
+                    throw new InvitationDeliveryException("SPEEDSMS_INVALID_RESPONSE", transient: true);
                 return new InvitationDeliveryReceipt(transactionId);
             }
             catch (JsonException) { throw new InvitationDeliveryException("SPEEDSMS_INVALID_RESPONSE", transient: true); }

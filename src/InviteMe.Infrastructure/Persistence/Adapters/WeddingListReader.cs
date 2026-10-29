@@ -26,16 +26,13 @@ public sealed class WeddingListReader(InviteMeDbContext db) : IWeddingListReader
 
         var total = await accessible.CountAsync(ct);
         var rows = from wedding in accessible
-                   join weddingEvent in db.WeddingEvents.AsNoTracking().Where(e => e.IsMain)
-                       on wedding.Id equals weddingEvent.WeddingId into weddingEvents
-                   from weddingEvent in weddingEvents.DefaultIfEmpty()
                    join settings in db.WeddingSettings.AsNoTracking()
                        on wedding.Id equals settings.WeddingId into weddingSettings
                    from settings in weddingSettings.DefaultIfEmpty()
                    select new
                    {
                        Wedding = wedding,
-                       EventStart = weddingEvent == null ? (DateTimeOffset?)null : weddingEvent.StartAt,
+                       EventStart = settings == null ? (DateTimeOffset?)null : settings.MainEventAt,
                        TimeZone = settings == null ? "Asia/Ho_Chi_Minh" : settings.Timezone,
                        // Confirmed people of active Guest Planning v2 invitations (walk-ins included), the same count RSVP uses for capacity.
                        ParticipantCount = db.Set<PlanningParticipant>().LongCount(participant => participant.AttendanceStatus == "ATTENDING" &&

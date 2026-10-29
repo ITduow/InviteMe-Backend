@@ -95,7 +95,7 @@ public sealed class WeddingEntitlements(InviteMeDbContext db, TimeProvider clock
         return quota switch
         {
             PlanQuota.GuestPlaces => await db.Set<PlanningGuest>().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null).SumAsync(x => x.ExpectedPeople, ct),
-            PlanQuota.MediaImages => await db.WeddingMedia.CountAsync(x => x.WeddingId == weddingId, ct),
+            PlanQuota.MediaImages => await MediaCount(weddingId, ct),
             // Every queued delivery counts, also failed ones: the provider may already have been paid for them.
             PlanQuota.EmailInvites => await db.InvitationSendJobs.CountAsync(x => x.WeddingId == weddingId && x.Channel == "EMAIL", ct),
             PlanQuota.SmsInvites => await db.InvitationSendJobs.CountAsync(x => x.WeddingId == weddingId && x.Channel == "SMS", ct),
@@ -112,5 +112,16 @@ public sealed class WeddingEntitlements(InviteMeDbContext db, TimeProvider clock
     }
 
     private Task<DateTimeOffset?> WeddingAt(Guid weddingId, CancellationToken ct) =>
-        db.WeddingEvents.AsNoTracking().Where(x => x.WeddingId == weddingId && x.IsMain).Select(x => (DateTimeOffset?)x.StartAt).FirstOrDefaultAsync(ct);
+        db.WeddingSettings.AsNoTracking().Where(x => x.WeddingId == weddingId)
+            .Select(x => x.MainEventAt).SingleOrDefaultAsync(ct);
+
+    private async Task<int> MediaCount(Guid weddingId, CancellationToken ct)
+    {
+        var json = await db.WeddingSettings.AsNoTracking().Where(x => x.WeddingId == weddingId)
+            .Select(x => x.MediaCatalogJson).SingleOrDefaultAsync(ct);
+        try { return System.Text.Json.JsonSerializer.Deserialize<List<WeddingMediaItem>>(json ?? "[]")?.Count ?? 0; }
+        catch (System.Text.Json.JsonException) { return 0; }
+    }
+
+    private sealed record WeddingMediaItem(Guid Id, string Url, string StorageKey, string MediaType, DateTimeOffset CreatedAt);
 }

@@ -33,16 +33,11 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
             }).SingleOrDefaultAsync(ct);
         if (wedding is null) return null;
 
-        var eventInfo = await (from e in db.WeddingEvents.AsNoTracking()
-            where e.WeddingId == weddingId && e.IsMain
-            from v in db.Venues.AsNoTracking().Where(x => e.VenueId == x.Id).DefaultIfEmpty()
-            select new { e.StartAt, VenueName = v == null ? null : v.Name, VenueAddress = v == null ? null : v.Address })
-            .SingleOrDefaultAsync(ct);
-        var timezone = await db.WeddingSettings.AsNoTracking().Where(x => x.WeddingId == weddingId)
-            .Select(x => x.Timezone).SingleOrDefaultAsync(ct);
+        var eventInfo = await db.WeddingSettings.AsNoTracking().Where(x => x.WeddingId == weddingId)
+            .Select(x => new { x.MainEventAt, x.VenueName, x.VenueAddress, x.Timezone }).SingleOrDefaultAsync(ct);
         var coupleNames = CoupleNames(wedding.Title, wedding.WebsiteJson);
-        return new(coupleNames, eventInfo?.StartAt, eventInfo?.VenueName, eventInfo?.VenueAddress,
-            string.IsNullOrWhiteSpace(timezone) ? "Asia/Ho_Chi_Minh" : timezone, wedding.CoverImageUrl);
+        return new(coupleNames, eventInfo?.MainEventAt, eventInfo?.VenueName, eventInfo?.VenueAddress,
+            string.IsNullOrWhiteSpace(eventInfo?.Timezone) ? "Asia/Ho_Chi_Minh" : eventInfo.Timezone, wedding.CoverImageUrl);
     }
 
     public async Task<InvitationDraftDto> SaveDraftAsync(Guid weddingId, Guid actorId, SaveInvitationDraft input,

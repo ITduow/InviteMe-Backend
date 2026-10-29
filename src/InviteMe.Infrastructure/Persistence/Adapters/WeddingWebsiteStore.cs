@@ -88,13 +88,18 @@ public sealed class WeddingWebsiteStore(InviteMeDbContext db) : IWeddingWebsiteS
 
     public async Task<PublicWebsiteDto?> PublicAsync(string slug, CancellationToken ct)
     {
+        slug = slug.Trim().ToLowerInvariant();
         // An old address of a wedding opens its current website; the response carries the current slug.
-        if (!await db.Weddings.AsNoTracking().AnyAsync(x => x.Slug == slug, ct) && await (
-                from history in db.Set<WeddingSlugHistory>().AsNoTracking()
-                join wedding in db.Weddings.AsNoTracking() on history.WeddingId equals wedding.Id
-                where history.Slug == slug.ToLower()
-                select wedding.Slug).SingleOrDefaultAsync(ct) is { } current)
-            slug = current;
+        if (!await db.Weddings.AsNoTracking().AnyAsync(x => x.Slug == slug, ct))
+        {
+            var history = await db.WeddingSettings.AsNoTracking()
+                .Select(x => new { x.WeddingId, x.PreviousSlugsJson }).ToListAsync(ct);
+            var weddingId = history.Where(x => HasPreviousSlug(x.PreviousSlugsJson, slug.ToLowerInvariant()))
+                .Select(x => (Guid?)x.WeddingId).SingleOrDefault();
+            if (weddingId is { } id && await db.Weddings.AsNoTracking().Where(x => x.Id == id)
+                    .Select(x => x.Slug).SingleOrDefaultAsync(ct) is { } current)
+                slug = current;
+        }
         var row = await (from wedding in db.Weddings.AsNoTracking()
             join settings in db.WeddingSettings on wedding.Id equals settings.WeddingId
             join owner in db.Users on wedding.OwnerUserId equals owner.Id
@@ -105,5 +110,17 @@ public sealed class WeddingWebsiteStore(InviteMeDbContext db) : IWeddingWebsiteS
         var publicJson = JsonNode.Parse(row.WebsitePublishedJson)!.AsObject();
         publicJson.Remove("sourceDraft");
         return new(row.Slug, JsonDocument.Parse(publicJson.ToJsonString()).RootElement.Clone());
+    }
+
+    private static bool HasPreviousSlug(string? json, string slug)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return false;
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.ValueKind == JsonValueKind.Array && document.RootElement.EnumerateArray()
+                .Any(x => x.TryGetProperty("slug", out var value) && value.GetString() == slug);
+        }
+        catch (JsonException) { return false; }
     }
 }

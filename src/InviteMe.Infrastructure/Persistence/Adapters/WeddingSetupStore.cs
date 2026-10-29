@@ -16,18 +16,15 @@ public sealed class WeddingSetupStore(InviteMeDbContext db, InviteMe.Application
     public async Task<WeddingSetupDto> CreateAsync(Guid ownerId, CreateWeddingInput input, string normalizedSlug, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await LockSlugsAsync([normalizedSlug], ct);
         if (await db.Weddings.AnyAsync(x => x.Slug.ToLower() == normalizedSlug, ct) || await SlugReleasedByAnotherWedding(normalizedSlug, null, ct))
             throw SlugConflict();
 
         var wedding = Wedding.Create(ownerId, input.Name!.Trim(), normalizedSlug, input.Capacity!.Value, NormalizeCover(input.CoverImageUrl));
-        var venue = Venue.Create(wedding.Id);
-        venue.Configure(input.VenueName!.Trim(), input.VenueAddress!.Trim());
-        var mainEvent = WeddingEvent.CreateMain(wedding.Id, input.EventDateTime, venue.Id);
         var settings = WeddingSettings.Create(wedding.Id);
         settings.SetRsvpDeadline(input.RsvpDeadline);
+        settings.SetMainEvent(input.EventDateTime, input.VenueName, input.VenueAddress);
         db.Weddings.Add(wedding);
-        db.Venues.Add(venue);
-        db.WeddingEvents.Add(mainEvent);
         db.WeddingSettings.Add(settings);
         // Every new wedding starts on the free plan; buying a plan replaces this row.
         var freePlanId = await db.Set<InviteMe.Domain.Billing.Plan>().Where(x => x.Code == InviteMe.Domain.Billing.Plan.Free)
@@ -45,15 +42,9 @@ public sealed class WeddingSetupStore(InviteMeDbContext db, InviteMe.Application
     {
         var wedding = await db.Weddings.AsNoTracking().SingleOrDefaultAsync(x => x.Id == weddingId, ct);
         if (wedding is null) return null;
-        var eventInfo = await (from e in db.WeddingEvents.AsNoTracking()
-            where e.WeddingId == weddingId && e.IsMain
-            from v in db.Venues.AsNoTracking().Where(x => e.VenueId == x.Id).DefaultIfEmpty()
-            select new { e.StartAt, VenueName = v == null ? null : v.Name, VenueAddress = v == null ? null : v.Address })
-            .SingleOrDefaultAsync(ct);
-        var settings = await db.WeddingSettings.AsNoTracking().Where(x => x.WeddingId == weddingId)
-            .Select(x => new { x.RsvpDeadline, x.Timezone }).SingleOrDefaultAsync(ct);
-        return new(wedding.Id, wedding.Title, wedding.Slug, eventInfo?.StartAt, eventInfo?.VenueName,
-            eventInfo?.VenueAddress, wedding.MaxCapacity, settings?.RsvpDeadline, wedding.CoverImageUrl,
+        var settings = await db.WeddingSettings.AsNoTracking().SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
+        return new(wedding.Id, wedding.Title, wedding.Slug, settings?.MainEventAt, settings?.VenueName,
+            settings?.VenueAddress, wedding.MaxCapacity, settings?.RsvpDeadline, wedding.CoverImageUrl,
             settings?.Timezone ?? "Asia/Ho_Chi_Minh", wedding.Status,
             wedding.Version, wedding.CreatedAt, wedding.UpdatedAt);
     }
@@ -67,41 +58,25 @@ public sealed class WeddingSetupStore(InviteMeDbContext db, InviteMe.Application
             throw new ApplicationProblemException(ProblemKind.BusinessRule, "WEDDING_CLOSED", "Wedding setup cannot be changed in its current state.");
         if (wedding.Version != input.ExpectedVersion)
             throw new ApplicationProblemException(ProblemKind.Conflict, "WEDDING_CONCURRENCY_CONFLICT", "Wedding changed. Reload it before saving.");
+        await LockSlugsAsync([wedding.Slug.ToLowerInvariant(), normalizedSlug], ct);
         if (await db.Weddings.AnyAsync(x => x.Id != weddingId && x.Slug.ToLower() == normalizedSlug, ct)
             || await SlugReleasedByAnotherWedding(normalizedSlug, weddingId, ct)) throw SlugConflict();
 
         var oldSlug = wedding.Slug;
+        var settings = await db.WeddingSettings.SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
+        if (settings is null) { settings = WeddingSettings.Create(weddingId); db.WeddingSettings.Add(settings); }
         if (!string.Equals(oldSlug, normalizedSlug, StringComparison.OrdinalIgnoreCase))
         {
             await entitlements.RequireFeatureAsync(weddingId, InviteMe.Application.Features.Billing.PlanFeature.CustomSlug, ct);
-            // The old address stays with this wedding (shared links keep working); going back to it frees the history row.
-            var reclaimed = await db.Set<WeddingSlugHistory>().Where(x => x.WeddingId == weddingId && x.Slug == normalizedSlug).ToListAsync(ct);
-            db.RemoveRange(reclaimed);
-            if (!await db.Set<WeddingSlugHistory>().AnyAsync(x => x.Slug == oldSlug.ToLower(), ct))
-                db.Add(WeddingSlugHistory.Create(weddingId, oldSlug, DateTimeOffset.UtcNow));
+            // Keep old public addresses inside the wedding settings document, so existing links continue to resolve.
+            var history = ReadSlugs(settings.PreviousSlugsJson);
+            history.RemoveAll(x => x.Slug == normalizedSlug);
+            if (!await SlugReleasedByAnotherWedding(oldSlug.ToLowerInvariant(), weddingId, ct))
+                history.Add(new(oldSlug.ToLowerInvariant(), DateTimeOffset.UtcNow));
+            settings.SetPreviousSlugsJson(JsonSerializer.Serialize(history, AuditJson));
         }
         wedding.UpdateSetup(input.Name!.Trim(), normalizedSlug, input.Capacity!.Value, NormalizeCover(input.CoverImageUrl));
-        var mainEvent = await db.WeddingEvents.SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.IsMain, ct);
-        var venue = mainEvent?.VenueId is { } venueId
-            ? await db.Venues.SingleOrDefaultAsync(x => x.Id == venueId && x.WeddingId == weddingId, ct)
-            : null;
-        venue ??= Venue.Create(weddingId);
-        venue.Configure(input.VenueName!.Trim(), input.VenueAddress!.Trim());
-        if (db.Entry(venue).State == EntityState.Detached) db.Venues.Add(venue);
-        if (mainEvent is null)
-        {
-            mainEvent = WeddingEvent.CreateMain(weddingId, input.EventDateTime, venue.Id);
-            db.WeddingEvents.Add(mainEvent);
-        }
-        else
-        {
-            if (mainEvent.EndAt is { } endAt && input.EventDateTime.ToUniversalTime() > endAt)
-                throw new ApplicationProblemException(ProblemKind.BusinessRule, "WEDDING_INVALID_DATE",
-                    "Wedding start time cannot be later than its existing end time.");
-            mainEvent.Configure(input.EventDateTime, mainEvent.EndAt, venue.Id);
-        }
-        var settings = await db.WeddingSettings.SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
-        if (settings is null) { settings = WeddingSettings.Create(weddingId); db.WeddingSettings.Add(settings); }
+        settings.SetMainEvent(input.EventDateTime, input.VenueName, input.VenueAddress);
         settings.SetRsvpDeadline(input.RsvpDeadline);
 
         var actorId = wedding.OwnerUserId;
@@ -121,13 +96,42 @@ public sealed class WeddingSetupStore(InviteMeDbContext db, InviteMe.Application
         return (await GetAsync(weddingId, ct))!;
     }
 
-    private Task<bool> SlugReleasedByAnotherWedding(string normalizedSlug, Guid? weddingId, CancellationToken ct) =>
-        db.Set<WeddingSlugHistory>().AsNoTracking().AnyAsync(x => x.Slug == normalizedSlug && (weddingId == null || x.WeddingId != weddingId), ct);
+    private async Task<bool> SlugReleasedByAnotherWedding(string normalizedSlug, Guid? weddingId, CancellationToken ct)
+    {
+        var exists = weddingId is null
+            ? await db.Database.SqlQuery<bool>($"""
+                SELECT EXISTS (
+                    SELECT 1 FROM inviteme.wedding_settings
+                    WHERE previous_slugs_json @> jsonb_build_array(jsonb_build_object('slug', {normalizedSlug}))) AS "Value"
+                """).SingleAsync(ct)
+            : await db.Database.SqlQuery<bool>($"""
+                SELECT EXISTS (
+                    SELECT 1 FROM inviteme.wedding_settings
+                    WHERE wedding_id <> {weddingId.Value}
+                      AND previous_slugs_json @> jsonb_build_array(jsonb_build_object('slug', {normalizedSlug}))) AS "Value"
+                """).SingleAsync(ct);
+        return exists;
+    }
+
+    private async Task LockSlugsAsync(IEnumerable<string> slugs, CancellationToken ct)
+    {
+        foreach (var slug in slugs.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+            await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({slug}, 0))", ct);
+    }
 
     public async Task<bool> SlugAvailableAsync(string normalizedSlug, Guid? exceptWeddingId, CancellationToken ct) =>
         !await SlugReleasedByAnotherWedding(normalizedSlug, exceptWeddingId, ct) &&
         !await db.Weddings.AsNoTracking().AnyAsync(x => x.Slug.ToLower() == normalizedSlug &&
             (exceptWeddingId == null || x.Id != exceptWeddingId.Value), ct);
+
+    private static List<PreviousSlug> ReadSlugs(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try { return JsonSerializer.Deserialize<List<PreviousSlug>>(json, AuditJson) ?? []; }
+        catch (JsonException) { return []; }
+    }
+
+    private sealed record PreviousSlug(string Slug, DateTimeOffset ChangedAt);
 
     public Task<WeddingCoverUpdateResult> SetCoverImageAsync(Guid weddingId, string imageUrl, int expectedVersion, Guid actorId, CancellationToken ct) =>
         UpdateCoverImageAsync(weddingId, imageUrl, expectedVersion, actorId, "WEDDING_COVER_IMAGE_UPDATED", ct);
