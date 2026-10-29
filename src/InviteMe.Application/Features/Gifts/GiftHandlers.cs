@@ -197,6 +197,25 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
         return await webhook.ProcessAsync(payload, JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web)), ct);
     }
 
+    /// <summary>Development only: the Bank Hub IPN body for a transfer into one of the couple's accounts, processed like SePay's.</summary>
+    public async Task<GiftWebhookResult> SimulateBankHubAsync(Guid weddingId, SimulateSePayTransfer input, BankHubWebhookHandler webhook,
+        CancellationToken ct)
+    {
+        await Require(weddingId, WeddingPermission.GIFT_EDIT, ct);
+        await simulateValidation.ValidateAsync(input, ct);
+        var accounts = await store.AccountsAsync(weddingId, ct);
+        var account = (input.AccountId is { } id ? accounts.FirstOrDefault(x => x.Id == id) : accounts.FirstOrDefault())
+            ?? throw new ApplicationProblemException(ProblemKind.BusinessRule, "GIFT_ACCOUNT_REQUIRED", "Add a receiving account first.");
+        var now = clock.GetUtcNow();
+        var raw = JsonSerializer.Serialize(new
+        {
+            gateway = account.BankName, transaction_date = now.ToOffset(TimeSpan.FromHours(7)).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+            account_number = account.AccountNumber, bank_account_xid = "dev", content = input.Content, transfer_type = "credit",
+            amount = input.Amount, reference_code = "DEV" + now.ToUnixTimeMilliseconds(), accumulated = 0, transaction_id = Guid.NewGuid().ToString()
+        });
+        return await webhook.ProcessAsync(raw, ct) ?? throw new InvalidOperationException("Simulated Bank Hub body is invalid.");
+    }
+
     private async Task<GiftDto> Received(Guid weddingId, GiftDto gift, CancellationToken ct)
     {
         await changes.PublishAsync(weddingId, new(gift.Status == PlanningGift.Paid ? GiftRules.ReceivedEvent : GiftRules.ChangedEvent, gift.Id), ct);
@@ -246,19 +265,23 @@ public sealed class GiftWebhookHandler(IGiftStore store, GiftWebhookOptions opti
     public bool Configured => !string.IsNullOrWhiteSpace(options.ApiKey);
 
     /// <summary>Header must be exactly "Apikey {key}" (case-insensitive scheme), compared in constant time.</summary>
-    public bool Authorized(string? authorization)
+    public bool Authorized(string? authorization) => Matches(authorization, options.ApiKey, bare: false);
+
+    /// <summary>"Apikey {key}" (case-insensitive scheme), or the key alone when <paramref name="bare"/>; compared in constant time.</summary>
+    internal static bool Matches(string? authorization, string? key, bool bare)
     {
-        if (!Configured || string.IsNullOrWhiteSpace(authorization)) return false;
+        if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(authorization)) return false;
         const string scheme = "Apikey ";
-        if (!authorization.StartsWith(scheme, StringComparison.OrdinalIgnoreCase)) return false;
-        var given = Encoding.UTF8.GetBytes(authorization[scheme.Length..].Trim());
-        var expected = Encoding.UTF8.GetBytes(options.ApiKey!.Trim());
-        return CryptographicOperations.FixedTimeEquals(given, expected);
+        var value = authorization.StartsWith(scheme, StringComparison.OrdinalIgnoreCase) ? authorization[scheme.Length..]
+            : bare ? authorization : null;
+        return value is not null
+            && CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(value.Trim()), Encoding.UTF8.GetBytes(key.Trim()));
     }
 
-    public async Task<GiftWebhookResult> ProcessAsync(SePayWebhookPayload payload, string rawJson, CancellationToken ct)
+    public async Task<GiftWebhookResult> ProcessAsync(SePayWebhookPayload payload, string rawJson, CancellationToken ct,
+        string provider = PlanningGiftTransaction.SePay)
     {
-        var result = await store.ProcessWebhookAsync(payload, rawJson, ct);
+        var result = await store.ProcessWebhookAsync(payload, rawJson, ct, provider);
         if (!result.Replayed && result.WeddingId is { } weddingId)
             await changes.PublishAsync(weddingId, new(result.Paid ? GiftRules.ReceivedEvent : GiftRules.ChangedEvent, result.GiftId ?? weddingId), ct);
         return result;

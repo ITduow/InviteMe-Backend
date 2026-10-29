@@ -21,6 +21,28 @@ public sealed class GiftTests
     }
 
     [Fact]
+    public void BankHubIpnReadsAsTheSePayTransferItCarries()
+    {
+        var ipn = System.Text.Json.JsonSerializer.Deserialize<BankHubIpnPayload>("""
+            {"gateway":"MBBank","transaction_date":"2026-10-29T05:24:06Z","account_number":"0123456789","bank_account_xid":"587eabfb",
+             "va":null,"payment_code":null,"content":"MC7K2Q9PXA mung cuoi","transfer_type":"credit","amount":"500000",
+             "reference_code":"FT123","accumulated":0,"transaction_id":"b1293181-f086-11f0-b16e-52c7e9b4f41b"}
+            """, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)
+            { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowReadingFromString })!;
+        var payload = BankHubWebhookHandler.ToSePay(ipn)!;
+        Assert.Equal(("in", 500_000L, "0123456789", "2026-10-29 12:24:06"), (payload.TransferType, payload.TransferAmount, payload.AccountNumber, payload.TransactionDate));
+        Assert.True(payload.Id > 0);
+        Assert.Equal(payload.Id, BankHubWebhookHandler.ToSePay(ipn with { })!.Id); // a retried IPN is the same row
+        Assert.Equal("out", BankHubWebhookHandler.ToSePay(ipn with { TransferType = "debit" })!.TransferType);
+
+        var ids = System.Text.Json.JsonDocument.Parse("""{"a":40532,"b":"40533","c":"","d":null}""").RootElement;
+        Assert.Equal(40532L, BankHubWebhookHandler.TransactionNumber(ids.GetProperty("a")));
+        Assert.Equal(40533L, BankHubWebhookHandler.TransactionNumber(ids.GetProperty("b")));
+        Assert.Null(BankHubWebhookHandler.TransactionNumber(ids.GetProperty("c")));
+        Assert.Null(BankHubWebhookHandler.TransactionNumber(ids.GetProperty("d")));
+    }
+
+    [Fact]
     public void PresentsAreReceivedWhenRecordedAndCarryNoAmount()
     {
         var present = PlanningGift.ForItem(Guid.NewGuid(), null, "Cô Lan", "Bộ chăn ga", 2, 800_000, null, Guid.NewGuid(), Now, Now);

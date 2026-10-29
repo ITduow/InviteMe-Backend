@@ -40,6 +40,7 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Features.Gifts.GiftGuestHandler>();
         services.AddScoped<InviteMe.Application.Features.Gifts.GiftHostHandler>();
         services.AddScoped<InviteMe.Application.Features.Gifts.GiftWebhookHandler>();
+        services.AddScoped<InviteMe.Application.Features.Gifts.BankHubWebhookHandler>();
         services.AddScoped<InviteMe.Application.Features.Billing.PlanHandler>();
         services.AddScoped<InviteMe.Application.Features.Billing.PlanOrderHandler>();
         services.AddScoped<InviteMe.Application.Features.Billing.AdminPlanHandler>();

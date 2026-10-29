@@ -304,21 +304,25 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
 
     // ---------- webhook ----------
 
-    public async Task<GiftWebhookResult> ProcessWebhookAsync(SePayWebhookPayload payload, string rawJson, CancellationToken ct)
+    public async Task<GiftWebhookResult> ProcessWebhookAsync(SePayWebhookPayload payload, string rawJson, CancellationToken ct,
+        string provider = PlanningGiftTransaction.SePay)
     {
-        if (await Replay(payload.Id, ct) is { } replay) return replay;
+        if (await Replay(provider, payload.Id, ct) is { } replay) return replay;
         var now = clock.GetUtcNow();
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var code = GiftRules.FindCode(payload.Code, payload.Content);
-        var transaction = PlanningGiftTransaction.Create(PlanningGiftTransaction.SePay, payload.Id, Cut(payload.Gateway, 50),
+        var transaction = PlanningGiftTransaction.Create(provider, payload.Id, Cut(payload.Gateway, 50),
             Cut(payload.AccountNumber, 30), code is null ? null : Cut(code, 50), Cut(payload.Content, 500), Cut(payload.TransferType, 10),
             payload.TransferAmount, payload.ReferenceCode is null ? null : Cut(payload.ReferenceCode, 100),
             GiftRules.ParseSePayDate(payload.TransactionDate, now), rawJson, now);
         var paid = false;
         if (!string.Equals(payload.TransferType, "in", StringComparison.OrdinalIgnoreCase) || payload.TransferAmount <= 0)
             transaction.Resolve(PlanningGiftTransaction.Ignored, null, null);
+        // A code only counts when the money reached one of that wedding's receiving accounts: with Bank Hub every couple links
+        // their own account, so a transfer into someone else's account must not mark this couple's gift as received.
         else if (code is not null && await db.Set<PlanningGift>()
-                     .FromSqlInterpolated($"SELECT * FROM inviteme.planning_gifts WHERE code = {code} FOR UPDATE").SingleOrDefaultAsync(ct) is { } gift)
+                     .FromSqlInterpolated($"SELECT * FROM inviteme.planning_gifts WHERE code = {code} FOR UPDATE").SingleOrDefaultAsync(ct) is { } gift
+                 && await db.Set<PlanningGiftAccount>().AnyAsync(x => x.WeddingId == gift.WeddingId && x.AccountNumber == transaction.AccountNumber, ct))
         {
             if (gift.Status == PlanningGift.Paid) transaction.Resolve(PlanningGiftTransaction.Duplicate, gift.WeddingId, gift.Id);
             else if (gift.Status == PlanningGift.Cancelled) transaction.Resolve(PlanningGiftTransaction.Unmatched, gift.WeddingId, null);
@@ -344,16 +348,16 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         catch (DbUpdateException e) when (UniqueViolation(e) == "uq_planning_gift_transactions_provider_id")
         {
             await tx.RollbackAsync(ct); db.ChangeTracker.Clear();
-            return await Replay(payload.Id, ct) ?? throw new InvalidOperationException("Webhook replay not found.");
+            return await Replay(provider, payload.Id, ct) ?? throw new InvalidOperationException("Webhook replay not found.");
         }
         return new(transaction.Status, transaction.WeddingId, transaction.GiftId, false, paid);
     }
 
     // ---------- helpers ----------
 
-    private async Task<GiftWebhookResult?> Replay(long providerId, CancellationToken ct) =>
+    private async Task<GiftWebhookResult?> Replay(string provider, long providerId, CancellationToken ct) =>
         await db.Set<PlanningGiftTransaction>().AsNoTracking()
-            .Where(x => x.Provider == PlanningGiftTransaction.SePay && x.ProviderTransactionId == providerId)
+            .Where(x => x.Provider == provider && x.ProviderTransactionId == providerId)
             .Select(x => new GiftWebhookResult(x.Status, x.WeddingId, x.GiftId, true, false)).SingleOrDefaultAsync(ct);
 
     private async Task<string> GiverName(Guid weddingId, Guid? guestId, string? giverName, CancellationToken ct, Guid? participantId = null)

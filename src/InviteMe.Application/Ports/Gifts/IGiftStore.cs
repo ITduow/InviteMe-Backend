@@ -38,5 +38,6 @@ public interface IGiftStore
     Task DismissAsync(Guid weddingId, Guid transactionId, Guid actor, CancellationToken ct);
 
     /// <summary>Stores one bank notification once (by provider transaction id) and pays the gift whose code it carries.</summary>
-    Task<GiftWebhookResult> ProcessWebhookAsync(SePayWebhookPayload payload, string rawJson, CancellationToken ct);
+    Task<GiftWebhookResult> ProcessWebhookAsync(SePayWebhookPayload payload, string rawJson, CancellationToken ct,
+        string provider = InviteMe.Domain.Gifts.PlanningGiftTransaction.SePay);
 }

@@ -126,10 +126,16 @@ internal static class GiftEndpoints
             .WithName("DismissGiftTransaction").Produces(StatusCodes.Status204NoContent).ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
         if (endpoints.ServiceProvider.GetRequiredService<IWebHostEnvironment>().IsDevelopment())
+        {
             // Development only: sends the SePay webhook body of a transfer into the couple's account (no SePay account needed).
             host.MapPost("/dev/simulate-sepay", (Guid weddingId, SimulateSePayTransfer input, GiftHostHandler h, GiftWebhookHandler webhook,
                     CancellationToken ct) => h.SimulateAsync(weddingId, input, webhook, ct))
                 .WithName("SimulateSePayGiftTransfer").Produces<GiftWebhookResult>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden);
+            // Development only: the same transfer as a Bank Hub IPN (the Bank Hub sandbox cannot create transactions).
+            host.MapPost("/dev/simulate-bankhub", (Guid weddingId, SimulateSePayTransfer input, GiftHostHandler h, BankHubWebhookHandler webhook,
+                    CancellationToken ct) => h.SimulateBankHubAsync(weddingId, input, webhook, ct))
+                .WithName("SimulateBankHubGiftTransfer").Produces<GiftWebhookResult>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden);
+        }
 
         // SePay webhook: "Authorization: Apikey <SePay:WebhookApiKey>"; SePay needs 200 + {"success": true} within 30 s.
         // Plan payments (content with an IM... order code) share this endpoint; SePay sends every transfer of the account here.
@@ -148,6 +154,21 @@ internal static class GiftEndpoints
                 return Results.Json(new { success = true });
             })
             .AllowAnonymous().WithTags("Gifts (SePay webhook)").WithName("SePayWebhook")
+            .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(64 * 1024))
+            .Produces(StatusCodes.Status200OK).Produces(StatusCodes.Status400BadRequest).Produces(StatusCodes.Status401Unauthorized);
+
+        // SePay Bank Hub IPN: transfers of the accounts couples linked through Bank Hub (the "Notify URL" of our Bank Hub merchant).
+        // "Authorization: Apikey <SePay:BankHub:NotifyApiKey>"; SePay waits 8 s for 200 + {"success": true}.
+        endpoints.MapPost("/api/webhooks/sepay-bankhub", async (HttpRequest request, BankHubWebhookHandler h, CancellationToken ct) =>
+            {
+                if (!h.Configured) return Results.Json(new { success = false }, statusCode: StatusCodes.Status503ServiceUnavailable);
+                if (!h.Authorized(request.Headers.Authorization)) return Results.Json(new { success = false }, statusCode: StatusCodes.Status401Unauthorized);
+                using var reader = new StreamReader(request.Body);
+                return await h.ProcessAsync(await reader.ReadToEndAsync(ct), ct) is null
+                    ? Results.Json(new { success = false }, statusCode: StatusCodes.Status400BadRequest)
+                    : Results.Json(new { success = true });
+            })
+            .AllowAnonymous().WithTags("Gifts (SePay webhook)").WithName("SePayBankHubWebhook")
             .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(64 * 1024))
             .Produces(StatusCodes.Status200OK).Produces(StatusCodes.Status400BadRequest).Produces(StatusCodes.Status401Unauthorized);
         return endpoints;
