@@ -148,6 +148,42 @@ public sealed class GiftApiTests
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task CoupleLinksAnAccountThroughBankHubAndItBecomesAReceivingAccount() => WithApi(async (db, factory, owner, ownerId) =>
+    {
+        var w = await Wedding(db, ownerId, "gift-bankhub-link");
+        var path = $"/api/weddings/{w}/gifts";
+        Hub.Reset();
+        await AssertProblem(HttpStatusCode.UnprocessableEntity, "BANK_HUB_NOT_LINKED",
+            await owner.PostAsync($"{path}/accounts/{Guid.NewGuid()}/bank-hub/unlink", null));
+
+        // The company is created once; every link page is new.
+        var link = await Read<BankHubLinkDto>(await owner.PostAsync(path + "/bank-hub/link", null), HttpStatusCode.OK);
+        Assert.StartsWith("https://bankhub.sepay.vn/link/", link.HostedLinkUrl);
+        await Read<BankHubLinkDto>(await owner.PostAsync(path + "/bank-hub/link", null), HttpStatusCode.OK);
+        Assert.Equal(1, Hub.Companies);
+        Assert.Equal("company-1", await db.Set<PlanningGiftBankHub>().Where(x => x.WeddingId == w).Select(x => x.CompanyXid).SingleAsync());
+
+        // The couple finished in Bank Hub: the account becomes a receiving account confirmed by the bank.
+        Hub.Linked = [new("acc-1", "970422", "MBBank", "0123456789", "NGUYEN VAN A", true), new("acc-x", null, "Unknown bank", "555", null, true)];
+        var sync = await Read<BankHubSyncDto>(await owner.PostAsync(path + "/bank-hub/sync", null), HttpStatusCode.OK);
+        var linked = Assert.Single(sync.Accounts);
+        Assert.Equal(("MBBank", "0123456789", "NGUYEN VAN A", true), (linked.BankName, linked.AccountNumber, linked.AccountName, linked.BankHubLinked));
+        Assert.Equal(["555"], sync.NotAdded);
+        Assert.Single((await owner.GetFromJsonAsync<List<GiftBankAccountDto>>(path + "/accounts"))!, x => x.BankHubLinked);
+
+        // Unlink page for that account, then SePay no longer lists it: it stays a receiving account, not auto-confirmed.
+        await Read<BankHubLinkDto>(await owner.PostAsync($"{path}/accounts/{linked.Id}/bank-hub/unlink", null), HttpStatusCode.OK);
+        Assert.Equal("acc-1", Hub.LastUnlink);
+        Hub.Linked = [];
+        var after = await Read<BankHubSyncDto>(await owner.PostAsync(path + "/bank-hub/sync", null), HttpStatusCode.OK);
+        Assert.False(Assert.Single(after.Accounts).BankHubLinked);
+
+        // Only the wedding owner links accounts.
+        using var outsider = await SignIn(factory, "gift-bankhub-outsider");
+        Assert.Equal(HttpStatusCode.Forbidden, (await outsider.PostAsync(path + "/bank-hub/link", null)).StatusCode);
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task OnlyTheOwnerSeesMoneyAndAccountRulesHold() => WithApi(async (db, factory, owner, ownerId) =>
     {
         var w = await Wedding(db, ownerId, "gift-rules");
@@ -358,6 +394,24 @@ public sealed class GiftApiTests
         return await sepay.SendAsync(request);
     }
 
+    private static readonly FakeBankHub Hub = new();
+
+    private sealed class FakeBankHub : IBankHubClient
+    {
+        public int Companies;
+        public string? LastUnlink;
+        public IReadOnlyList<BankHubAccount> Linked = [];
+        public bool Configured => true;
+        public void Reset() { Companies = 0; LastUnlink = null; Linked = []; }
+        public Task<string> CreateCompanyAsync(string fullName, CancellationToken ct) => Task.FromResult($"company-{++Companies}");
+        public Task<BankHubLinkDto> CreateLinkAsync(string companyXid, BankHubPurpose purpose, string? bankAccountXid, CancellationToken ct)
+        {
+            if (purpose == BankHubPurpose.Unlink) LastUnlink = bankAccountXid;
+            return Task.FromResult(new BankHubLinkDto($"https://bankhub.sepay.vn/link/{Guid.NewGuid()}", "2026-10-29 20:00:00"));
+        }
+        public Task<IReadOnlyList<BankHubAccount>> AccountsAsync(string companyXid, CancellationToken ct) => Task.FromResult(Linked);
+    }
+
     private static async Task<HttpResponseMessage> BankHub(HttpClient sepay, string transactionId, string content, long amount,
         string? key = "Apikey " + BankHubKey, string transferType = "credit", string account = "0000000001")
     {
@@ -411,6 +465,8 @@ public sealed class GiftApiTests
                 services.AddSingleton(new GiftWebhookOptions(WebhookKey));
                 services.RemoveAll<BankHubWebhookOptions>();
                 services.AddSingleton(new BankHubWebhookOptions(BankHubKey));
+                services.RemoveAll<IBankHubClient>();
+                services.AddSingleton<IBankHubClient>(Hub);
             }));
             using var owner = await SignIn(factory, "gift-owner");
             var ownerId = (await owner.GetFromJsonAsync<AccountDto>("/api/auth/me"))!.Id;

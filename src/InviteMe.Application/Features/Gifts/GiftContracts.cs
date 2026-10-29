@@ -9,7 +9,18 @@ namespace InviteMe.Application.Features.Gifts;
 
 // ---------- guest (invitation token) ----------
 
-public sealed record GiftBankAccountDto(Guid Id, string BankBin, string BankName, string AccountNumber, string AccountName, string? Label);
+/// <summary>BankHubLinked = linked through SePay Bank Hub: transfers into it are confirmed automatically.</summary>
+public sealed record GiftBankAccountDto(Guid Id, string BankBin, string BankName, string AccountNumber, string AccountName, string? Label,
+    bool BankHubLinked = false);
+
+/// <summary>Bank Hub page (iframe) where the couple links or unlinks an account; the link works once and expires.</summary>
+public sealed record BankHubLinkDto(string HostedLinkUrl, string? ExpiresAt);
+
+/// <summary>After Bank Hub: the receiving accounts and the linked accounts that did not fit (2 accounts at most).</summary>
+public sealed record BankHubSyncDto(IReadOnlyList<GiftBankAccountDto> Accounts, IReadOnlyList<string> NotAdded);
+
+/// <summary>An account linked in a Bank Hub company, as SePay lists it.</summary>
+public sealed record BankHubAccount(string Xid, string? BankBin, string? BrandName, string AccountNumber, string? HolderName, bool Active);
 
 /// <summary>What the gift form needs: the couple's accounts, suggested amounts and the gifts this guest already started.</summary>
 public sealed record GuestGiftPageDto(string RecipientName, string WeddingTitle, IReadOnlyList<GiftBankAccountDto> Accounts,
