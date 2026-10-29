@@ -166,8 +166,25 @@ public sealed record ChangePlanningSeating(
     string? Plan = null,
     bool PlaceTables = false);
 
+/// <summary>Whether places may be dragged: all exist (active guests of the wedding) and all are inside the caller's group scope.</summary>
+public enum SeatingDragPlaces { Allowed, OutOfScope, NotFound }
+
 public interface IPlanningSeatingStore
 {
+    /// <summary>
+    /// Checked on every drag start, so stores answer it without building the whole seating snapshot.
+    /// groupScope null = wedding-wide.
+    /// </summary>
+    async Task<SeatingDragPlaces> CheckDragPlacesAsync(Guid weddingId, IReadOnlyList<Guid> placeIds, IReadOnlySet<Guid>? groupScope,
+        CancellationToken ct)
+    {
+        var scoped = await GetScopedAsync(weddingId, ct, groupScope);
+        if (placeIds.All(id => scoped.Places.Any(p => p.Id == id))) return SeatingDragPlaces.Allowed;
+        if (groupScope is null) return SeatingDragPlaces.NotFound;
+        var all = await GetAsync(weddingId, ct);
+        return placeIds.All(id => all.Places.Any(p => p.Id == id)) ? SeatingDragPlaces.OutOfScope : SeatingDragPlaces.NotFound;
+    }
+
     Task<PlanningSeatingDto> GetAsync(Guid weddingId, CancellationToken ct);
     Task<PlanningSeatingDto> ChangeAsync(Guid weddingId, ChangePlanningSeating input, CancellationToken ct);
     Task<PlanningSeatingDto> GetScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<Guid>? groupScope) => GetAsync(weddingId, ct);
