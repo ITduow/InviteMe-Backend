@@ -27,7 +27,7 @@ namespace InviteMe.IntegrationTests;
 /// </summary>
 public sealed class GiftApiTests
 {
-    private const string Password = "Test-only-Pass123!", WebhookKey = "test-key-123";
+    private const string Password = "Test-only-Pass123!", WebhookKey = "test-key-123", BankHubKey = "bankhub-key-456";
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task GuestQrGiftIsPaidBySePayOnceAndTheBookReconciles() => WithApi(async (db, factory, owner, ownerId) =>
@@ -104,6 +104,42 @@ public sealed class GiftApiTests
         Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }, csv[..3]); // Excel reads Vietnamese as UTF-8
         Assert.Contains("Bác Ba", Encoding.UTF8.GetString(csv[3..]));
         Assert.Equal(PlanningGift.Paid, (await db.Set<PlanningGift>().AsNoTracking().SingleAsync(x => x.Id == gift.Id)).Status);
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task BankHubIpnPaysTheGiftOnceAndKeepsItsOwnIds() => WithApi(async (db, factory, owner, ownerId) =>
+    {
+        var w = await Wedding(db, ownerId, "gift-bankhub");
+        var path = $"/api/weddings/{w}/gifts";
+        await Read<GiftBankAccountDto>(await owner.PostAsJsonAsync(path + "/accounts", new SaveGiftAccount("970422", "0000000001", "Kiệt")), HttpStatusCode.Created);
+        var guests = await Import(db, owner, w, "An");
+        using var guest = Client(factory);
+        var an = "/api/gifts/" + guests["An"].Token;
+        var gift = await Read<GuestGiftDto>(await Send(guest, an, new CreateGuestGift(500_000), "bh1"), HttpStatusCode.Created);
+
+        using var sepay = Client(factory);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await BankHub(sepay, "40532", $"{gift.Code} mung cuoi", 500_000, key: "Apikey wrong")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await BankHub(sepay, "40532", $"{gift.Code} mung cuoi", 500_000, key: null)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await BankHub(sepay, "", $"{gift.Code} mung cuoi", 500_000)).StatusCode);
+        // Same number as a SePay webhook id: Bank Hub ids are kept apart.
+        Assert.Equal(HttpStatusCode.OK, (await Webhook(sepay, 40532, null, 100_000, content: "khong phai qua")).StatusCode);
+        var ok = await BankHub(sepay, "40532", $"{gift.Code} mung cuoi", 500_000);
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+        Assert.True(JsonDocument.Parse(await ok.Content.ReadAsStringAsync()).RootElement.GetProperty("success").GetBoolean());
+        Assert.Equal(PlanningGift.Paid, (await guest.GetFromJsonAsync<GuestGiftDto>($"{an}/{gift.Id}"))!.Status);
+        Assert.Equal(HttpStatusCode.OK, (await BankHub(sepay, "40532", $"{gift.Code} mung cuoi", 500_000, key: BankHubKey)).StatusCode); // retry, bare key
+        Assert.Equal(1, await db.Set<PlanningGiftTransaction>().CountAsync(x => x.Provider == PlanningGiftTransaction.SePayBankHub));
+
+        // A UUID id, money going out, and the development helper.
+        await BankHub(sepay, "b1293181-f086-11f0-b16e-52c7e9b4f41b", "chuyen tien", 300_000);
+        await BankHub(sepay, "c0000000-0000-0000-0000-000000000001", "rut tien", 100_000, transferType: "debit");
+        var review = (await owner.GetFromJsonAsync<List<GiftTransactionDto>>(path + "/transactions"))!;
+        Assert.Equal(new[] { PlanningGiftTransaction.Unmatched, PlanningGiftTransaction.Unmatched }, review.Select(x => x.Status).ToArray()); // SePay's + Bank Hub's
+        var gift2 = await Read<GuestGiftDto>(await Send(guest, an, new CreateGuestGift(200_000), "bh2"), HttpStatusCode.Created);
+        var simulated = await Read<GiftWebhookResult>(await owner.PostAsJsonAsync(path + "/dev/simulate-bankhub",
+            new SimulateSePayTransfer(200_000, gift2.Code + " mung cuoi")), HttpStatusCode.OK);
+        Assert.Equal((PlanningGiftTransaction.Matched, true), (simulated.Status, simulated.Paid));
+        Assert.Equal(4, await db.Set<PlanningGiftTransaction>().CountAsync(x => x.Provider == PlanningGiftTransaction.SePayBankHub));
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
@@ -317,6 +353,20 @@ public sealed class GiftApiTests
         return await sepay.SendAsync(request);
     }
 
+    private static async Task<HttpResponseMessage> BankHub(HttpClient sepay, string transactionId, string content, long amount,
+        string? key = "Apikey " + BankHubKey, string transferType = "credit")
+    {
+        var body = JsonSerializer.Serialize(new
+        {
+            gateway = "MBBank", transaction_date = "2026-10-29 12:24:06", account_number = "0000000001", bank_account_xid = "587eabfb-f086-11f0",
+            va = (string?)null, payment_code = (string?)null, content, transfer_type = transferType, amount, reference_code = "FT26302123",
+            accumulated = 0, transaction_id = transactionId
+        });
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/webhooks/sepay-bankhub") { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+        if (key is not null) request.Headers.TryAddWithoutValidation("Authorization", key);
+        return await sepay.SendAsync(request);
+    }
+
     private static async Task<HttpResponseMessage> Send<T>(HttpClient client, string url, T body, string key)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = JsonContent.Create(body) };
@@ -354,6 +404,8 @@ public sealed class GiftApiTests
                     services.Remove(registration);
                 services.RemoveAll<GiftWebhookOptions>();
                 services.AddSingleton(new GiftWebhookOptions(WebhookKey));
+                services.RemoveAll<BankHubWebhookOptions>();
+                services.AddSingleton(new BankHubWebhookOptions(BankHubKey));
             }));
             using var owner = await SignIn(factory, "gift-owner");
             var ownerId = (await owner.GetFromJsonAsync<AccountDto>("/api/auth/me"))!.Id;

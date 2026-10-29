@@ -190,7 +190,8 @@ public sealed class PlanningGift
 public sealed class PlanningGiftTransaction
 {
     public const string Matched = "MATCHED", Unmatched = "UNMATCHED", Duplicate = "DUPLICATE", Ignored = "IGNORED";
-    public const string SePay = "SEPAY";
+    /// <summary>SEPAY = the SePay webhook of an account in our SePay company; SEPAY_BANKHUB = an account the couple linked through Bank Hub.</summary>
+    public const string SePay = "SEPAY", SePayBankHub = "SEPAY_BANKHUB";
 
     public Guid Id { get; private set; }
     public Guid? WeddingId { get; private set; }
