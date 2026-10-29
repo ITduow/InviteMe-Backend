@@ -27,7 +27,10 @@ builder.Services.AddCors(options =>
 
     options.AddPolicy("Frontend", policy =>
         policy.WithOrigins(frontendUri.GetLeftPart(UriPartial.Authority))
-            .AllowAnyHeader().AllowAnyMethod().AllowCredentials());
+            .AllowAnyHeader().AllowAnyMethod().AllowCredentials()
+            // The app and the API are different origins, so every authenticated call needs a preflight; let the
+            // browser reuse it (Chromium caps this at 2 hours) instead of sending OPTIONS before each request.
+            .SetPreflightMaxAge(TimeSpan.FromHours(2)));
 });
 
 var app = builder.Build();
