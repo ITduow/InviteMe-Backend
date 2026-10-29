@@ -16,6 +16,14 @@ public interface IGiftStore
     Task<GuestGiftResult> ClaimAsync(string token, Guid giftId, CancellationToken ct);
 
     Task<IReadOnlyList<GiftBankAccountDto>> AccountsAsync(Guid weddingId, CancellationToken ct);
+    /// <summary>The Bank Hub company of the wedding, or null before the first link.</summary>
+    Task<string?> BankHubCompanyAsync(Guid weddingId, CancellationToken ct);
+    /// <summary>Keeps the first company saved for the wedding (a concurrent link may have saved one already) and returns it.</summary>
+    Task<string> SaveBankHubCompanyAsync(Guid weddingId, string companyXid, CancellationToken ct);
+    /// <summary>Marks the receiving accounts SePay lists as linked (adding new ones up to the limit) and unmarks the others.</summary>
+    Task<BankHubSyncDto> SyncBankHubAccountsAsync(Guid weddingId, IReadOnlyList<BankHubAccount> linked, Guid actor, CancellationToken ct);
+    /// <summary>The Bank Hub id of one linked receiving account, or null.</summary>
+    Task<string?> BankHubAccountXidAsync(Guid weddingId, Guid accountId, CancellationToken ct);
     Task<GiftBankAccountDto> AddAccountAsync(Guid weddingId, SaveGiftAccount input, Guid actor, CancellationToken ct);
     Task RemoveAccountAsync(Guid weddingId, Guid accountId, Guid actor, CancellationToken ct);
 

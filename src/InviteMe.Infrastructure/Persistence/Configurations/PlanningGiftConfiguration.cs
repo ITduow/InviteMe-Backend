@@ -9,8 +9,19 @@ namespace InviteMe.Infrastructure.Persistence.Configurations;
 
 /// <summary>Guest08 / Couple08 gift tables on Guest Planning v2. The legacy gifts table (old guests) is not used.</summary>
 public sealed class PlanningGiftConfiguration : IEntityTypeConfiguration<PlanningGiftAccount>, IEntityTypeConfiguration<PlanningGift>,
-    IEntityTypeConfiguration<PlanningGiftTransaction>, IEntityTypeConfiguration<PlanningGiftProof>
+    IEntityTypeConfiguration<PlanningGiftTransaction>, IEntityTypeConfiguration<PlanningGiftProof>, IEntityTypeConfiguration<PlanningGiftBankHub>
 {
+    public void Configure(EntityTypeBuilder<PlanningGiftBankHub> b)
+    {
+        b.ToTable("planning_gift_bank_hubs");
+        b.HasKey(x => x.WeddingId);
+        b.Property(x => x.WeddingId).HasColumnName("wedding_id");
+        b.Property(x => x.CompanyXid).HasColumnName("company_xid").HasMaxLength(64);
+        b.Property(x => x.CreatedAt).HasColumnName("created_at");
+        b.HasOne<Wedding>().WithOne().HasForeignKey<PlanningGiftBankHub>(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade)
+            .HasConstraintName("fk_planning_gift_bank_hubs_wedding");
+    }
+
     public void Configure(EntityTypeBuilder<PlanningGiftAccount> b)
     {
         b.ToTable("planning_gift_accounts", t => t.HasCheckConstraint("ck_planning_gift_accounts_bin", "bank_bin ~ '^[0-9]{6}$'"));
@@ -22,6 +33,7 @@ public sealed class PlanningGiftConfiguration : IEntityTypeConfiguration<Plannin
         b.Property(x => x.AccountNumber).HasColumnName("account_number").HasMaxLength(30);
         b.Property(x => x.AccountName).HasColumnName("account_name").HasMaxLength(100);
         b.Property(x => x.Label).HasColumnName("label").HasMaxLength(30);
+        b.Property(x => x.BankHubAccountXid).HasColumnName("bank_hub_account_xid").HasMaxLength(64);
         b.Property(x => x.CreatedAt).HasColumnName("created_at");
         b.HasIndex(x => new { x.WeddingId, x.BankBin, x.AccountNumber }).IsUnique().HasDatabaseName("uq_planning_gift_accounts_wedding_account");
         b.HasIndex(x => x.AccountNumber).HasDatabaseName("ix_planning_gift_accounts_number");
