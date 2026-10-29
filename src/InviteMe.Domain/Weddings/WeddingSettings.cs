@@ -10,8 +10,13 @@ public sealed class WeddingSettings
     public string Visibility { get; private set; } = "PRIVATE";
     public string Timezone { get; private set; } = "Asia/Ho_Chi_Minh";
     public DateTimeOffset? RsvpDeadline { get; private set; }
+    public DateTimeOffset? MainEventAt { get; private set; }
+    public string? VenueName { get; private set; }
+    public string? VenueAddress { get; private set; }
     public short RsvpReminderDaysBefore { get; private set; } = 2;
     public string? SettingsJson { get; private set; }
+    public string MediaCatalogJson { get; private set; } = "[]";
+    public string PreviousSlugsJson { get; private set; } = "[]";
     public string? WebsiteDraftJson { get; private set; }
     public string? WebsitePublishedJson { get; private set; }
     public WebsitePublicationStatus WebsiteStatus { get; private set; } = WebsitePublicationStatus.DRAFT;
@@ -56,6 +61,14 @@ public sealed class WeddingSettings
         InvitationDesignVersion++;
     }
     public void SetRsvpDeadline(DateTimeOffset deadline) => RsvpDeadline = deadline.ToUniversalTime();
+    public void SetMainEvent(DateTimeOffset? startAt, string? venueName, string? venueAddress)
+    {
+        MainEventAt = startAt?.ToUniversalTime();
+        VenueName = string.IsNullOrWhiteSpace(venueName) ? null : venueName.Trim();
+        VenueAddress = string.IsNullOrWhiteSpace(venueAddress) ? null : venueAddress.Trim();
+    }
+    public void SetMediaCatalogJson(string json) => MediaCatalogJson = json;
+    public void SetPreviousSlugsJson(string json) => PreviousSlugsJson = json;
     public void Configure(string timezone, string visibility, DateTimeOffset? deadline, short reminderDays)
     {
         Timezone = timezone; Visibility = visibility; RsvpDeadline = deadline?.ToUniversalTime(); RsvpReminderDaysBefore = reminderDays;

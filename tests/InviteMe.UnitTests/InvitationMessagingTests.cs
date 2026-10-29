@@ -296,6 +296,22 @@ public sealed class InvitationMessagingTests
         Assert.False(error.Transient);
     }
 
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("{\"status\":\"success\",\"code\":\"00\",\"data\":null}")]
+    [InlineData("{\"status\":\"success\",\"code\":\"00\",\"data\":{}}")]
+    public async Task SpeedSms_requires_a_valid_receipt_before_marking_sent(string body)
+    {
+        var handler = new CaptureHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+        var provider = new SpeedSmsChannelProvider(new HttpClient(handler),
+            Options.Create(new SpeedSmsOptions { AccessToken = "test-token" }));
+        var error = await Assert.ThrowsAsync<InvitationDeliveryException>(() => provider.SendAsync(
+            new InvitationOutboundMessage(Guid.NewGuid(), Guid.NewGuid(), "SMS", "0901234567",
+                "Invite", "Hello", "https://invite.test/a", ""), default));
+        Assert.Equal("SPEEDSMS_INVALID_RESPONSE", error.Code);
+    }
+
     private sealed class CaptureHandler(HttpResponseMessage response) : HttpMessageHandler
     {
         public HttpRequestMessage? Request { get; private set; }
