@@ -181,8 +181,8 @@ public static class SeatingSuggestions
         var warnings = new List<string>();
 
         var guestSideMap = source.Guests.ToDictionary(g => g.Id, g => g.Side?.ToUpperInvariant());
-        // Count the same people auto-seating will seat: declines never need a seat.
-        var seatedPlaces = source.Places.Where(p => p.Person?.AttendanceStatus != "DECLINED").ToArray();
+        // Count the same people auto-seating will seat: declines and places left empty by a firm answer never need a seat.
+        var seatedPlaces = source.Places.Where(PlanningSeatingRules.NeedsSeat(source)).ToArray();
         var groomGuestCount = seatedPlaces.Count(p => guestSideMap.GetValueOrDefault(p.GuestId) == "GROOM");
         var brideGuestCount = seatedPlaces.Count(p => guestSideMap.GetValueOrDefault(p.GuestId) == "BRIDE");
         var groomPlacedCap = placedTables.Where(t => t.Half == "GROOM").Sum(t => t.Capacity);
@@ -360,8 +360,10 @@ public static class SeatingSuggestions
         var guests = source.Guests.ToDictionary(x => x.Id);
         var places = source.Places.ToDictionary(x => x.Id);
 
-        // Planning is a projection: waitlisted people are seated too, only declines are left out.
-        bool Eligible(PlanningSeatingPlace p) => p.Person?.AttendanceStatus != "DECLINED";
+        // Planning is a projection: unanswered and waitlisted people are seated too; declines and places a firm answer left
+        // empty (RSVP UNUSED) are left out.
+        var needsSeat = PlanningSeatingRules.NeedsSeat(source);
+        bool Eligible(PlanningSeatingPlace p) => needsSeat(p);
         bool Waitlisted(PlanningSeatingPlace p) => p.Person?.AttendanceStatus == "WAITLISTED";
         var eligible = source.Places.Where(Eligible).ToArray();
         var excluded = source.Places.Where(p => !Eligible(p)).Select(p => p.Id).Order().ToArray();
