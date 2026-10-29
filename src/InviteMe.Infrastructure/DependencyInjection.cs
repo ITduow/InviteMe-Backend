@@ -121,6 +121,8 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Features.Guests.Reception.IReceptionStore, ReceptionStore>();
         services.AddSingleton<InviteMe.Application.Ports.Invitations.IQrCodeRenderer, InviteMe.Infrastructure.Invitations.QrCodeRenderer>();
         services.AddScoped<InviteMe.Application.Ports.Rsvps.IRsvpStore, InviteMe.Infrastructure.Persistence.Adapters.Rsvps.RsvpStore>();
+        services.AddScoped<InviteMe.Infrastructure.Notifications.WeddingNotifier>();
+        services.AddScoped<InviteMe.Application.Features.Notifications.INotificationStore, InviteMe.Infrastructure.Persistence.Adapters.NotificationStore>();
         services.AddScoped<InviteMe.Application.Ports.Rsvps.IRsvpReminderStore, InviteMe.Infrastructure.Persistence.Adapters.Rsvps.RsvpReminderStore>();
         services.AddScoped<InviteMe.Application.Ports.Gifts.IGiftStore, InviteMe.Infrastructure.Persistence.Adapters.Gifts.GiftStore>();
         services.AddSingleton(new InviteMe.Application.Features.Gifts.GiftWebhookOptions(configuration["SePay:WebhookApiKey"]));

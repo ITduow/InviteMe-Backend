@@ -33,6 +33,7 @@ public sealed class NotificationConfiguration : IEntityTypeConfiguration<Notific
         builder.Property(x => x.SentAt).HasColumnName("sent_at").HasColumnType("timestamp with time zone");
         builder.Property(x => x.AttemptCount).HasColumnName("attempt_count").HasColumnType("integer").IsRequired().HasDefaultValue(0);
         builder.Property(x => x.LastError).HasColumnName("last_error").HasColumnType("text");
+        builder.Property(x => x.ReadAt).HasColumnName("read_at").HasColumnType("timestamp with time zone");
         builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasColumnType("timestamp with time zone").IsRequired().HasDefaultValueSql("NOW()");
         builder.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasColumnType("timestamp with time zone").IsRequired().HasDefaultValueSql("NOW()");
         builder.Property(x => x.UpdatedAt).ValueGeneratedOnAddOrUpdate();
@@ -45,5 +46,7 @@ public sealed class NotificationConfiguration : IEntityTypeConfiguration<Notific
         builder.HasIndex(x => new { x.Status, x.ScheduledAt }, "ix_notifications_status_schedule").HasDatabaseName("ix_notifications_status_schedule");
         builder.HasIndex(x => x.RecipientUserId, "ix_notifications_recipient_user").HasDatabaseName("ix_notifications_recipient_user");
         builder.HasIndex(x => x.RecipientGuestId, "ix_notifications_recipient_guest").HasDatabaseName("ix_notifications_recipient_guest");
+        // The bell lists one account's latest notifications and counts the unread ones.
+        builder.HasIndex(x => new { x.RecipientUserId, x.CreatedAt }, "ix_notifications_recipient_user_created").HasDatabaseName("ix_notifications_recipient_user_created");
     }
 }

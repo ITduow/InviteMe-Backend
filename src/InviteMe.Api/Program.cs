@@ -98,6 +98,7 @@ app.MapGet("/media/wedding-covers/{weddingId:guid}/{fileName}", async (Guid wedd
 app.MapCoHosts();
 app.MapAuditLogs();
 app.MapRsvp();
+app.MapNotifications();
 app.MapGifts();
 app.MapGuestPlanning();
 app.MapInvitationWording();

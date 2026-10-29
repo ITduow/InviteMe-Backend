@@ -28,7 +28,7 @@ namespace InviteMe.Infrastructure.Persistence.Adapters.Rsvps;
 /// Capacity source: weddings.max_capacity, only compared on the dashboard (ATTENDING people + walk-ins).
 /// Lock order for every write: wedding row → planning guest row (FOR UPDATE).
 /// </summary>
-public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpStore
+public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock, InviteMe.Infrastructure.Notifications.WeddingNotifier notifier) : IRsvpStore
 {
     private static readonly JsonSerializerOptions SnapshotJson = new(JsonSerializerDefaults.Web);
     private const string Primary = "PRIMARY", Companion = "COMPANION", Attending = "ATTENDING", Declined = "DECLINED", Pending = "PENDING";
@@ -118,6 +118,12 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock) : IRsvpS
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var (wedding, guest) = await LockToken(token, ct);
         var result = await Submit(wedding, guest, null, input, mode, null, ct);
+        // Tell the couple (and co-hosts who see this guest) in the same transaction as the answer.
+        if (InviteMe.Application.Features.Notifications.RsvpNotifications.For(result, input.ExpectedVersion, input.Decision, input.PartySize) is { } note)
+        {
+            await notifier.RsvpAsync(wedding.Id, guest.GroupId, note.Type, note.Data, ct);
+            await db.SaveChangesAsync(ct);
+        }
         await tx.CommitAsync(ct); return result;
     }
 
