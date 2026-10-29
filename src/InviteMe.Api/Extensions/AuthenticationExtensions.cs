@@ -57,10 +57,12 @@ internal static class AuthenticationExtensions
             {
                 OnMessageReceived = context =>
                 {
-                    // Browser WebSocket/SSE clients cannot send a bearer header.
+                    // Browser WebSocket/SSE clients cannot send a bearer header. Look at the request headers: the WebSocket
+                    // feature (IsWebSocketRequest) is only added inside the hub endpoint, after authentication has run.
+                    var headers = context.Request.Headers;
                     if (context.Request.Path.StartsWithSegments("/hubs/weddings") &&
-                        (context.HttpContext.WebSockets.IsWebSocketRequest ||
-                         context.Request.Headers.Accept.Any(x => x?.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase) == true)))
+                        (headers.Upgrade.Any(x => string.Equals(x, "websocket", StringComparison.OrdinalIgnoreCase)) ||
+                         headers.Accept.Any(x => x?.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase) == true)))
                         context.Token = context.Request.Query["access_token"];
                     return Task.CompletedTask;
                 },
