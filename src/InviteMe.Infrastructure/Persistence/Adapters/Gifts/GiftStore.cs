@@ -119,6 +119,58 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         return Dto(account);
     }
 
+    public Task<string?> BankHubCompanyAsync(Guid weddingId, CancellationToken ct) =>
+        db.Set<PlanningGiftBankHub>().AsNoTracking().Where(x => x.WeddingId == weddingId).Select(x => x.CompanyXid).SingleOrDefaultAsync(ct);
+
+    public async Task<string> SaveBankHubCompanyAsync(Guid weddingId, string companyXid, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await LockWedding(weddingId, ct);
+        if (await db.Set<PlanningGiftBankHub>().SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct) is { } existing) return existing.CompanyXid;
+        db.Add(PlanningGiftBankHub.Create(weddingId, companyXid, clock.GetUtcNow()));
+        await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
+        return companyXid;
+    }
+
+    public async Task<BankHubSyncDto> SyncBankHubAccountsAsync(Guid weddingId, IReadOnlyList<BankHubAccount> linked, Guid actor, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await LockWedding(weddingId, ct);
+        var accounts = await db.Set<PlanningGiftAccount>().Where(x => x.WeddingId == weddingId).OrderBy(x => x.CreatedAt).ToListAsync(ct);
+        var active = linked.Where(x => x.Active && !string.IsNullOrWhiteSpace(x.AccountNumber)).ToList();
+        var notAdded = new List<string>();
+        foreach (var account in accounts.Where(a => a.BankHubAccountXid is not null && active.All(x => x.Xid != a.BankHubAccountXid)))
+        {
+            account.LinkBankHub(null);
+            db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_gift_accounts", account.Id, "GIFT_ACCOUNT_BANK_HUB_UNLINKED", actor));
+        }
+        foreach (var hub in active)
+        {
+            var number = hub.AccountNumber.Trim();
+            var bank = GiftBanks.Find(hub.BankBin)
+                ?? GiftBanks.All.FirstOrDefault(x => string.Equals(x.Name, hub.BrandName?.Trim(), StringComparison.OrdinalIgnoreCase));
+            var account = accounts.FirstOrDefault(a => a.AccountNumber == number && (bank is null || a.BankBin == bank.Bin));
+            if (account is null)
+            {
+                if (bank is null || accounts.Count >= PlanningGiftAccount.MaxPerWedding) { notAdded.Add(number); continue; }
+                account = PlanningGiftAccount.Create(weddingId, bank.Bin, bank.Name, Cut(number, 30),
+                    Cut(GiftRules.Ascii(hub.HolderName ?? "") is { Length: > 0 } name ? name : bank.Name, 100), null, clock.GetUtcNow());
+                db.Add(account); accounts.Add(account);
+                db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_gift_accounts", account.Id, "GIFT_ACCOUNT_ADDED", actor, null,
+                    JsonSerializer.Serialize(new { account.BankName, last4 = number[^Math.Min(4, number.Length)..], bankHub = true }, Json)));
+            }
+            if (account.BankHubAccountXid == hub.Xid) continue;
+            account.LinkBankHub(Cut(hub.Xid, 64));
+            db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_gift_accounts", account.Id, "GIFT_ACCOUNT_BANK_HUB_LINKED", actor));
+        }
+        await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
+        return new(accounts.Select(Dto).ToList(), notAdded);
+    }
+
+    public Task<string?> BankHubAccountXidAsync(Guid weddingId, Guid accountId, CancellationToken ct) =>
+        db.Set<PlanningGiftAccount>().AsNoTracking().Where(x => x.Id == accountId && x.WeddingId == weddingId)
+            .Select(x => x.BankHubAccountXid).SingleOrDefaultAsync(ct);
+
     public async Task RemoveAccountAsync(Guid weddingId, Guid accountId, Guid actor, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -405,7 +457,8 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         g.Confirmation, g.Code, g.AmountExpected, g.AmountReceived, g.AmountMismatch, g.Message, g.MessagePublic, g.AccountId, g.CreatedAt,
         g.ClaimedAt, g.PaidAt, g.ItemName, g.ItemQuantity, g.ItemValue, g.ProofId is not null, g.ParticipantId);
 
-    private static GiftBankAccountDto Dto(PlanningGiftAccount a) => new(a.Id, a.BankBin, a.BankName, a.AccountNumber, a.AccountName, a.Label);
+    private static GiftBankAccountDto Dto(PlanningGiftAccount a) =>
+        new(a.Id, a.BankBin, a.BankName, a.AccountNumber, a.AccountName, a.Label, a.BankHubAccountXid is not null);
 
     private static GiftTransactionDto Dto(PlanningGiftTransaction t) => new(t.Id, t.Status, t.Amount, t.Code, t.Content, t.Gateway,
         t.AccountNumber, t.ReferenceCode, t.TransactionAt, t.ReceivedAt, t.GiftId);

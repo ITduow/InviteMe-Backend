@@ -17,7 +17,11 @@ public sealed class PlanningGiftAccount
     public string AccountName { get; private set; } = "";
     /// <summary>Optional label shown to guests, e.g. "Nhà trai" / "Nhà gái".</summary>
     public string? Label { get; private set; }
+    /// <summary>Set while the couple has linked this account through SePay Bank Hub: its transfers arrive by IPN.</summary>
+    public string? BankHubAccountXid { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
+
+    public void LinkBankHub(string? bankAccountXid) => BankHubAccountXid = bankAccountXid;
 
     public static PlanningGiftAccount Create(Guid weddingId, string bankBin, string bankName, string accountNumber, string accountName,
         string? label, DateTimeOffset now) => new()
@@ -25,6 +29,19 @@ public sealed class PlanningGiftAccount
         Id = Guid.NewGuid(), WeddingId = weddingId, BankBin = bankBin, BankName = bankName, AccountNumber = accountNumber,
         AccountName = accountName, Label = label, CreatedAt = now
     };
+}
+
+/// <summary>
+/// The SePay Bank Hub company that holds the accounts one wedding's couple linked (created on the first link).
+/// </summary>
+public sealed class PlanningGiftBankHub
+{
+    public Guid WeddingId { get; private set; }
+    public string CompanyXid { get; private set; } = "";
+    public DateTimeOffset CreatedAt { get; private set; }
+
+    public static PlanningGiftBankHub Create(Guid weddingId, string companyXid, DateTimeOffset now) =>
+        new() { WeddingId = weddingId, CompanyXid = companyXid, CreatedAt = now };
 }
 
 /// <summary>

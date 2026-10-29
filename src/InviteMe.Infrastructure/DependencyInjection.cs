@@ -127,6 +127,11 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Ports.Gifts.IGiftStore, InviteMe.Infrastructure.Persistence.Adapters.Gifts.GiftStore>();
         services.AddSingleton(new InviteMe.Application.Features.Gifts.GiftWebhookOptions(configuration["SePay:WebhookApiKey"]));
         services.AddSingleton(new InviteMe.Application.Features.Gifts.BankHubWebhookOptions(configuration["SePay:BankHub:NotifyApiKey"]));
+        services.AddSingleton(new InviteMe.Infrastructure.Gifts.BankHubOptions(configuration["SePay:BankHub:BaseUrl"],
+            configuration["SePay:BankHub:ClientId"], configuration["SePay:BankHub:ClientSecret"]));
+        services.AddSingleton<InviteMe.Infrastructure.Gifts.BankHubTokenCache>();
+        services.AddHttpClient<InviteMe.Application.Features.Gifts.IBankHubClient, InviteMe.Infrastructure.Gifts.BankHubClient>(client =>
+            client.Timeout = TimeSpan.FromSeconds(15));
         services.AddSingleton<InviteMe.Application.Ports.Rsvps.IRsvpReminderFailureClassifier, InviteMe.Infrastructure.Rsvps.RsvpReminderFailureClassifier>();
         services.AddOptions<InviteMe.Infrastructure.Rsvps.RsvpReminderOptions>().BindConfiguration(InviteMe.Infrastructure.Rsvps.RsvpReminderOptions.SectionName);
         if (configuration.GetValue($"{InviteMe.Infrastructure.Rsvps.RsvpReminderOptions.SectionName}:WorkerEnabled", true))

@@ -7,6 +7,20 @@ using InviteMe.Domain.Gifts;
 
 namespace InviteMe.Application.Features.Gifts;
 
+public enum BankHubPurpose { Link, Unlink }
+
+/// <summary>
+/// SePay Bank Hub API (https://developer.sepay.vn/vi/bankhub): one company per wedding, a one-time page where the couple links or
+/// unlinks an account, and the accounts linked in a company. Failures surface as BANK_HUB_UNAVAILABLE (502).
+/// </summary>
+public interface IBankHubClient
+{
+    bool Configured { get; }
+    Task<string> CreateCompanyAsync(string fullName, CancellationToken ct);
+    Task<BankHubLinkDto> CreateLinkAsync(string companyXid, BankHubPurpose purpose, string? bankAccountXid, CancellationToken ct);
+    Task<IReadOnlyList<BankHubAccount>> AccountsAsync(string companyXid, CancellationToken ct);
+}
+
 /// <summary>Notify API key of our SePay Bank Hub merchant (sent in the Authorization header). Null = IPN not configured.</summary>
 public sealed record BankHubWebhookOptions(string? ApiKey);
 

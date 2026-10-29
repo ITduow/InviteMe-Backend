@@ -66,6 +66,18 @@ internal static class GiftEndpoints
         host.MapDelete("/accounts/{accountId:guid}", async (Guid weddingId, Guid accountId, GiftHostHandler h, CancellationToken ct) =>
             { await h.RemoveAccountAsync(weddingId, accountId, ct); return Results.NoContent(); })
             .WithName("RemoveGiftAccount").Produces(StatusCodes.Status204NoContent).ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound);
+        // SePay Bank Hub: the couple links their account in SePay's page (iframe), then the app syncs the linked accounts.
+        host.MapPost("/bank-hub/link", (Guid weddingId, GiftHostHandler h, CancellationToken ct) => h.LinkBankHubAsync(weddingId, ct))
+            .WithName("LinkGiftBankHub").Produces<BankHubLinkDto>().ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status502BadGateway).ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+        host.MapPost("/bank-hub/sync", (Guid weddingId, GiftHostHandler h, CancellationToken ct) => h.SyncBankHubAsync(weddingId, ct))
+            .WithName("SyncGiftBankHub").Produces<BankHubSyncDto>().ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status502BadGateway).ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+        host.MapPost("/accounts/{accountId:guid}/bank-hub/unlink", (Guid weddingId, Guid accountId, GiftHostHandler h, CancellationToken ct) =>
+                h.UnlinkBankHubAsync(weddingId, accountId, ct))
+            .WithName("UnlinkGiftBankHub").Produces<BankHubLinkDto>().ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity).ProducesProblem(StatusCodes.Status502BadGateway)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
         host.MapGet("", (Guid weddingId, GiftHostHandler h, CancellationToken ct, string? status = null, string? method = null, string? search = null,
                 Guid? guestId = null, int page = 1, int pageSize = 25) =>
                 h.LedgerAsync(weddingId, new GiftLedgerFilter(status, method, search, guestId), new PageRequest(page, pageSize), ct))

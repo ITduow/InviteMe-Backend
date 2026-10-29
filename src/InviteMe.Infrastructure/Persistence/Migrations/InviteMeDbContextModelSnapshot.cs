@@ -1446,6 +1446,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(6)")
                         .HasColumnName("bank_bin");
 
+                    b.Property<string>("BankHubAccountXid")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("bank_hub_account_xid");
+
                     b.Property<string>("BankName")
                         .IsRequired()
                         .HasMaxLength(40)
@@ -1478,6 +1483,27 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("ck_planning_gift_accounts_bin", "bank_bin ~ '^[0-9]{6}$'");
                         });
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Gifts.PlanningGiftBankHub", b =>
+                {
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.Property<string>("CompanyXid")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("company_xid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.HasKey("WeddingId");
+
+                    b.ToTable("planning_gift_bank_hubs", "inviteme");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Gifts.PlanningGiftProof", b =>
@@ -5908,6 +5934,16 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_planning_gift_accounts_wedding");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Gifts.PlanningGiftBankHub", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithOne()
+                        .HasForeignKey("InviteMe.Domain.Gifts.PlanningGiftBankHub", "WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_planning_gift_bank_hubs_wedding");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Gifts.PlanningGiftProof", b =>

@@ -63,7 +63,7 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
     RequestValidation<GiftLedgerFilter> filterValidation, RequestValidation<PageRequest> pages,
     RequestValidation<SimulateSePayTransfer> simulateValidation, IPlanningChangePublisher changes, TimeProvider clock,
     InviteMe.Application.Features.Billing.IWeddingEntitlements plans, IGiftProofStorage proofs,
-    InviteMe.Application.Features.Weddings.Setup.ImageUploadLimit limit)
+    InviteMe.Application.Features.Weddings.Setup.ImageUploadLimit limit, IBankHubClient bankHub)
 {
     public const string NeedsReview = "NEEDS_REVIEW";
 
@@ -77,6 +77,49 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
         await Require(weddingId, WeddingPermission.GIFT_EDIT, ct);
         await accountValidation.ValidateAsync(input, ct);
         return await store.AddAccountAsync(weddingId, input, user.UserId!.Value, ct);
+    }
+
+    /// <summary>
+    /// Bank Hub page where the couple links their account (bank login / OTP happen there, never in InviteMe). The wedding's
+    /// Bank Hub company is created on the first link.
+    /// </summary>
+    public async Task<BankHubLinkDto> LinkBankHubAsync(Guid weddingId, CancellationToken ct)
+    {
+        await Require(weddingId, WeddingPermission.GIFT_EDIT, ct);
+        RequireBankHub();
+        var company = await store.BankHubCompanyAsync(weddingId, ct)
+            ?? await store.SaveBankHubCompanyAsync(weddingId, await bankHub.CreateCompanyAsync($"InviteMe {weddingId:N}", ct), ct);
+        return await bankHub.CreateLinkAsync(company, BankHubPurpose.Link, null, ct);
+    }
+
+    /// <summary>Bank Hub page to stop sharing one linked account (the account itself stays a receiving account).</summary>
+    public async Task<BankHubLinkDto> UnlinkBankHubAsync(Guid weddingId, Guid accountId, CancellationToken ct)
+    {
+        await Require(weddingId, WeddingPermission.GIFT_EDIT, ct);
+        RequireBankHub();
+        var xid = await store.BankHubAccountXidAsync(weddingId, accountId, ct);
+        var company = await store.BankHubCompanyAsync(weddingId, ct);
+        if (xid is null || company is null)
+            throw new ApplicationProblemException(ProblemKind.BusinessRule, "BANK_HUB_NOT_LINKED", "Tài khoản này chưa liên kết ngân hàng.");
+        return await bankHub.CreateLinkAsync(company, BankHubPurpose.Unlink, xid, ct);
+    }
+
+    /// <summary>After the Bank Hub page closes: reads the linked accounts from SePay and updates the receiving accounts.</summary>
+    public async Task<BankHubSyncDto> SyncBankHubAsync(Guid weddingId, CancellationToken ct)
+    {
+        await Require(weddingId, WeddingPermission.GIFT_EDIT, ct);
+        RequireBankHub();
+        var company = await store.BankHubCompanyAsync(weddingId, ct);
+        var linked = company is null ? [] : await bankHub.AccountsAsync(company, ct);
+        var result = await store.SyncBankHubAccountsAsync(weddingId, linked, user.UserId!.Value, ct);
+        await changes.PublishAsync(weddingId, new(GiftRules.ChangedEvent, weddingId), ct);
+        return result;
+    }
+
+    private void RequireBankHub()
+    {
+        if (!bankHub.Configured)
+            throw new ApplicationProblemException(ProblemKind.Unavailable, "BANK_HUB_NOT_CONFIGURED", "Liên kết ngân hàng chưa được bật.");
     }
 
     public async Task RemoveAccountAsync(Guid weddingId, Guid accountId, CancellationToken ct)
