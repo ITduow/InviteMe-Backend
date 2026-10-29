@@ -133,6 +133,14 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
                     && !db.Set<PlanningCheckIn>().Any(c => c.PlaceId == p.Id)
                 select p.Id).ToListAsync(ct);
 
+            // Places nobody is on, of an invitation with a firm answer (RSVP UNUSED), are released with the declines.
+            var firmGuestIds = await FirmAnswerGuestIdsAsync(weddingId, ct);
+            var emptyPlaceIds = await db.Set<PlanningPlace>()
+                .Where(p => p.ParticipantId == null && firmGuestIds.Contains(p.GuestId)
+                    && !db.Set<PlanningCheckIn>().Any(c => c.PlaceId == p.Id))
+                .Select(p => p.Id).ToListAsync(ct);
+            declinedPlaceIds.AddRange(emptyPlaceIds);
+
             var declinedAssignments = await db.Set<PlanningSeatAssignment>()
                 .Where(a => declinedPlaceIds.Contains(a.PlaceId))
                 .ToListAsync(ct);
@@ -550,8 +558,12 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
 
                 var checkedInPartyPlaces = await db.Set<PlanningCheckIn>()
                     .Where(c => partyPlaceIds.Contains(c.PlaceId)).Select(c => c.PlaceId).ToListAsync(ct);
+                var partyAnswer = InvitationAnswer(await db.Set<PlanningParticipant>()
+                    .Where(p => p.GuestId == targetGuest.Id).Select(p => p.AttendanceStatus).ToListAsync(ct));
                 var eligiblePlaces = partyPlacesWithParticipants
-                    .Where(x => x.Person == null || x.Person.AttendanceStatus != "DECLINED" || checkedInPartyPlaces.Contains(x.Place.Id))
+                    .Where(x => checkedInPartyPlaces.Contains(x.Place.Id) || (x.Person == null
+                        ? !PlanningSeatingRules.HasFirmAnswer(partyAnswer)
+                        : x.Person.AttendanceStatus != "DECLINED"))
                     .Select(x => x.Place)
                     .ToList();
 
@@ -1082,13 +1094,7 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
 
         var guests = rawGuests.Select(g => {
             var parts = participantLookup.GetValueOrDefault(g.Id) ?? [];
-            string rsvpStatus = "PENDING";
-            if (parts.Count > 0)
-            {
-                if (parts.Any(p => p.AttendanceStatus == "ATTENDING")) rsvpStatus = "ATTENDING";
-                else if (parts.All(p => p.AttendanceStatus == "DECLINED")) rsvpStatus = "DECLINED";
-                else if (parts.Any(p => p.AttendanceStatus == "WAITLISTED")) rsvpStatus = "WAITLISTED";
-            }
+            var rsvpStatus = InvitationAnswer(parts.Select(p => p.AttendanceStatus).ToList());
             return new PlanningGuestDto(g.Id, g.Version, g.RecipientName, g.Honorific, g.InvitationKind, g.ExpectedPeople, g.Side,
                 g.Group, g.Phone, g.Note, g.Email, g.InvitationToken == null ? null : "/invite/" + g.InvitationToken,
                 g.ArchivedAt, false, rsvpStatus);
@@ -1134,10 +1140,43 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
                     p.Id));
             }
         }
+        var answers = guests.ToDictionary(g => g.Id, g => g.RsvpStatus);
+        var emptySeated = places.Where(p => p.Person is null && PlanningSeatingRules.HasFirmAnswer(answers.GetValueOrDefault(p.GuestId))
+            && assignmentsByPlaceId.ContainsKey(p.Id)).ToList();
+        var emptyCheckedIn = emptySeated.Count == 0 ? [] : (await db.Set<PlanningCheckIn>().AsNoTracking()
+            .Where(c => emptySeated.Select(p => p.Id).Contains(c.PlaceId)).Select(c => c.PlaceId).ToListAsync(ct)).ToHashSet();
+        foreach (var p in emptySeated.Where(p => !emptyCheckedIn.Contains(p.Id)))
+        {
+            var seat = assignmentsByPlaceId[p.Id];
+            var owner = guests.FirstOrDefault(g => g.Id == p.GuestId)?.RecipientName ?? "khách";
+            var tableName = tableById.TryGetValue(seat.TableId, out var tbl) ? tbl.Name : "bàn";
+            declinedSeatedWarnings.Add(new SeatingWarningDto("UNUSED_PLACE_SEATED",
+                $"Thiệp {owner} đã trả lời và không dùng suất {p.Position}, nhưng suất này vẫn đang có ghế tại {tableName}.",
+                seat.TableId, p.GuestId, p.Id));
+        }
         var allWarnings = (warnings ?? []).Concat(declinedSeatedWarnings).DistinctBy(w => (w.Code, w.TableId, w.GuestId, w.PlaceId)).ToList();
 
         return new(weddingId, version, tables, guests, places, assignments, layout, allWarnings,
             isLocked, lockedAt, lockedBy, isEventStarted, eventStartedAt, eventStartedBy);
+    }
+
+    // Answer of an invitation as seen from its people: someone attends → ATTENDING; everyone declined → DECLINED; else PENDING
+    // (no answer yet, or MAYBE, whose people stay PENDING).
+    private static string InvitationAnswer(IReadOnlyCollection<string> attendance) =>
+        attendance.Any(a => a == "ATTENDING") ? "ATTENDING"
+        : attendance.Count > 0 && attendance.All(a => a == "DECLINED") ? "DECLINED"
+        : attendance.Any(a => a == "WAITLISTED") ? "WAITLISTED"
+        : "PENDING";
+
+    private async Task<List<Guid>> FirmAnswerGuestIdsAsync(Guid weddingId, CancellationToken ct)
+    {
+        var people = await (from g in db.Set<PlanningGuest>()
+            join person in db.Set<PlanningParticipant>() on g.Id equals person.GuestId
+            where g.WeddingId == weddingId && g.ArchivedAt == null
+            select new { g.Id, person.AttendanceStatus }).ToListAsync(ct);
+        return people.GroupBy(x => x.Id)
+            .Where(x => PlanningSeatingRules.HasFirmAnswer(InvitationAnswer(x.Select(p => p.AttendanceStatus).ToList())))
+            .Select(x => x.Key).ToList();
     }
 
     public async Task<IReadOnlyList<UnattendedGuestDto>> GetUnattendedGuestsAsync(Guid weddingId, Guid tableId, CancellationToken ct, IReadOnlySet<Guid>? groupScope = null)

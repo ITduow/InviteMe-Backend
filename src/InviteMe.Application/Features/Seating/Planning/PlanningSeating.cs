@@ -97,6 +97,26 @@ public sealed record PlanningAssignmentDto(
     int? PlannedSeatNumber = null);
 public sealed record PlanningSeatingPlace(Guid Id, Guid GuestId, int Position, PlanningPersonDto? Person);
 
+/// <summary>
+/// Which reserved places still need a seat. A declined person does not. A place with nobody on it does not either once the
+/// invitation has a firm answer (Có / Không): RSVP has then marked it UNUSED ("đăng ký bao nhiêu tính bấy nhiêu"). Before any
+/// answer, or for a MAYBE answer (its people stay PENDING), every place is still planned for.
+/// </summary>
+public static class PlanningSeatingRules
+{
+    public static bool HasFirmAnswer(string? invitationRsvpStatus) => invitationRsvpStatus is "ATTENDING" or "DECLINED";
+
+    public static bool NeedsSeat(PlanningSeatingPlace place, string? invitationRsvpStatus) =>
+        place.Person is { } person ? person.AttendanceStatus != "DECLINED" : !HasFirmAnswer(invitationRsvpStatus);
+
+    /// <summary>Same rule for a whole snapshot: invitation answers come from its guest list.</summary>
+    public static Func<PlanningSeatingPlace, bool> NeedsSeat(PlanningSeatingDto source)
+    {
+        var answers = source.Guests.ToDictionary(g => g.Id, g => g.RsvpStatus);
+        return place => NeedsSeat(place, answers.GetValueOrDefault(place.GuestId));
+    }
+}
+
 public sealed record PlanningSeatingDto(
     Guid WeddingId,
     int Version,

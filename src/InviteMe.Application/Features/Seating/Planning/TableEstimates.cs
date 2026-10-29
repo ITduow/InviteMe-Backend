@@ -30,8 +30,8 @@ public static class TableEstimates
         if (reservePercent is < 0 or > 50) throw new ArgumentOutOfRangeException(nameof(reservePercent));
 
         var guests = source.Guests.ToDictionary(x => x.Id);
-        // Same projection as auto-seating: everyone except declines, unanswered people included.
-        var seats = source.Places.Where(p => p.Person?.AttendanceStatus != "DECLINED").ToArray();
+        // Same projection as auto-seating: everyone except declines and places a firm answer left empty, unanswered people included.
+        var seats = source.Places.Where(PlanningSeatingRules.NeedsSeat(source)).ToArray();
         var confirmed = seats.Count(p => p.Person?.AttendanceStatus == "ATTENDING");
 
         int TablesFor(int count) => (int)Math.Ceiling(count / (double)capacity);
