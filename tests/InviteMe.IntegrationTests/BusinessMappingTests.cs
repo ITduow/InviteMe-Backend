@@ -1,7 +1,5 @@
 using System.Reflection;
-using InviteMe.Domain.Gifts;
-using InviteMe.Domain.Guests;
-using InviteMe.Domain.Seating;
+using InviteMe.Domain.Weddings;
 using InviteMe.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -34,8 +32,17 @@ public sealed class BusinessMappingTests
         await using (var reader = await command.ExecuteReaderAsync())
             while (await reader.ReadAsync()) indexes[reader.GetString(0) + "." + reader.GetString(1)] = reader.GetString(2);
 
-        var tables = db.Model.GetEntityTypes().Where(e => e.GetTableName() is not null).ToList();
-        Assert.Equal(80, tables.Count); // Includes the two Wedding Story tables added after the original mapping count.
+        var legacyTables = new[]
+        {
+            "ai_generations", "check_ins", "gift_messages", "guest_groups", "guest_notes", "guest_participants",
+            "guests", "invitation_deliveries", "invitations", "love_stories", "rsvp_history", "rsvps",
+            "seating_assignments", "seating_change_logs", "seats", "table_status_history", "tables",
+            "template_sections", "waitlist_entries", "walk_ins", "wedding_events", "wedding_media", "wedding_slug_history", "venues"
+        };
+        foreach (var table in legacyTables) Assert.DoesNotContain(columns.Keys, x => x.StartsWith(table + ".", StringComparison.Ordinal));
+        Assert.Contains(columns.Keys, x => x.StartsWith("wedding_settings.", StringComparison.Ordinal));
+        Assert.Contains("notifications.notifications_pkey", constraints);
+
         foreach (var entity in db.Model.GetEntityTypes())
         {
             var view = entity.GetViewName();
@@ -61,7 +68,6 @@ public sealed class BusinessMappingTests
                     Assert.Equal(index.IsUnique, definition!.StartsWith("CREATE UNIQUE INDEX", StringComparison.Ordinal));
                 }
             }
-            // Exercise the real EF SELECT/materializer, including keyless views.
             var read = typeof(BusinessMappingTests).GetMethod(nameof(ReadOne), BindingFlags.Static | BindingFlags.NonPublic)!
                 .MakeGenericMethod(entity.ClrType);
             await (Task)read.Invoke(null, [db])!;
@@ -69,84 +75,28 @@ public sealed class BusinessMappingTests
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
-    public Task EfRoundTripsGuestGiftJsonDefaultsAndRejectsStaleSeatingUpdates() => SchemaV2MigrationTests.InDatabase(async db =>
+    public Task WeddingSetupSettingsRoundTripWithoutSeparateSetupTables() => SchemaV2MigrationTests.InDatabase(async db =>
     {
         await db.Database.MigrateAsync();
         await db.Database.ExecuteSqlRawAsync("""
             INSERT INTO inviteme.users(id,email,full_name) VALUES ('00000000-0000-0000-0000-000000000001','mapping@example.test','Owner');
             INSERT INTO inviteme.weddings(id,owner_user_id,title,slug) VALUES ('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000001','Mapping','mapping');
             """);
-        var weddingId = Guid.Parse("00000000-0000-0000-0000-000000000002");
-        var guest = new WeddingGuest();
-        db.Add(guest);
-        db.Entry(guest).Property(x => x.WeddingId).CurrentValue = weddingId;
-        db.Entry(guest).Property(x => x.GuestCode).CurrentValue = "G001";
-        db.Entry(guest).Property(x => x.FullName).CurrentValue = "Wedding Guest";
-        db.Entry(guest).Property(x => x.ExpectedCompanionCount).CurrentValue = 2;
-        await db.SaveChangesAsync();
-        Assert.NotEqual(Guid.Empty, guest.Id);
-        Assert.Equal("ACTIVE", guest.RecordStatus);
-        Assert.NotEqual(default, guest.CreatedAt);
-        var invitation = new InviteMe.Domain.Invitations.Invitation();
-        db.Add(invitation);
-        db.Entry(invitation).Property(x => x.WeddingId).CurrentValue = weddingId;
-        db.Entry(invitation).Property(x => x.GuestId).CurrentValue = guest.Id;
-        db.Entry(invitation).Property(x => x.TokenHash).CurrentValue = new string('a',64);
-        db.Entry(invitation).Property(x => x.Configuration).CurrentValue = "{\"theme\":\"blue\"}";
-        var gift = new Gift();
-        db.Add(gift);
-        db.Entry(gift).Property(x => x.WeddingId).CurrentValue = weddingId;
-        db.Entry(gift).Property(x => x.GuestId).CurrentValue = guest.Id;
-        db.Entry(gift).Property(x => x.Method).CurrentValue = "CASH";
-        db.Entry(gift).Property(x => x.Amount).CurrentValue = 123456.78m;
-        var table = new ReceptionTable();
-        db.Add(table);
-        db.Entry(table).Property(x => x.WeddingId).CurrentValue = weddingId;
-        db.Entry(table).Property(x => x.TableNumber).CurrentValue = "T1";
-        db.Entry(table).Property(x => x.Capacity).CurrentValue = 10;
+        var settings = WeddingSettings.Create(Guid.Parse("00000000-0000-0000-0000-000000000002"));
+        settings.Configure("Asia/Ho_Chi_Minh", "PRIVATE", null, 2);
+        settings.SetMainEvent(new DateTimeOffset(2026, 12, 20, 18, 30, 0, TimeSpan.FromHours(7)), "White Palace", "Ho Chi Minh City");
+        settings.SetMediaCatalogJson("[{\"id\":\"00000000-0000-0000-0000-000000000003\",\"url\":\"https://cdn.example.test/cover.jpg\",\"storageKey\":\"cover.jpg\",\"mediaType\":\"IMAGE\",\"createdAt\":\"2026-10-01T00:00:00Z\"}]");
+        settings.SetPreviousSlugsJson("[{\"slug\":\"old-mapping\",\"changedAt\":\"2026-10-01T00:00:00Z\"}]");
+        db.WeddingSettings.Add(settings);
         await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
-        Assert.Equal(123456.78m, (await db.Gifts.SingleAsync()).Amount);
-        Assert.Contains("blue", (await db.Invitations.SingleAsync()).Configuration!);
-        var summary = await db.GuestRsvpSummaries.SingleAsync();
-        Assert.Equal(3, summary.EstimatedPartySize);
-        Assert.Null(summary.ConfirmedPartySize);
-        Assert.Equal(10, (await db.TableOccupancies.SingleAsync()).Remaining);
 
-        await using var stale = new InviteMeDbContext(new DbContextOptionsBuilder<InviteMeDbContext>()
-            .UseNpgsql(db.Database.GetConnectionString()).Options);
-        var first = await db.Tables.SingleAsync();
-        var second = await stale.Tables.SingleAsync();
-        db.Entry(first).Property(x => x.Status).CurrentValue = "ACTIVE";
-        await db.SaveChangesAsync();
-        Assert.Equal(2, first.Version);
-        Assert.NotNull(first.ActivatedAt);
-        stale.Entry(second).Property(x => x.Capacity).CurrentValue = 11;
-        await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => stale.SaveChangesAsync());
-
-        await db.Database.ExecuteSqlInterpolatedAsync($"""
-            INSERT INTO inviteme.guest_participants(guest_id,full_name,participant_type,attendance_status)
-            VALUES ({guest.Id},'Wedding Guest','PRIMARY','ATTENDING');
-            INSERT INTO inviteme.seating_assignments(wedding_id,participant_id,table_id,assigned_by)
-            SELECT {weddingId},id,{first.Id},'00000000-0000-0000-0000-000000000001'::uuid FROM inviteme.guest_participants;
-            INSERT INTO inviteme.seats(table_id,seat_number) VALUES ({first.Id},1),({first.Id},2);
-            """);
-        await using var staleAssignmentContext = new InviteMeDbContext(new DbContextOptionsBuilder<InviteMeDbContext>()
-            .UseNpgsql(db.Database.GetConnectionString()).Options);
-        var assignment = await db.SeatingAssignments.SingleAsync();
-        var staleAssignment = await staleAssignmentContext.SeatingAssignments.SingleAsync();
-        var seats = await db.Seats.OrderBy(x => x.SeatNumber).ToListAsync();
-        db.Entry(assignment).Property(x => x.SeatId).CurrentValue = seats[0].Id;
-        await db.SaveChangesAsync();
-        Assert.Equal(2, assignment.Version);
-        staleAssignmentContext.Entry(staleAssignment).Property(x => x.SeatId).CurrentValue = seats[1].Id;
-        await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => staleAssignmentContext.SaveChangesAsync());
-        // Unique labels/tokens are mutable values, not EF identity keys.
-        db.Entry(first).Property(x => x.TableNumber).CurrentValue = "T1 renamed";
-        var savedInvitation = await db.Invitations.SingleAsync();
-        db.Entry(savedInvitation).Property(x => x.TokenHash).CurrentValue = new string('b', 64);
-        await db.SaveChangesAsync();
-        Assert.Equal("T1 renamed", (await db.Tables.AsNoTracking().SingleAsync()).TableNumber);
+        var saved = await db.WeddingSettings.SingleAsync(x => x.WeddingId == settings.WeddingId);
+        Assert.Equal("White Palace", saved.VenueName);
+        Assert.Equal("Ho Chi Minh City", saved.VenueAddress);
+        Assert.Equal(new DateTimeOffset(2026, 12, 20, 11, 30, 0, TimeSpan.Zero), saved.MainEventAt);
+        Assert.Contains("cover.jpg", saved.MediaCatalogJson);
+        Assert.Contains("old-mapping", saved.PreviousSlugsJson);
     });
 
     private static Task<List<T>> ReadOne<T>(InviteMeDbContext db) where T : class =>

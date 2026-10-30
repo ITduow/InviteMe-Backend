@@ -3,12 +3,14 @@ using System.Text;
 using System.Text.Json;
 using InviteMe.Application.Common.Errors;
 using InviteMe.Application.Features.AI.ThankYouMessages;
+using InviteMe.Application.Features.Invitations.Messaging;
 using InviteMe.Domain.AI;
 using InviteMe.Domain.Audit;
 using InviteMe.Domain.Gifts;
 using InviteMe.Domain.Guests;
 using InviteMe.Domain.Rsvps;
 using InviteMe.Domain.Weddings;
+using InviteMe.Infrastructure.Notifications;
 using Microsoft.EntityFrameworkCore;
 
 namespace InviteMe.Infrastructure.Persistence.Adapters;
@@ -137,10 +139,10 @@ public sealed class ThankYouMessageStore(InviteMeDbContext db, TimeProvider cloc
             foreach (var channel in channels)
             {
                 var content = channel == "EMAIL" ? rendered : $"Xin cảm ơn {Short(row.Guest.RecipientName, 32)} vì lời chúc và tình cảm của bạn! Xem thư: {link}";
-                if (channel == "SMS" && content.Length > 201)
-                    throw new ApplicationProblemException(ProblemKind.BusinessRule, "THANK_YOU_SMS_TOO_LONG", "The thank-you SMS and personal link exceed 201 characters.");
+                if (channel == "SMS" && SmsSegmentCounter.CountSegments(content) > 3)
+                    throw new ApplicationProblemException(ProblemKind.BusinessRule, "THANK_YOU_SMS_TOO_LONG", "The thank-you SMS and personal link exceed three SMS segments.");
                 db.ThankYouSendJobs.Add(ThankYouSendJob.Create(batch.Id, weddingId, row.Message.Id, row.Guest.Id, channel,
-                    channel == "EMAIL" ? row.Guest.Email!.Trim() : row.Guest.Phone!.Trim(), content, clock.GetUtcNow()));
+                    channel == "EMAIL" ? row.Guest.Email!.Trim() : NormalizeSmsPhone(row.Guest.Phone), content, clock.GetUtcNow()));
             }
         }
         db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "thank_you_send_batches", batch.Id, "THANK_YOU_MESSAGES_QUEUED", actor,
@@ -194,10 +196,10 @@ public sealed class ThankYouMessageStore(InviteMeDbContext db, TimeProvider cloc
             foreach (var channel in channels)
             {
                 var content = channel == "EMAIL" ? letter : $"Cảm ơn {Short(guest.RecipientName, 32)}! Xem thư cảm ơn: {publicLink}";
-                if (channel == "SMS" && content.Length > 201)
-                    throw new ApplicationProblemException(ProblemKind.BusinessRule, "THANK_YOU_SMS_TOO_LONG", "The thank-you SMS and personal link exceed 201 characters.");
+                if (channel == "SMS" && SmsSegmentCounter.CountSegments(content) > 3)
+                    throw new ApplicationProblemException(ProblemKind.BusinessRule, "THANK_YOU_SMS_TOO_LONG", "The thank-you SMS and personal link exceed three SMS segments.");
                 db.ThankYouSendJobs.Add(ThankYouSendJob.CreateForTemplate(batch.Id, weddingId, template.Id, guest.Id,
-                    channel, channel == "EMAIL" ? guest.Email!.Trim() : guest.Phone!.Trim(), content, letter, clock.GetUtcNow()));
+                    channel, channel == "EMAIL" ? guest.Email!.Trim() : NormalizeSmsPhone(guest.Phone), content, letter, clock.GetUtcNow()));
             }
         }
         db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "thank_you_send_batches", batch.Id, "THANK_YOU_MESSAGES_QUEUED", actor,
@@ -211,10 +213,15 @@ public sealed class ThankYouMessageStore(InviteMeDbContext db, TimeProvider cloc
         var batch = await db.ThankYouSendBatches.AsNoTracking().SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.Id == batchId, ct)
             ?? throw new ApplicationProblemException(ProblemKind.NotFound, "THANK_YOU_BATCH_NOT_FOUND", "Send batch is unavailable in this wedding.");
         var jobs = await db.ThankYouSendJobs.AsNoTracking().Where(x => x.BatchId == batchId)
-            .OrderBy(x => x.Id).Select(x => new ThankYouSendJobDto(x.Id, x.MessageId, x.TemplateId, x.GuestId, x.Channel, x.Recipient, x.Status, x.AttemptCount, x.SentAt, x.ErrorCode)).ToListAsync(ct);
-        var sent = jobs.Count(x => x.Status == "SENT"); var failed = jobs.Count(x => x.Status == "FAILED");
-        var status = sent == jobs.Count ? "SENT" : failed == jobs.Count ? "FAILED" : sent + failed == jobs.Count ? "PARTIAL_FAILED" : "PENDING";
-        return new(batch.Id, status, jobs.Count, sent, failed, jobs.Count - sent - failed, batch.CreatedAt, jobs);
+            .OrderBy(x => x.Id).Select(x => new ThankYouSendJobDto(x.Id, x.MessageId, x.TemplateId, x.GuestId, x.Channel,
+                x.Recipient, x.Status, x.AttemptCount, x.SentAt, x.ErrorCode, x.ProviderAcceptedAt, x.DeliveredAt)).ToListAsync(ct);
+        var sent = jobs.Count(x => x.Status is "SENT" or "DELIVERED"); var failed = jobs.Count(x => x.Status == "FAILED");
+        var accepted = jobs.Count(x => x.Status == "ACCEPTED"); var delivered = jobs.Count(x => x.Status == "DELIVERED");
+        var unknown = jobs.Count(x => x.Status is "UNKNOWN" or "REVIEW_REQUIRED"); var simulated = jobs.Count(x => x.Status == "SIMULATED");
+        var pending = jobs.Count(x => x.Status is "PENDING" or "SENDING");
+        var status = pending + accepted > 0 ? "PENDING" : unknown > 0 ? "NEEDS_REVIEW" : failed == jobs.Count ? "FAILED" :
+            failed > 0 ? "PARTIAL_FAILED" : simulated == jobs.Count ? "SIMULATED" : simulated > 0 ? "COMPLETED" : "SENT";
+        return new(batch.Id, status, jobs.Count, sent, failed, pending, batch.CreatedAt, jobs, accepted, delivered, unknown, simulated);
     }
 
     public async Task<int> RetryAsync(Guid weddingId, Guid batchId, Guid actor, CancellationToken ct)
@@ -243,7 +250,7 @@ public sealed class ThankYouMessageStore(InviteMeDbContext db, TimeProvider cloc
                             join job in db.ThankYouSendJobs.AsNoTracking() on guest.Id equals job.GuestId
                             join template in db.Set<ThankYouTemplate>().AsNoTracking() on job.TemplateId equals template.Id
                             where guest.InvitationToken == token && guest.ArchivedAt == null && owner.Status == "ACTIVE" &&
-                                  template.Status == "APPROVED" && job.Status == ThankYouSendJob.Sent && job.LetterSnapshot != null
+                                  template.Status == "APPROVED" && (job.Status == ThankYouSendJob.Sent || job.Status == "DELIVERED") && job.LetterSnapshot != null
                             orderby job.SentAt descending, job.Channel
                             select new ThankYouPublicLetterDto(guest.RecipientName, wedding.Title, job.LetterSnapshot!, job.SentAt!.Value))
             .FirstOrDefaultAsync(ct);
@@ -254,24 +261,35 @@ public sealed class ThankYouMessageStore(InviteMeDbContext db, TimeProvider cloc
                       join message in db.ThankYouMessages.AsNoTracking() on guest.Id equals message.GuestId
                       join job in db.ThankYouSendJobs.AsNoTracking() on message.Id equals job.MessageId
                       where guest.InvitationToken == token && guest.ArchivedAt == null && owner.Status == "ACTIVE" &&
-                            message.Status == "APPROVED" && job.Status == ThankYouSendJob.Sent
+                            message.Status == "APPROVED" && (job.Status == ThankYouSendJob.Sent || job.Status == "DELIVERED")
                       orderby job.SentAt descending, job.Channel
                       select new ThankYouPublicLetterDto(guest.RecipientName, wedding.Title,
                           ThankYouMessageContent.Render(message.Content, guest.RecipientName, message.GiftAmount), job.SentAt!.Value))
             .FirstOrDefaultAsync(ct);
     }
 
-    public async Task<IReadOnlyList<ThankYouDeliveryMessage>> ClaimDueAsync(Guid leaseId, int limit, string frontendUrl, CancellationToken ct)
+    public async Task<IReadOnlyList<ThankYouDeliveryMessage>> ClaimDueAsync(Guid leaseId, int limit, string frontendUrl, CancellationToken ct,
+        bool smsEnabled = true, string? smsProviderName = null)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var now = clock.GetUtcNow();
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE inviteme.thank_you_send_jobs
+            SET status = 'REVIEW_REQUIRED', error_code = 'SMS_SEND_OUTCOME_UNKNOWN', lease_id = NULL, lease_expires_at = NULL
+            WHERE status = 'SENDING' AND channel = 'SMS' AND provider_name = 'TEXTBEE' AND lease_expires_at <= {now}
+            """, ct);
         var jobs = await db.ThankYouSendJobs.FromSqlInterpolated($"""
             SELECT * FROM inviteme.thank_you_send_jobs
-            WHERE (status = 'PENDING' AND next_attempt_at <= {now})
-               OR (status = 'SENDING' AND lease_expires_at <= {now})
+            WHERE ((status = 'PENDING' AND next_attempt_at <= {now}) OR
+                   (status = 'SENDING' AND lease_expires_at <= {now} AND (channel = 'EMAIL' OR provider_name = 'MOCK')))
+              AND (channel = 'EMAIL' OR (channel = 'SMS' AND {smsEnabled}))
             ORDER BY next_attempt_at, id LIMIT {limit} FOR UPDATE SKIP LOCKED
             """).ToListAsync(ct);
-        foreach (var job in jobs) job.Claim(leaseId, now, TimeSpan.FromMinutes(2));
+        foreach (var job in jobs)
+        {
+            job.Claim(leaseId, now, TimeSpan.FromMinutes(2));
+            job.SetProviderNameForClaim(job.Channel == "SMS" ? (smsProviderName ?? "UNKNOWN") : "SMTP");
+        }
         if (jobs.Count > 0) await db.SaveChangesAsync(ct);
         var rows = await (from job in db.ThankYouSendJobs.AsNoTracking()
                           join guest in db.Set<PlanningGuest>().AsNoTracking() on job.GuestId equals guest.Id
@@ -291,6 +309,30 @@ public sealed class ThankYouMessageStore(InviteMeDbContext db, TimeProvider cloc
         job.MarkSent(leaseId, providerId, clock.GetUtcNow());
         db.AuditLogs.Add(AuditLog.ForEntity(job.WeddingId, "thank_you_send_jobs", job.Id, "THANK_YOU_MESSAGE_SENT", null,
             metadata: JsonSerializer.Serialize(new { job.Channel, job.AttemptCount })));
+        await db.SaveChangesAsync(ct);
+    }
+
+    public Task MarkAcceptedAsync(Guid jobId, Guid leaseId, string providerName, string providerId, CancellationToken ct) =>
+        UpdateSmsLeaseAsync(jobId, leaseId, status: "ACCEPTED", providerName, providerId, null, ct);
+
+    public Task MarkSimulatedAsync(Guid jobId, Guid leaseId, string providerId, CancellationToken ct) =>
+        UpdateSmsLeaseAsync(jobId, leaseId, status: "SIMULATED", "MOCK", providerId, null, ct);
+
+    public Task MarkUnknownAsync(Guid jobId, Guid leaseId, string code, CancellationToken ct) =>
+        UpdateSmsLeaseAsync(jobId, leaseId, status: "UNKNOWN", null, null, code, ct);
+
+    private async Task UpdateSmsLeaseAsync(Guid jobId, Guid leaseId, string status, string? providerName,
+        string? providerId, string? errorCode, CancellationToken ct)
+    {
+        var job = await db.ThankYouSendJobs.SingleOrDefaultAsync(x => x.Id == jobId && x.LeaseId == leaseId && x.Status == ThankYouSendJob.Sending, ct);
+        if (job is null) return;
+        var now = clock.GetUtcNow();
+        if (status == "ACCEPTED") job.MarkAccepted(leaseId, providerName!, providerId!, now);
+        else if (status == "SIMULATED") job.MarkSimulated(leaseId, providerId!, now);
+        else job.MarkUnknown(leaseId, errorCode ?? "SMS_SEND_OUTCOME_UNKNOWN", now);
+        db.AuditLogs.Add(AuditLog.ForEntity(job.WeddingId, "thank_you_send_jobs", job.Id,
+            status == "ACCEPTED" ? "THANK_YOU_SMS_ACCEPTED" : status == "SIMULATED" ? "THANK_YOU_SMS_SIMULATED" : "THANK_YOU_SMS_OUTCOME_UNKNOWN", null,
+            metadata: JsonSerializer.Serialize(new { job.Channel, status, provider = job.ProviderName })));
         await db.SaveChangesAsync(ct);
     }
 
@@ -322,4 +364,9 @@ public sealed class ThankYouMessageStore(InviteMeDbContext db, TimeProvider cloc
         x.Content, x.IncludesGiftAmount, x.GiftAmount, x.Status, x.Model, x.UsedFallback, x.Version, x.CreatedAt, x.UpdatedAt, x.ApprovedAt);
     private static string Short(string value, int max) => value.Length <= max ? value : value[..max];
     private static ApplicationProblemException Conflict(string code, string detail) => new(ProblemKind.Conflict, code, detail);
+    private static string NormalizeSmsPhone(string? value)
+    {
+        try { return VietnamesePhoneNumber.ToE164(value ?? ""); }
+        catch (ArgumentException) { throw new ApplicationProblemException(ProblemKind.BusinessRule, "GUEST_PHONE_INVALID", "A selected guest has an invalid SMS phone number."); }
+    }
 }

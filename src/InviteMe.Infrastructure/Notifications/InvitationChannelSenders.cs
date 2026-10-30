@@ -14,25 +14,42 @@ namespace InviteMe.Infrastructure.Notifications;
 public interface IInvitationChannelProvider
 {
     string Channel { get; }
+    string ProviderName { get; }
     bool IsConfigured { get; }
     Task<InvitationDeliveryReceipt> SendAsync(InvitationOutboundMessage message, CancellationToken ct);
 }
 
-public sealed class InvitationChannelSender(IEnumerable<IInvitationChannelProvider> providers) : IInvitationChannelSender
+public sealed class InvitationChannelSender(IEnumerable<IInvitationChannelProvider> providers, IOptions<InvitationSmsOptions> smsOptions) : IInvitationChannelSender
 {
-    public bool IsAvailable(string channel) => providers.Any(x => x.Channel == channel && x.IsConfigured);
+    public bool IsAvailable(string channel) => channel switch
+    {
+        "EMAIL" => providers.Any(x => x.Channel == "EMAIL" && x.IsConfigured),
+        "SMS" => smsOptions.Value.Enabled && SelectedSmsProvider()?.IsConfigured == true,
+        _ => false
+    };
+
+    public string ProviderNameFor(string channel) => channel == "SMS"
+        ? SelectedSmsProvider()?.ProviderName ?? "DISABLED"
+        : providers.FirstOrDefault(x => x.Channel == channel && x.IsConfigured)?.ProviderName ?? "UNKNOWN";
 
     public Task<InvitationDeliveryReceipt> SendAsync(InvitationOutboundMessage message, CancellationToken ct)
     {
-        var provider = providers.FirstOrDefault(x => x.Channel == message.Channel && x.IsConfigured);
+        var provider = message.Channel == "SMS"
+            ? smsOptions.Value.Enabled ? SelectedSmsProvider() : null
+            : providers.FirstOrDefault(x => x.Channel == message.Channel && x.IsConfigured);
         if (provider is null) throw new InvitationDeliveryException("CHANNEL_NOT_CONFIGURED", transient: false);
+        if (!provider.IsConfigured) throw new InvitationDeliveryException("CHANNEL_NOT_CONFIGURED", transient: false);
         return provider.SendAsync(message, ct);
     }
+
+    private IInvitationChannelProvider? SelectedSmsProvider() => providers.FirstOrDefault(x =>
+        x.Channel == "SMS" && string.Equals(x.ProviderName, smsOptions.Value.Provider, StringComparison.OrdinalIgnoreCase));
 }
 
 public sealed class SmtpInvitationChannelProvider(IOptions<SmtpOptions> options) : IInvitationChannelProvider
 {
     public string Channel => "EMAIL";
+    public string ProviderName => "SMTP";
     public bool IsConfigured => options.Value.IsConfigured;
 
     public async Task<InvitationDeliveryReceipt> SendAsync(InvitationOutboundMessage item, CancellationToken ct)
@@ -115,101 +132,97 @@ public static class InvitationEmailFormatter
             "Asia/Ho_Chi_Minh", null, "", item.RsvpLink, item.QrLink).Html;
 }
 
-public sealed class SpeedSmsOptions
+public sealed class InvitationSmsOptions
 {
-    public const string SectionName = "SpeedSMS";
-    public string BaseUrl { get; set; } = "https://api.speedsms.vn/index.php/";
-    public string AccessToken { get; set; } = "";
-    public int SmsType { get; set; } = 2;
-    public string Sender { get; set; } = "";
-    public bool IsConfigured => !string.IsNullOrWhiteSpace(AccessToken) &&
-        (SmsType is 2 or 3 or 4 or 5 or 6) && (SmsType is not (3 or 5) || !string.IsNullOrWhiteSpace(Sender)) &&
+    public const string SectionName = "InvitationMessaging:Sms";
+    public string Provider { get; set; } = "Mock";
+    public bool Enabled { get; set; } = true;
+}
+
+public sealed class TextbeeOptions
+{
+    public const string SectionName = "Textbee";
+    public string BaseUrl { get; set; } = "https://api.textbee.dev/api/v1";
+    public string ApiKey { get; set; } = "";
+    public string DeviceId { get; set; } = "";
+    public int? SimSubscriptionId { get; set; }
+    public string WebhookSecret { get; set; } = "";
+    public int TimeoutSeconds { get; set; } = 20;
+    public bool IsConfigured => !string.IsNullOrWhiteSpace(ApiKey) && !string.IsNullOrWhiteSpace(DeviceId) &&
+        WebhookSecret.Length >= 20 && TimeoutSeconds is >= 1 and <= 60 &&
         Uri.TryCreate(BaseUrl, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps;
 }
 
-public sealed class SpeedSmsChannelProvider(HttpClient client, IOptions<SpeedSmsOptions> options) : IInvitationChannelProvider
+public sealed class MockSmsChannelProvider : IInvitationChannelProvider
 {
     public string Channel => "SMS";
+    public string ProviderName => "Mock";
+    public bool IsConfigured => true;
+
+    public Task<InvitationDeliveryReceipt> SendAsync(InvitationOutboundMessage item, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult(new InvitationDeliveryReceipt($"mock-{item.JobId:N}", "MOCK", "SIMULATED"));
+    }
+}
+
+public sealed class TextbeeSmsChannelProvider(HttpClient client, IOptions<TextbeeOptions> options) : IInvitationChannelProvider
+{
+    public string Channel => "SMS";
+    public string ProviderName => "Textbee";
     public bool IsConfigured => options.Value.IsConfigured;
 
     public async Task<InvitationDeliveryReceipt> SendAsync(InvitationOutboundMessage item, CancellationToken ct)
     {
         var config = options.Value;
-        if (!config.IsConfigured)
-            throw new InvitationDeliveryException("SMS_NOT_CONFIGURED", transient: false);
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(config.BaseUrl.TrimEnd('/') + "/"), "sms/send"));
-        var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes(config.AccessToken + ":x"));
-        request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
-        request.Content = JsonContent.Create(new
-        {
-            to = new[] { item.Recipient },
-            content = item.Content,
-            sms_type = config.SmsType,
-            sender = config.Sender
-        });
+        if (!config.IsConfigured) throw new InvitationDeliveryException("TEXTBEE_NOT_CONFIGURED", transient: false);
+        var phone = VietnamesePhoneNumber.ToE164(item.Recipient);
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            new Uri($"{config.BaseUrl.TrimEnd('/')}/gateway/send-sms"));
+        request.Headers.TryAddWithoutValidation("x-api-key", config.ApiKey);
+        request.Content = JsonContent.Create(new TextbeeSendRequest(
+            [phone], item.Content, config.DeviceId, config.SimSubscriptionId));
 
         HttpResponseMessage response;
-        try { response = await client.SendAsync(request, ct); }
-        catch (HttpRequestException) { throw new InvitationDeliveryException("SPEEDSMS_UNAVAILABLE", transient: true); }
+        try { response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) { throw new InvitationDeliveryException("TEXTBEE_OUTCOME_UNKNOWN", false, true); }
+        catch (HttpRequestException) { throw new InvitationDeliveryException("TEXTBEE_OUTCOME_UNKNOWN", false, true); }
+
         using (response)
         {
-            if ((int)response.StatusCode >= 500 || response.StatusCode is System.Net.HttpStatusCode.RequestTimeout or System.Net.HttpStatusCode.TooManyRequests)
-                throw new InvitationDeliveryException("SPEEDSMS_TEMPORARY_FAILURE", transient: true);
-            if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
-                throw new InvitationDeliveryException("SPEEDSMS_AUTHORIZATION_FAILED", transient: false);
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                throw new InvitationDeliveryException("TEXTBEE_AUTH_FAILED", false);
+            if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                throw new InvitationDeliveryException("TEXTBEE_ACCESS_DENIED", false);
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                throw new InvitationDeliveryException("TEXTBEE_DEVICE_NOT_FOUND", false);
+            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                throw new InvitationDeliveryException("TEXTBEE_RATE_LIMITED", true);
+            if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+                throw new InvitationDeliveryException("TEXTBEE_REQUEST_REJECTED", false);
+            if (!response.IsSuccessStatusCode)
+                throw new InvitationDeliveryException("TEXTBEE_OUTCOME_UNKNOWN", false, true);
 
             try
             {
-                using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
-                var root = json.RootElement;
-                if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("status", out var status) || status.ValueKind != JsonValueKind.String)
-                    throw new InvitationDeliveryException("SPEEDSMS_INVALID_RESPONSE", transient: true);
-                root.TryGetProperty("code", out var code);
-                if (status.GetString() != "success" || code.ToString() != "00")
-                {
-                    var providerCode = code.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? "" : code.ToString();
-                    var providerReason = root.TryGetProperty("message", out var reason) && reason.ValueKind == JsonValueKind.String
-                        ? reason.GetString() : null;
-                    throw ProviderFailure(providerCode, response.IsSuccessStatusCode, providerReason);
-                }
-                if (!response.IsSuccessStatusCode || !root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
-                    throw new InvitationDeliveryException("SPEEDSMS_INVALID_RESPONSE", transient: true);
-                if (data.TryGetProperty("invalidPhone", out var invalidPhone) &&
-                    invalidPhone.ValueKind == JsonValueKind.Array && invalidPhone.GetArrayLength() > 0)
-                    throw new InvitationDeliveryException("SPEEDSMS_INVALID_PHONE", transient: false);
-                var transactionId = data.TryGetProperty("tranId", out var id) ? id.ToString() : null;
-                if (string.IsNullOrWhiteSpace(transactionId))
-                    throw new InvitationDeliveryException("SPEEDSMS_INVALID_RESPONSE", transient: true);
-                return new InvitationDeliveryReceipt(transactionId);
+                var result = await response.Content.ReadFromJsonAsync<TextbeeSendResponse>(cancellationToken: ct);
+                if (result?.Data is not { Success: true } data || string.IsNullOrWhiteSpace(data.SmsBatchId))
+                    throw new InvitationDeliveryException("TEXTBEE_OUTCOME_UNKNOWN", false, true);
+                return new InvitationDeliveryReceipt(data.SmsBatchId, "TEXTBEE", "ACCEPTED");
             }
-            catch (JsonException) { throw new InvitationDeliveryException("SPEEDSMS_INVALID_RESPONSE", transient: true); }
+            catch (JsonException) { throw new InvitationDeliveryException("TEXTBEE_OUTCOME_UNKNOWN", false, true); }
         }
-    }
-
-    private static InvitationDeliveryException ProviderFailure(string code, bool httpSuccess, string? reason)
-    {
-        // The live API can omit `code` entirely, despite the documented error schema.
-        if (string.IsNullOrWhiteSpace(code) && string.Equals(reason?.Trim(), "sender not found", StringComparison.OrdinalIgnoreCase))
-            return new InvitationDeliveryException("SPEEDSMS_SENDER_NOT_FOUND", transient: false);
-        var failure = code switch
-        {
-            "007" => new("SPEEDSMS_IP_LOCKED", transient: false),
-            "008" => new("SPEEDSMS_ACCOUNT_BLOCKED", transient: false),
-            "009" => new("SPEEDSMS_API_NOT_ALLOWED", transient: false),
-            "101" => new("SPEEDSMS_INVALID_REQUEST", transient: false),
-            "105" => new("SPEEDSMS_INVALID_PHONE", transient: false),
-            "110" => new("SPEEDSMS_UNSUPPORTED_ENCODING", transient: false),
-            "113" => new("SPEEDSMS_CONTENT_TOO_LONG", transient: false),
-            "300" => new("SPEEDSMS_INSUFFICIENT_BALANCE", transient: false),
-            "500" => new("SPEEDSMS_PROVIDER_ERROR", transient: true),
-            _ => new InvitationDeliveryException(httpSuccess ? "SPEEDSMS_REQUEST_REJECTED" : "SPEEDSMS_HTTP_REJECTED", transient: false)
-        };
-        return failure;
     }
 }
 
-public sealed class InvitationDeliveryException(string code, bool transient) : Exception(code)
+internal sealed record TextbeeSendRequest(string[] Recipients, string Message, string DeviceId, int? SimSubscriptionId);
+internal sealed record TextbeeSendResponse(TextbeeSendData? Data);
+internal sealed record TextbeeSendData(bool Success, string? SmsBatchId, int RecipientCount);
+
+public sealed class InvitationDeliveryException(string code, bool transient, bool outcomeUnknown = false) : Exception(code)
 {
     public string Code { get; } = code;
     public bool Transient { get; } = transient;
+    public bool OutcomeUnknown { get; } = outcomeUnknown;
 }

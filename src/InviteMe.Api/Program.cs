@@ -15,7 +15,7 @@ DotNetEnv.Env.NoClobber().TraversePath().Load();
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
-builder.Services.AddApplication().AddInfrastructure(builder.Configuration).AddApi(builder.Configuration).AddRsvpApi().AddGiftApi().AddGuestAccessApi(builder.Configuration);
+builder.Services.AddApplication().AddInfrastructure(builder.Configuration, builder.Environment).AddApi(builder.Configuration).AddRsvpApi().AddGiftApi().AddGuestAccessApi(builder.Configuration);
 builder.Services.AddCors(options =>
 {
     var frontend = builder.Configuration["Frontend:Url"];
@@ -106,6 +106,7 @@ app.MapGifts();
 app.MapGuestPlanning();
 app.MapInvitationWording();
 app.MapInvitationMessaging();
+app.MapTextbeeWebhook();
 app.MapInvitationDesign();
 app.MapWeddingWebsite();
 app.MapPlans();

@@ -24,9 +24,11 @@ public sealed record InvitationTestSendDto(Guid GuestId);
 public sealed record QueueInvitationBatch(IReadOnlyList<Guid>? GuestIds, Guid? GroupId, IReadOnlyList<string> Channels,
     string? Subject = null, string? Content = null, string? SmsContent = null);
 public sealed record InvitationSendJobDto(Guid Id, Guid GuestId, string Channel, string Recipient, string Status,
-    int AttemptCount, DateTimeOffset? SentAt, string? ErrorCode);
+    int AttemptCount, DateTimeOffset? SentAt, string? ErrorCode, DateTimeOffset? ProviderAcceptedAt = null,
+    DateTimeOffset? DeliveredAt = null);
 public sealed record InvitationSendBatchDto(Guid Id, string Status, int TotalCount, int SentCount, int FailedCount,
-    int PendingCount, DateTimeOffset CreatedAt, IReadOnlyList<InvitationSendJobDto> Jobs);
+    int PendingCount, DateTimeOffset CreatedAt, IReadOnlyList<InvitationSendJobDto> Jobs,
+    int AcceptedCount = 0, int DeliveredCount = 0, int UnknownCount = 0, int SimulatedCount = 0);
 
 public sealed record InvitationRecipient(Guid Id, string RecipientName, string? Email, string? Phone, string? Token, string CoupleNames = "");
 public sealed record InvitationBatchWriteResult(Guid BatchId, bool Replayed);
@@ -35,12 +37,13 @@ public sealed record InvitationEmailPreview(string Html, string PlainText, strin
 public sealed record InvitationOutboundMessage(Guid JobId, Guid WeddingId, string Channel, string Recipient,
     string Subject, string Content, string RsvpLink, string QrLink, string Purpose = "INVITATION", string? PublicLink = null,
     string? EmailHtmlContent = null, string? EmailPlainTextContent = null);
-public sealed record InvitationDeliveryReceipt(string? ProviderMessageId);
-public sealed record InvitationDeliveryFailure(string Code, bool Transient);
+public sealed record InvitationDeliveryReceipt(string? ProviderMessageId, string ProviderName = "SMTP", string Status = "SENT");
+public sealed record InvitationDeliveryFailure(string Code, bool Transient, bool OutcomeUnknown = false);
 
 public interface IInvitationChannelSender
 {
     bool IsAvailable(string channel);
+    string ProviderNameFor(string channel);
     Task<InvitationDeliveryReceipt> SendAsync(InvitationOutboundMessage message, CancellationToken ct);
 }
 
@@ -56,8 +59,12 @@ public interface IInvitationMessagingStore
     Task<InvitationSendBatchDto> BatchAsync(Guid weddingId, Guid batchId, CancellationToken ct);
     Task<int> RetryFailedAsync(Guid weddingId, Guid batchId, Guid actorId, CancellationToken ct);
     Task RecordTestSendAsync(Guid weddingId, Guid guestId, Guid actorId, CancellationToken ct);
-    Task<IReadOnlyList<InvitationOutboundMessage>> ClaimDueAsync(Guid leaseId, int limit, CancellationToken ct);
+    Task<IReadOnlyList<InvitationOutboundMessage>> ClaimDueAsync(Guid leaseId, int limit, CancellationToken ct,
+        bool smsEnabled = true, string? smsProviderName = null);
     Task MarkSentAsync(Guid jobId, Guid leaseId, string? providerMessageId, CancellationToken ct);
+    Task MarkAcceptedAsync(Guid jobId, Guid leaseId, string providerName, string providerMessageId, CancellationToken ct);
+    Task MarkSimulatedAsync(Guid jobId, Guid leaseId, string providerMessageId, CancellationToken ct);
+    Task MarkUnknownAsync(Guid jobId, Guid leaseId, string code, CancellationToken ct);
     Task MarkFailedAsync(Guid jobId, Guid leaseId, string code, bool retry, CancellationToken ct);
 }
 
