@@ -47,7 +47,10 @@ public sealed class BankHubClient(HttpClient http, BankHubOptions options, BankH
     public async Task<string> CreateCompanyAsync(string fullName, CancellationToken ct)
     {
         using var json = await SendAsync(HttpMethod.Post, "v1/company/create", new { full_name = fullName, status = "Active" }, ct);
-        return Text(Data(json.RootElement), "xid") ?? throw Failure("company/create returned no xid");
+        var xid = Text(Data(json.RootElement), "xid") ?? throw Failure("company/create returned no xid");
+        // A new company has transaction_amount "0", and SePay sends no IPN for its accounts until it is above 0 or Unlimited.
+        using var _ = await SendAsync(HttpMethod.Post, $"v1/company/edit/{Uri.EscapeDataString(xid)}", new { transaction_amount = "Unlimited" }, ct);
+        return xid;
     }
 
     public async Task<BankHubLinkDto> CreateLinkAsync(string companyXid, BankHubPurpose purpose, string? bankAccountXid, CancellationToken ct)
