@@ -53,7 +53,7 @@ public sealed class GuestPlanningApiTests
         var planPath = path + "/seating-plan";
         var plan = await owner.GetFromJsonAsync<PlanningSeatingDto>(planPath);
         var table = await owner.PatchAsJsonAsync(planPath, new ChangePlanningSeating(plan!.Version, "CREATE_TABLE",
-            Name: "Bàn kiểm thử", Capacity: 10));
+            Name: "Bàn kiểm thử", Capacity: 4));
         Assert.Equal(HttpStatusCode.OK, table.StatusCode);
         plan = await owner.GetFromJsonAsync<PlanningSeatingDto>(planPath);
         Assert.Equal(3, plan!.Places.Count(x => x.GuestId == guest.Id));
@@ -214,7 +214,7 @@ public sealed class GuestPlanningApiTests
             return await owner.SendAsync(request);
         }
         var group = new PlanningGroupInput(NewName: "Họ ngoại", Confirmed: true);
-        var good = new PlanningRow(2, "Nguyễn Văn An", "Bác", 4, "BRIDE", group,
+        var good = new PlanningRow(2, "Nguyễn Văn An", "Bác", "FAMILY", 4, "BRIDE", group,
             Phone: "0900123456", Email: " an@example.com ");
         var badContact = await Import(new([good, new(7, "Nam", Phone: "abc", Email: "invalid")]), Guid.NewGuid());
         Assert.Equal(HttpStatusCode.UnprocessableEntity, badContact.StatusCode);
@@ -263,38 +263,5 @@ public sealed class GuestPlanningApiTests
         Assert.Equal(HttpStatusCode.NotFound, (await owner.GetAsync(path + "/guests/" + Guid.NewGuid())).StatusCode);
         var otherId = (await CoHostPermissionTests.CreateWedding(db, owner, "planning-other")).Id;
         Assert.Equal(HttpStatusCode.NotFound, (await owner.GetAsync($"/api/weddings/{otherId}/guest-planning/guests/{result.Items[0].GuestId}")).StatusCode);
-    });
-
-    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
-    public Task ImportCheckStillLooksForDuplicatesWhenSomeRowsAreMalformed() => SchemaV2MigrationTests.InDatabase(async db =>
-    {
-        await db.Database.MigrateAsync();
-        await using var factory = new DatabaseApiFactory(db.Database.GetConnectionString()!);
-        var owner = factory.CreateHttpsClient();
-        const string password = "Test-only-Pass123!";
-        Assert.Equal(HttpStatusCode.Created, (await owner.PostAsJsonAsync("/api/auth/register", new RegisterAccount("check-owner@example.test", password, "check-owner"))).StatusCode);
-        var login = await owner.PostAsJsonAsync("/api/auth/login", new LoginAccount("check-owner@example.test", password));
-        owner.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", (await login.Content.ReadFromJsonAsync<TokenDto>())!.AccessToken);
-        var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "import-check");
-        var checkUrl = $"/api/weddings/{wedding.Id}/guest-planning/imports/check";
-
-        var response = await owner.PostAsJsonAsync(checkUrl, new PlanningImport([
-            new(2, "=Khách lỗi"),
-            new(3, "An", Phone: "0901234567"),
-            new(4, "Bình", Phone: "0901 234 567"),
-            new(5, "Chi", ExpectedPeople: 2)
-        ]));
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var check = (await response.Content.ReadFromJsonAsync<PlanningImportCheck>())!;
-        // The malformed row only reports its own error; the duplicate phone between the valid rows is still found.
-        Assert.Contains(check.Errors, x => x.RowNumber == 2 && x.Code == "INVALID_TEXT");
-        Assert.Contains(check.Errors, x => x.RowNumber == 4 && x.Code == PlanningImportChecks.DuplicatePhoneInFile);
-        Assert.Equal(3, check.GuestCount);
-        Assert.Equal(4, check.PeopleCount);
-
-        // A problem with the whole file still stops the check.
-        var empty = (await (await owner.PostAsJsonAsync(checkUrl, new PlanningImport([]))).Content.ReadFromJsonAsync<PlanningImportCheck>())!;
-        Assert.Contains(empty.Errors, x => x.RowNumber == 0 && x.Code == "INVALID_ROWS");
-        Assert.Equal(0, empty.GuestCount);
     });
 }

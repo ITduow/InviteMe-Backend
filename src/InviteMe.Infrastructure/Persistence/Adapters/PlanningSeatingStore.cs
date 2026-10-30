@@ -1,10 +1,7 @@
 using System.Data;
-using InviteMe.Application.Common.Errors;
 using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Application.Features.Seating.Planning;
 using InviteMe.Application.Ports.Authentication;
-using InviteMe.Domain.Audit;
-using InviteMe.Domain.CheckIn;
 using InviteMe.Domain.Guests;
 using InviteMe.Domain.Seating;
 using Microsoft.EntityFrameworkCore;
@@ -24,71 +21,6 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         return result;
     }
 
-    public async Task<SeatingDragPlaces> CheckDragPlacesAsync(Guid weddingId, IReadOnlyList<Guid> placeIds, IReadOnlySet<Guid>? groupScope,
-        CancellationToken ct)
-    {
-        // Same rule as the snapshot: places of active (not archived) guests of this wedding; a group scope sees its groups only.
-        var ids = placeIds.Distinct().ToArray();
-        var groups = await (from p in db.Set<PlanningPlace>().AsNoTracking()
-            join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
-            where ids.Contains(p.Id) && g.WeddingId == weddingId && g.ArchivedAt == null
-            select g.GroupId).ToListAsync(ct);
-        if (groups.Count != ids.Length) return SeatingDragPlaces.NotFound;
-        return groupScope is null || groups.All(x => x != null && groupScope.Contains(x.Value))
-            ? SeatingDragPlaces.Allowed : SeatingDragPlaces.OutOfScope;
-    }
-
-    public async Task<SeatingLayoutDto> GetLayoutAsync(Guid weddingId, CancellationToken ct)
-    {
-        var plan = await db.Set<PlanningSeatingPlan>().AsNoTracking().SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
-        if (plan is null)
-        {
-            return new SeatingLayoutDto(6, 3, 6, 3, "BY_ROW", 0, false, null, null, false, null, null);
-        }
-        return new SeatingLayoutDto(plan.GroomRows, plan.GroomColumns, plan.BrideRows, plan.BrideColumns, plan.Numbering, plan.Version,
-            plan.IsLocked, plan.LockedAt, plan.LockedBy, plan.IsEventStarted, plan.EventStartedAt, plan.EventStartedBy);
-    }
-
-    public async Task<SeatingLayoutDto> UpdateLayoutAsync(Guid weddingId, UpdateSeatingLayout input, CancellationToken ct)
-    {
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await LockWedding(db, weddingId, ct);
-        var plan = await db.Set<PlanningSeatingPlan>().SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
-        Version(plan?.Version ?? 0, input.ExpectedVersion);
-        if (plan is not null && plan.IsLocked)
-        {
-            throw new ApplicationProblemException(ProblemKind.BusinessRule, "SEATING_PLAN_LOCKED", "Sơ đồ bàn đã bị khoá để tránh sửa nhầm trước ngày cưới. Mở khoá trước khi chỉnh sửa.");
-        }
-        if (plan is null) { plan = new() { WeddingId = weddingId }; db.Add(plan); }
-
-        var outsideTables = await db.Set<PlanningTable>().AsNoTracking()
-            .Where(t => t.WeddingId == weddingId && t.Row != null && t.Column != null &&
-                ((t.Half == "GROOM" && (t.Row > input.GroomRows || t.Column > input.GroomColumns)) ||
-                 (t.Half == "BRIDE" && (t.Row > input.BrideRows || t.Column > input.BrideColumns))))
-            .Select(t => new { t.Id, t.Number, t.Name, t.Side, t.Row, t.Column })
-            .ToListAsync(ct);
-
-        if (outsideTables.Count > 0)
-        {
-            var details = string.Join(", ", outsideTables.Select(t => $"{t.Name} (hàng {t.Row}, cột {t.Column})"));
-            throw new ApplicationProblemException(
-                ProblemKind.Conflict,
-                "LAYOUT_HAS_TABLES_OUTSIDE",
-                $"Không thể thu hẹp sảnh vì còn {outsideTables.Count} bàn nằm ngoài phạm vi mới: {details}.");
-        }
-
-        plan.GroomRows = input.GroomRows;
-        plan.GroomColumns = input.GroomColumns;
-        plan.BrideRows = input.BrideRows;
-        plan.BrideColumns = input.BrideColumns;
-        plan.Numbering = input.Numbering;
-        plan.Version++;
-        await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
-        return new SeatingLayoutDto(plan.GroomRows, plan.GroomColumns, plan.BrideRows, plan.BrideColumns, plan.Numbering, plan.Version,
-            plan.IsLocked, plan.LockedAt, plan.LockedBy, plan.IsEventStarted, plan.EventStartedAt, plan.EventStartedBy);
-    }
-
     public Task<PlanningSeatingDto> ChangeAsync(Guid weddingId, ChangePlanningSeating input, CancellationToken ct) => ChangeScopedAsync(weddingId, input, ct, null);
     public async Task<PlanningSeatingDto> ChangeScopedAsync(Guid weddingId, ChangePlanningSeating input, CancellationToken ct, IReadOnlySet<Guid>? groupScope)
     {
@@ -97,107 +29,7 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         await LockWedding(db, weddingId, ct);
         var plan = await db.Set<PlanningSeatingPlan>().SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
         Version(plan?.Version ?? 0, input.ExpectedVersion);
-        var isDayOfAction = input.Action is "START_EVENT" or "SWAP_UNATTENDED" or "OPERATIONAL_MOVE"
-            || (plan is not null && plan.IsEventStarted && input.Action is "SWAP_PLACES" or "MOVE_PLACES")
-            || (input.Action == "UPDATE_TABLE" && input.ExtraSeats.HasValue && input.Name == null && input.Capacity == null);
-        if (plan is not null && plan.IsLocked && input.Action != "UNLOCK_PLAN" && !isDayOfAction)
-        {
-            throw new ApplicationProblemException(ProblemKind.BusinessRule, "SEATING_PLAN_LOCKED", "Sơ đồ bàn đã bị khoá để tránh sửa nhầm trước ngày cưới. Mở khoá trước khi chỉnh sửa.");
-        }
         if (plan is null) { plan = new() { WeddingId = weddingId }; db.Add(plan); }
-
-        // Day-of moves delete and recreate assignments; keep each place's frozen baseline across that.
-        var plannedBaseline = plan.IsEventStarted
-            ? await (from a in db.Set<PlanningSeatAssignment>().AsNoTracking()
-                join t in db.Set<PlanningTable>() on a.TableId equals t.Id
-                where t.WeddingId == weddingId && a.PlannedTableId != null
-                select new { a.PlaceId, a.PlannedTableId, a.PlannedSeatNumber }).ToDictionaryAsync(x => x.PlaceId, ct)
-            : null;
-
-        if (input.Action == "LOCK_PLAN")
-        {
-            plan.IsLocked = true;
-            plan.LockedAt = DateTimeOffset.UtcNow;
-            plan.LockedBy = user.UserId;
-            plan.Version++;
-            db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_seating_plans", weddingId, "SEATING_PLAN_LOCKED", user.UserId));
-            await db.SaveChangesAsync(ct);
-            await tx.CommitAsync(ct);
-            return await Snapshot(weddingId, ct, groupScope);
-        }
-
-        if (input.Action == "UNLOCK_PLAN")
-        {
-            plan.IsLocked = false;
-            plan.LockedAt = null;
-            plan.LockedBy = null;
-            plan.Version++;
-            db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_seating_plans", weddingId, "SEATING_PLAN_UNLOCKED", user.UserId));
-            await db.SaveChangesAsync(ct);
-            await tx.CommitAsync(ct);
-            return await Snapshot(weddingId, ct, groupScope);
-        }
-
-        if (input.Action == "RELEASE_DECLINED_SEATS")
-        {
-            var declinedPlaceIds = await (from p in db.Set<PlanningPlace>()
-                join person in db.Set<PlanningParticipant>() on p.ParticipantId equals person.Id
-                join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
-                where g.WeddingId == weddingId && person.AttendanceStatus == "DECLINED"
-                    && !db.Set<PlanningCheckIn>().Any(c => c.PlaceId == p.Id)
-                select p.Id).ToListAsync(ct);
-
-            // Places nobody is on, of an invitation with a firm answer (RSVP UNUSED), are released with the declines.
-            var firmGuestIds = await FirmAnswerGuestIdsAsync(weddingId, ct);
-            var emptyPlaceIds = await db.Set<PlanningPlace>()
-                .Where(p => p.ParticipantId == null && firmGuestIds.Contains(p.GuestId)
-                    && !db.Set<PlanningCheckIn>().Any(c => c.PlaceId == p.Id))
-                .Select(p => p.Id).ToListAsync(ct);
-            declinedPlaceIds.AddRange(emptyPlaceIds);
-
-            var declinedAssignments = await db.Set<PlanningSeatAssignment>()
-                .Where(a => declinedPlaceIds.Contains(a.PlaceId))
-                .ToListAsync(ct);
-
-            if (declinedAssignments.Count > 0)
-            {
-                db.RemoveRange(declinedAssignments);
-                plan.Version++;
-                db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_seating_plans", weddingId, "RELEASE_DECLINED_SEATS", user.UserId,
-                    metadata: System.Text.Json.JsonSerializer.Serialize(new { releasedCount = declinedAssignments.Count })));
-                await db.SaveChangesAsync(ct);
-            }
-            await tx.CommitAsync(ct);
-            return await Snapshot(weddingId, ct, groupScope);
-        }
-
-        if (input.Action == "START_EVENT")
-        {
-            if (plan.IsEventStarted)
-                throw Rule("EVENT_ALREADY_STARTED", "Tiệc đã được bắt đầu, không thể chốt lại bản dự kiến.");
-            plan.IsEventStarted = true;
-            plan.EventStartedAt = DateTimeOffset.UtcNow;
-            plan.EventStartedBy = user.UserId;
-            plan.Version++;
-
-            var currentAssignments = await (from a in db.Set<PlanningSeatAssignment>()
-                join t in db.Set<PlanningTable>() on a.TableId equals t.Id
-                where t.WeddingId == weddingId
-                select a).ToListAsync(ct);
-
-            foreach (var a in currentAssignments)
-            {
-                a.PlannedTableId = a.TableId;
-                a.PlannedSeatNumber = a.SeatNumber;
-            }
-
-            db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_seating_plans", weddingId, "SEATING_EVENT_STARTED", user.UserId,
-                metadata: System.Text.Json.JsonSerializer.Serialize(new { frozenSeatCount = currentAssignments.Count })));
-            await db.SaveChangesAsync(ct);
-            await tx.CommitAsync(ct);
-            return await Snapshot(weddingId, ct, groupScope);
-        }
-
         if (scopeIds is { Length: 0 }) throw Missing("SEATING_GROUP_SCOPE_EMPTY");
         if (scopeIds is not null && (input.Action is "CREATE_TABLES" or "CREATE_TABLE") && (input.GroupId is null || !scopeIds.Contains(input.GroupId.Value)))
             throw Rule("SEATING_GROUP_REQUIRED", "Chỉ được tạo bàn trong nhóm khách được giao.");
@@ -225,670 +57,55 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         IReadOnlyList<Guid>? affected = input.Action switch
         {
             "MOVE_PLACES" => input.PlaceIds,
-            "OPERATIONAL_MOVE" => input.PlaceIds ?? (input.PlaceId.HasValue ? [input.PlaceId.Value] : []),
-            "MOVE_PARTY" => input.GuestId.HasValue
-                ? await db.Set<PlanningPlace>().Where(x => x.GuestId == input.GuestId.Value).Select(x => x.Id).ToArrayAsync(ct)
-                : input.PlaceIds != null && input.PlaceIds.Count > 0
-                    ? await (from p in db.Set<PlanningPlace>() where input.PlaceIds.Contains(p.Id) select p.GuestId)
-                        .Distinct()
-                        .SelectMany(gid => db.Set<PlanningPlace>().Where(x => x.GuestId == gid).Select(x => x.Id))
-                        .ToArrayAsync(ct)
-                    : [],
-            "SWAP_PLACES" => input.PlaceId.HasValue && input.TargetPlaceId.HasValue
-                ? [input.PlaceId.Value, input.TargetPlaceId.Value]
-                : input.PlaceIds is { Count: 2 } ? [input.PlaceIds[0], input.PlaceIds[1]] : [],
-            "SWAP_UNATTENDED" => input.PlaceId.HasValue ? [input.PlaceId.Value] : [],
             "APPLY_SUGGESTION" => null,
-            "UPDATE_TABLE" or "DELETE_TABLE" or "PLACE_TABLE" or "MOVE_TABLE" => await db.Set<PlanningSeatAssignment>().Where(x => x.TableId == input.TableId)
+            "UPDATE_TABLE" or "DELETE_TABLE" => await db.Set<PlanningSeatAssignment>().Where(x => x.TableId == input.TableId)
                 .Select(x => x.PlaceId).ToArrayAsync(ct),
             _ => []
         };
-        List<SeatingWarningDto> warnings = [];
         // Reserve only for the mutation, never a database transaction across the drag itself.
         // Admission stays reserved until commit so an expiring lease cannot be reassigned mid-write.
         using var write = leases.BeginWrite(weddingId, user.UserId ?? throw new InvalidOperationException("Authenticated user required."),
-            input.DragToken, affected, input.Action is "UPDATE_TABLE" or "DELETE_TABLE" or "PLACE_TABLE" or "MOVE_TABLE" ? input.TableId : null);
-
+            input.DragToken, affected, input.Action is "UPDATE_TABLE" or "DELETE_TABLE" ? input.TableId : null);
         if (input.Action == "APPLY_SUGGESTION")
         {
-            // Auto-seating must never move checked-in guests; day-of changes are manual only.
-            if (plan.IsEventStarted)
-                throw Rule("SEATING_EVENT_STARTED", "Tiệc đã bắt đầu, không thể chạy xếp chỗ tự động. Hãy chuyển chỗ thủ công.");
             var source = await Snapshot(weddingId, ct, groupScope);
             if (!string.Equals(SeatingSuggestions.Fingerprint(source), input.SourceFingerprint, StringComparison.OrdinalIgnoreCase))
                 throw Conflict("SEATING_SOURCE_CHANGED");
             // Recompute on BE; never accept client-supplied assignments as a trusted suggestion.
-            var strat = input.Strategy ?? input.Plan ?? "KEEP_GROUPS";
-            var mode = (input.Mode ?? "UNASSIGNED").ToUpperInvariant();
-            // Tray tables stay in the tray unless the couple asked for them to be placed too.
-            var suggestion = SeatingSuggestions.Generate(source, new(strat, mode, PlaceTables: input.PlaceTables));
-            var placements = suggestion.TablePlacements ?? [];
-            if (suggestion.ChangedPlaceCount == 0 && placements.Count == 0) throw Rule("NO_SEATING_CHANGES", "Phương án không thay đổi vị trí nào.");
-            await ApplyTablePlacements(weddingId, placements, ct);
+            var suggestion = SeatingSuggestions.Generate(source, new(input.Strategy!, input.Mode));
+            if (suggestion.ChangedPlaceCount == 0) throw Rule("NO_SEATING_CHANGES", "Phương án không thay đổi vị trí nào.");
             var old = await (from a in db.Set<PlanningSeatAssignment>() join t in db.Set<PlanningTable>() on a.TableId equals t.Id
                 where t.WeddingId == weddingId select a).ToListAsync(ct);
             db.RemoveRange(old);
             await db.SaveChangesAsync(ct);
             db.AddRange(suggestion.Assignments.Select(a => new PlanningSeatAssignment { PlaceId = a.PlaceId, TableId = a.TableId, SeatNumber = a.SeatNumber }));
         }
-        else if (input.Action == "AUTO_PLACE_TABLES")
-        {
-            var source = await Snapshot(weddingId, ct, groupScope);
-            var (_, placements, _) = SeatingSuggestions.ComputeTablePlacements(source);
-            if (placements.Count == 0)
-                throw Rule("NO_TABLE_PLACEMENTS", "Không còn bàn trong khay hoặc sơ đồ sảnh đã hết ô trống.");
-            await ApplyTablePlacements(weddingId, placements, ct);
-        }
         else if (input.Action == "CREATE_TABLES")
         {
             var count = input.TableCount!.Value;
             if (tables.Count + count > 100) throw Rule("TABLE_LIMIT", "Tối đa 100 bàn; giảm số bàn cần thêm.");
-            var maxNum = await db.Set<PlanningTable>().Where(x => x.WeddingId == weddingId).Select(x => (int?)x.Number).MaxAsync(ct) ?? 0;
-            for (var i = 1; i <= count; i++)
+            var names = tables.Select(t => t.Name.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var number = 1;
+            for (var i = 0; i < count; i++)
             {
-                var num = maxNum + i;
-                var name = $"Bàn {num:D2}";
-                db.Add(new PlanningTable
-                {
-                    Id = Guid.NewGuid(),
-                    WeddingId = weddingId,
-                    Name = name,
-                    Capacity = input.Capacity!.Value,
-                    Number = num,
-                    Side = string.IsNullOrEmpty(input.Side) ? null : input.Side,
-                    GroupId = input.GroupId
-                });
+                while (names.Contains($"Bàn {number}")) number++;
+                var name = $"Bàn {number++}";
+                names.Add(name);
+                db.Add(new PlanningTable { Id = Guid.NewGuid(), WeddingId = weddingId, Name = name, Capacity = input.Capacity!.Value, GroupId = input.GroupId });
             }
         }
         else if (input.Action == "CREATE_TABLE")
         {
             if (tables.Count >= 100) throw Rule("TABLE_LIMIT", "Tối đa 100 bàn.");
-            var maxNum = await db.Set<PlanningTable>().Where(x => x.WeddingId == weddingId).Select(x => (int?)x.Number).MaxAsync(ct) ?? 0;
-            var number = input.Number ?? (maxNum + 1);
-            if (input.Number.HasValue) await EnsureTableNumberFree(weddingId, number, null, ct);
-            var name = string.IsNullOrWhiteSpace(input.Name) ? $"Bàn {number:D2}" : input.Name.Trim();
-
-            string? half = input.Half ?? (input.Side is "GROOM" or "BRIDE" ? input.Side : null);
-            string? side = input.Side;
-            int? row = input.Row;
-            int? col = input.Column;
-
-            if (row.HasValue || col.HasValue || half != null)
-            {
-                if (!row.HasValue || !col.HasValue)
-                    throw Rule("COORDINATES_INCOMPLETE", "Hàng và cột phải cùng có hoặc cùng để trống.");
-                half ??= "GROOM";
-                if ((half == "GROOM" && (row.Value > plan.GroomRows || col.Value > plan.GroomColumns)) ||
-                    (half == "BRIDE" && (row.Value > plan.BrideRows || col.Value > plan.BrideColumns)))
-                    throw Rule("CELL_OUT_OF_LAYOUT", "Vị trí đặt bàn nằm ngoài kích thước sảnh.");
-
-                var occupied = await db.Set<PlanningTable>().AnyAsync(x => x.WeddingId == weddingId && x.Half == half && x.Row == row && x.Column == col, ct);
-                if (occupied) throw Conflict("TABLE_CELL_OCCUPIED");
-            }
-
-            db.Add(new PlanningTable
-            {
-                Id = Guid.NewGuid(),
-                WeddingId = weddingId,
-                Name = name,
-                Capacity = input.Capacity!.Value,
-                Number = number,
-                Half = half,
-                Side = side ?? half ?? "MUTUAL",
-                Row = row,
-                Column = col,
-                IsVip = input.IsVip ?? false,
-                ExtraSeats = input.ExtraSeats ?? 0,
-                GroupId = input.GroupId
-            });
+            db.Add(new PlanningTable { Id = Guid.NewGuid(), WeddingId = weddingId, Name = input.Name!.Trim(), Capacity = input.Capacity!.Value, GroupId = input.GroupId });
         }
-        else if (input.Action is "UPDATE_TABLE" or "PLACE_TABLE" or "MOVE_TABLE")
+        else if (input.Action is "UPDATE_TABLE" or "DELETE_TABLE")
         {
-            if (table is null) throw Missing("TABLE_NOT_FOUND");
-            // Restaurants often number tables themselves, so the number can be set by hand.
-            if (input.Number is { } newNumber && newNumber != table.Number)
-            {
-                await EnsureTableNumberFree(weddingId, newNumber, table.Id, ct);
-                if (table.Name == $"Bàn {table.Number:D2}") table.Name = $"Bàn {newNumber:D2}";
-                table.Number = newNumber;
-            }
-            if (!string.IsNullOrWhiteSpace(input.Name)) table.Name = input.Name.Trim();
-            if (input.Capacity.HasValue || input.ExtraSeats.HasValue)
-            {
-                var newCapacity = input.Capacity ?? table.Capacity;
-                var newExtra = input.ExtraSeats ?? table.ExtraSeats;
-                var assignedCount = await db.Set<PlanningSeatAssignment>().CountAsync(x => x.TableId == table.Id, ct);
-                if (assignedCount > newCapacity + newExtra)
-                    throw Rule("TABLE_HAS_ASSIGNED_PLACES", "Không thể giảm số ghế xuống dưới số khách đang ngồi.");
-
-                var maxSeat = await db.Set<PlanningSeatAssignment>()
-                    .Where(x => x.TableId == table.Id)
-                    .Select(x => (int?)x.SeatNumber)
-                    .MaxAsync(ct) ?? 0;
-                if (maxSeat > newCapacity + newExtra)
-                    throw Rule("SEAT_IN_USE", $"Ghế số {maxSeat} đang có khách ngồi. Vui lòng bỏ xếp trước khi giảm ghế.");
-
-                table.Capacity = newCapacity;
-                table.ExtraSeats = newExtra;
-            }
-            if (input.GroupId.HasValue) table.GroupId = input.GroupId;
-            if (input.IsVip.HasValue) table.IsVip = input.IsVip.Value;
-
-            bool isExplicitMoveToTray = (input.Action is "MOVE_TABLE" or "PLACE_TABLE")
-                && (input.Side == "TRAY" || input.Half == "TRAY" || (input.Row == null && input.Column == null && input.Half == null && input.Side == null));
-
-            if (input.Row.HasValue || input.Column.HasValue || input.Half != null)
-            {
-                if (!input.Row.HasValue || !input.Column.HasValue)
-                    throw Rule("COORDINATES_INCOMPLETE", "Hàng và cột phải cùng có hoặc cùng để trống.");
-
-                var targetHalf = input.Half ?? (input.Side is "GROOM" or "BRIDE" ? input.Side : table.Half ?? "GROOM");
-                if (targetHalf is not ("GROOM" or "BRIDE"))
-                    throw Rule("HALF_REQUIRED", "Cần xác định nửa sảnh (GROOM hoặc BRIDE) khi đặt bàn lên sơ đồ.");
-
-                if ((targetHalf == "GROOM" && (input.Row.Value > plan.GroomRows || input.Column.Value > plan.GroomColumns)) ||
-                    (targetHalf == "BRIDE" && (input.Row.Value > plan.BrideRows || input.Column.Value > plan.BrideColumns)))
-                    throw Rule("CELL_OUT_OF_LAYOUT", "Vị trí đặt bàn nằm ngoài kích thước sảnh.");
-
-                var occupied = await db.Set<PlanningTable>().AnyAsync(x => x.WeddingId == weddingId && x.Half == targetHalf && x.Row == input.Row.Value && x.Column == input.Column.Value && x.Id != table.Id, ct);
-                if (occupied) throw Conflict("TABLE_CELL_OCCUPIED");
-
-                // A table may stand on either half: the half is only its position, the side label and
-                // the guests seated there stay as they are.
-                var labelSide = input.Side ?? table.Side ?? targetHalf;
-
-                table.Half = targetHalf;
-                table.Side = labelSide;
-                table.Row = input.Row;
-                table.Column = input.Column;
-            }
-            else if (isExplicitMoveToTray)
-            {
-                table.Row = null;
-                table.Column = null;
-                table.Half = null;
-            }
-        }
-        else if (input.Action == "SWAP_TABLES")
-        {
-            if (table is null) throw Missing("TABLE_NOT_FOUND");
-            var targetTable = await db.Set<PlanningTable>().SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.Id == input.TargetTableId, ct);
-            if (targetTable is null) throw Missing("TABLE_NOT_FOUND");
-
-            var targetHalf = targetTable.Half;
-            var targetRow = targetTable.Row;
-            var targetCol = targetTable.Column;
-
-            var curHalf = table.Half;
-            var curRow = table.Row;
-            var curCol = table.Column;
-
-            // Tables trade positions across halves freely, as with MOVE_TABLE; side labels stay with the tables.
-            // Evict coordinates temporarily to avoid unique index conflict
-            table.Row = null; table.Column = null; table.Half = null;
-            await db.SaveChangesAsync(ct);
-
-            targetTable.Half = curHalf; targetTable.Row = curRow; targetTable.Column = curCol;
-            table.Half = targetHalf; table.Row = targetRow; table.Column = targetCol;
-        }
-        else if (input.Action == "TAG_TABLES")
-        {
-            var tagIds = input.TableIds ?? [];
-            var tagTables = await db.Set<PlanningTable>().Where(x => x.WeddingId == weddingId && tagIds.Contains(x.Id)).ToListAsync(ct);
-            if (tagTables.Count != tagIds.Count) throw Missing("TABLE_NOT_FOUND");
-
-            if (input.GroupId.HasValue)
-            {
-                var groupExists = await db.Set<PlanningGroup>().AnyAsync(x => x.WeddingId == weddingId && x.Id == input.GroupId.Value, ct);
-                if (!groupExists) throw Missing("GROUP_NOT_FOUND");
-            }
-
-            foreach (var t in tagTables)
-            {
-                // The side is only a label: a bride table may stand on the groom half when that family overflows.
-                if (!string.IsNullOrEmpty(input.Side)) t.Side = input.Side;
-                if (input.IsVip.HasValue) t.IsVip = input.IsVip.Value;
-                if (input.GroupId.HasValue) t.GroupId = input.GroupId.Value;
-            }
-        }
-        else if (input.Action == "DELETE_TABLE")
-        {
-            if (table is null) throw Missing("TABLE_NOT_FOUND");
-            var assigned = await db.Set<PlanningSeatAssignment>().Where(x => x.TableId == table.Id).ToListAsync(ct);
-            if (assigned.Count > 0)
-            {
-                if (!input.ConfirmDeleteWithGuests)
-                    throw Rule("TABLE_HAS_ASSIGNED_PLACES", "Bàn còn khách đang ngồi. Xác nhận xóa để chuyển khách về khay chưa xếp.");
-                db.RemoveRange(assigned);
-            }
-            db.Remove(table);
-        }
-        else if (input.Action == "RENUMBER_TABLES")
-        {
-            var allTables = await db.Set<PlanningTable>().Where(x => x.WeddingId == weddingId).ToListAsync(ct);
-            var placed = allTables.Where(t => t.Row != null && t.Column != null).ToList();
-            var tray = allTables.Where(t => t.Row == null || t.Column == null).OrderBy(t => t.Number).ThenBy(t => t.Id).ToList();
-
-            var numbering = plan.Numbering ?? "BY_ROW";
-
-            // Evict all numbers to negative to avoid unique constraint collision during renumbering
-            for (var i = 0; i < allTables.Count; i++) allTables[i].Number = -(i + 1);
-            await db.SaveChangesAsync(ct);
-
-            if (numbering == "ODD_EVEN")
-            {
-                var groomTables = placed.Where(t => t.Half == "GROOM").OrderBy(t => t.Row!.Value).ThenBy(t => t.Column!.Value).ToList();
-                var brideTables = placed.Where(t => t.Half == "BRIDE").OrderBy(t => t.Row!.Value).ThenBy(t => t.Column!.Value).ToList();
-
-                var odd = 1;
-                foreach (var t in groomTables)
-                {
-                    t.Number = odd;
-                    if (t.Name.StartsWith("Bàn ", StringComparison.OrdinalIgnoreCase)) t.Name = $"Bàn {odd:D2}";
-                    odd += 2;
-                }
-                var even = 2;
-                foreach (var t in brideTables)
-                {
-                    t.Number = even;
-                    if (t.Name.StartsWith("Bàn ", StringComparison.OrdinalIgnoreCase)) t.Name = $"Bàn {even:D2}";
-                    even += 2;
-                }
-
-                var nextNum = Math.Max(odd, even);
-                foreach (var t in tray)
-                {
-                    t.Number = nextNum;
-                    if (t.Name.StartsWith("Bàn ", StringComparison.OrdinalIgnoreCase)) t.Name = $"Bàn {nextNum:D2}";
-                    nextNum++;
-                }
-            }
-            else // BY_ROW
-            {
-                var orderedPlaced = new List<PlanningTable>();
-                var maxRow = placed.Count > 0 ? placed.Max(t => t.Row!.Value) : 0;
-                for (var r = 1; r <= maxRow; r++)
-                {
-                    var groomInRow = placed.Where(t => t.Row == r && t.Half == "GROOM").OrderBy(t => t.Column!.Value);
-                    var brideInRow = placed.Where(t => t.Row == r && t.Half == "BRIDE").OrderBy(t => t.Column!.Value);
-                    orderedPlaced.AddRange(groomInRow);
-                    orderedPlaced.AddRange(brideInRow);
-                }
-
-                var num = 1;
-                foreach (var t in orderedPlaced)
-                {
-                    t.Number = num;
-                    if (t.Name.StartsWith("Bàn ", StringComparison.OrdinalIgnoreCase)) t.Name = $"Bàn {num:D2}";
-                    num++;
-                }
-                foreach (var t in tray)
-                {
-                    t.Number = num;
-                    if (t.Name.StartsWith("Bàn ", StringComparison.OrdinalIgnoreCase)) t.Name = $"Bàn {num:D2}";
-                    num++;
-                }
-            }
-        }
-        else if (input.Action == "MOVE_PARTY")
-        {
-            var targetGuestId = input.GuestId;
-            if (!targetGuestId.HasValue && input.PlaceIds is { Count: > 0 })
-            {
-                targetGuestId = await db.Set<PlanningPlace>()
-                    .Where(p => input.PlaceIds.Contains(p.Id))
-                    .Select(p => (Guid?)p.GuestId)
-                    .FirstOrDefaultAsync(ct);
-            }
-            if (!targetGuestId.HasValue) throw Missing("GUEST_NOT_FOUND");
-
-            var targetGuest = await db.Set<PlanningGuest>()
-                .SingleOrDefaultAsync(g => g.WeddingId == weddingId && g.Id == targetGuestId.Value && g.ArchivedAt == null, ct);
-            if (targetGuest is null) throw Missing("GUEST_NOT_FOUND");
-
-            if (scopeIds is not null && (targetGuest.GroupId == null || !scopeIds.Contains(targetGuest.GroupId.Value)))
-                throw Rule("SEATING_SCOPE_MISMATCH", "Không có quyền thao tác trên khách này.");
-
-            var partyPlacesWithParticipants = await (from p in db.Set<PlanningPlace>()
-                where p.GuestId == targetGuest.Id
-                join person in db.Set<PlanningParticipant>() on p.ParticipantId equals (Guid?)person.Id into people
-                from person in people.DefaultIfEmpty()
-                orderby p.Position
-                select new { Place = p, Person = person }).ToListAsync(ct);
-
-            var partyPlaceIds = partyPlacesWithParticipants.Select(x => x.Place.Id).ToList();
-
-            if (table is null)
-            {
-                var oldPartyAssignments = await db.Set<PlanningSeatAssignment>()
-                    .Where(a => partyPlaceIds.Contains(a.PlaceId))
-                    .ToListAsync(ct);
-                db.RemoveRange(oldPartyAssignments);
-            }
-            else
-            {
-                if (scopeIds is not null && (table.GroupId == null || !scopeIds.Contains(table.GroupId.Value)))
-                    throw Rule("SEATING_CROSS_GROUP_MOVE_DENIED", "Không thể xếp khách của nhóm khác vào khu vực này.");
-
-                var checkedInPartyPlaces = await db.Set<PlanningCheckIn>()
-                    .Where(c => partyPlaceIds.Contains(c.PlaceId)).Select(c => c.PlaceId).ToListAsync(ct);
-                var partyAnswer = InvitationAnswer(await db.Set<PlanningParticipant>()
-                    .Where(p => p.GuestId == targetGuest.Id).Select(p => p.AttendanceStatus).ToListAsync(ct));
-                var eligiblePlaces = partyPlacesWithParticipants
-                    .Where(x => checkedInPartyPlaces.Contains(x.Place.Id) || (x.Person == null
-                        ? !PlanningSeatingRules.HasFirmAnswer(partyAnswer)
-                        : x.Person.AttendanceStatus != "DECLINED"))
-                    .Select(x => x.Place)
-                    .ToList();
-
-                if (eligiblePlaces.Count == 0)
-                    throw Rule("GUEST_NOT_ATTENDING", "Tất cả khách trong thiệp đã từ chối tham dự, không thể xếp chỗ.");
-
-                var eligibleIds = eligiblePlaces.Select(p => p.Id).ToHashSet();
-                var maxCapacity = table.Capacity + table.ExtraSeats;
-                var occupied = await db.Set<PlanningSeatAssignment>()
-                    .Where(x => x.TableId == table.Id && !eligibleIds.Contains(x.PlaceId))
-                    .Select(x => x.SeatNumber)
-                    .ToListAsync(ct);
-
-                var free = Enumerable.Range(1, maxCapacity).Where(x => !occupied.Contains(x)).OrderBy(x => x).ToList();
-                if (free.Count < eligiblePlaces.Count)
-                    throw Rule("TABLE_FULL", "Bàn không đủ chỗ cho cả nhóm.");
-
-                List<int>? chosenSeats = null;
-                var neededCount = eligiblePlaces.Count;
-                if (input.SeatNumber.HasValue)
-                {
-                    var start = input.SeatNumber.Value;
-                    var candidate = Enumerable.Range(start, neededCount).ToList();
-                    if (candidate.All(s => free.Contains(s)))
-                    {
-                        chosenSeats = candidate;
-                    }
-                }
-
-                if (chosenSeats is null)
-                {
-                    for (int i = 0; i <= free.Count - neededCount; i++)
-                    {
-                        var candidate = free.Skip(i).Take(neededCount).ToList();
-                        bool isConsecutive = true;
-                        for (int j = 1; j < candidate.Count; j++)
-                        {
-                            if (candidate[j] != candidate[j - 1] + 1)
-                            {
-                                isConsecutive = false;
-                                break;
-                            }
-                        }
-                        if (isConsecutive)
-                        {
-                            chosenSeats = candidate;
-                            break;
-                        }
-                    }
-                }
-
-                chosenSeats ??= free.Take(neededCount).ToList();
-
-                var oldPartyAssignments = await db.Set<PlanningSeatAssignment>()
-                    .Where(a => eligibleIds.Contains(a.PlaceId))
-                    .ToListAsync(ct);
-                db.RemoveRange(oldPartyAssignments);
-                await db.SaveChangesAsync(ct);
-
-                for (int i = 0; i < eligiblePlaces.Count; i++)
-                {
-                    db.Add(new PlanningSeatAssignment
-                    {
-                        PlaceId = eligiblePlaces[i].Id,
-                        TableId = table.Id,
-                        SeatNumber = chosenSeats[i]
-                    });
-                }
-                await db.SaveChangesAsync(ct);
-
-                var partyWarnings = await CheckWarningsForGuestsAsync(weddingId, [targetGuest.Id], ct);
-                warnings.AddRange(partyWarnings);
-            }
-        }
-        else if (input.Action == "SWAP_PLACES")
-        {
-            var p1Id = input.PlaceId ?? (input.PlaceIds != null && input.PlaceIds.Count > 0 ? input.PlaceIds[0] : Guid.Empty);
-            var p2Id = input.TargetPlaceId ?? (input.PlaceIds != null && input.PlaceIds.Count > 1 ? input.PlaceIds[1] : Guid.Empty);
-
-            if (p1Id == Guid.Empty || p2Id == Guid.Empty || p1Id == p2Id)
-                throw Missing("PLACE_NOT_FOUND");
-
-            var placeInfos = await (from p in db.Set<PlanningPlace>()
-                join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
-                join pt in db.Set<PlanningParticipant>() on p.ParticipantId equals (Guid?)pt.Id into pts
-                from pt in pts.DefaultIfEmpty()
-                where g.WeddingId == weddingId && g.ArchivedAt == null && (p.Id == p1Id || p.Id == p2Id)
-                select new { Place = p, Guest = g, Participant = pt }).ToListAsync(ct);
-
-            if (placeInfos.Count != 2) throw Missing("PLACE_NOT_FOUND");
-
-            var p1Info = placeInfos.Single(x => x.Place.Id == p1Id);
-            var p2Info = placeInfos.Single(x => x.Place.Id == p2Id);
-
-            if (scopeIds is not null)
-            {
-                if (p1Info.Guest.GroupId == null || !scopeIds.Contains(p1Info.Guest.GroupId.Value) ||
-                    p2Info.Guest.GroupId == null || !scopeIds.Contains(p2Info.Guest.GroupId.Value))
-                    throw Rule("SEATING_SCOPE_MISMATCH", "Không có quyền thao tác trên khách ngoài nhóm được giao.");
-            }
-
-            var a1 = await db.Set<PlanningSeatAssignment>().SingleOrDefaultAsync(x => x.PlaceId == p1Id, ct);
-            var a2 = await db.Set<PlanningSeatAssignment>().SingleOrDefaultAsync(x => x.PlaceId == p2Id, ct);
-
-            if (a1 is null && a2 is null)
-                throw Rule("BOTH_PLACES_IN_TRAY", "Cả hai khách đều chưa được xếp bàn.");
-
-            if (a2 is not null && await HasDeclinedNotCheckedInAsync([p1Id], ct))
-                throw Rule("GUEST_NOT_ATTENDING", "Khách đã từ chối tham dự và chưa check-in, không thể xếp chỗ.");
-            if (a1 is not null && await HasDeclinedNotCheckedInAsync([p2Id], ct))
-                throw Rule("GUEST_NOT_ATTENDING", "Khách đã từ chối tham dự và chưa check-in, không thể xếp chỗ.");
-
-            var t1 = a1?.TableId;
-            var s1 = a1?.SeatNumber;
-            var t2 = a2?.TableId;
-            var s2 = a2?.SeatNumber;
-
-            if (a1 is not null) db.Remove(a1);
-            if (a2 is not null) db.Remove(a2);
-            await db.SaveChangesAsync(ct);
-
-            if (t2.HasValue && s2.HasValue)
-            {
-                db.Add(new PlanningSeatAssignment { PlaceId = p1Id, TableId = t2.Value, SeatNumber = s2.Value });
-            }
-            if (t1.HasValue && s1.HasValue)
-            {
-                db.Add(new PlanningSeatAssignment { PlaceId = p2Id, TableId = t1.Value, SeatNumber = s1.Value });
-            }
-            await db.SaveChangesAsync(ct);
-
-            var swapWarnings = await CheckWarningsForGuestsAsync(weddingId, [p1Info.Guest.Id, p2Info.Guest.Id], ct);
-            warnings.AddRange(swapWarnings);
-        }
-        else if (input.Action == "SWAP_UNATTENDED")
-        {
-            if (table is null) throw Missing("TABLE_NOT_FOUND");
-            if (!input.PlaceId.HasValue) throw Rule("PLACE_REQUIRED", "Cần chọn khách cần chuyển vào bàn.");
-            var incomingPlaceId = input.PlaceId.Value;
-
-            var incomingPlace = await (from p in db.Set<PlanningPlace>()
-                join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
-                join pt in db.Set<PlanningParticipant>() on p.ParticipantId equals (Guid?)pt.Id into pts
-                from pt in pts.DefaultIfEmpty()
-                where p.Id == incomingPlaceId && g.WeddingId == weddingId && g.ArchivedAt == null
-                select new { Place = p, Guest = g, Participant = pt }).SingleOrDefaultAsync(ct)
-                ?? throw Missing("PLACE_NOT_FOUND");
-
-            if (await HasDeclinedNotCheckedInAsync([incomingPlaceId], ct))
-                throw Rule("GUEST_NOT_ATTENDING", "Khách đã từ chối tham dự và chưa check-in.");
-
-            var tableAssignments = await db.Set<PlanningSeatAssignment>()
-                .Where(a => a.TableId == table.Id)
-                .ToListAsync(ct);
-
-            var placeIdsAtTable = tableAssignments.Select(a => a.PlaceId).ToList();
-            var checkedInPlaceIds = await db.Set<PlanningCheckIn>()
-                .Where(c => placeIdsAtTable.Contains(c.PlaceId))
-                .Select(c => c.PlaceId)
-                .ToListAsync(ct);
-
-            var unattendedAssignments = tableAssignments
-                .Where(a => !checkedInPlaceIds.Contains(a.PlaceId))
-                .ToList();
-
-            if (unattendedAssignments.Count == 0)
-                throw Rule("NO_UNATTENDED_GUESTS", "Bàn đã đầy và tất cả khách đều đã check-in.");
-
-            PlanningSeatAssignment targetAssignment;
-            if (input.TargetPlaceId.HasValue)
-            {
-                targetAssignment = unattendedAssignments.FirstOrDefault(a => a.PlaceId == input.TargetPlaceId.Value)
-                    ?? throw Rule("TARGET_NOT_UNATTENDED", "Người được chọn không ngồi ở bàn này hoặc đã check-in.");
-            }
-            else
-            {
-                targetAssignment = unattendedAssignments.First();
-            }
-
-            var incomingAssignment = await db.Set<PlanningSeatAssignment>()
-                .SingleOrDefaultAsync(a => a.PlaceId == incomingPlaceId, ct);
-
-            var targetSeatNum = targetAssignment.SeatNumber;
-            var targetPlaceId = targetAssignment.PlaceId;
-            if (incomingAssignment is not null)
-            {
-                var incomingTableId = incomingAssignment.TableId;
-                var incomingSeatNum = incomingAssignment.SeatNumber;
-                db.Remove(targetAssignment);
-                db.Remove(incomingAssignment);
-                await db.SaveChangesAsync(ct);
-                db.Add(new PlanningSeatAssignment { PlaceId = targetPlaceId, TableId = incomingTableId, SeatNumber = incomingSeatNum });
-                db.Add(new PlanningSeatAssignment { PlaceId = incomingPlaceId, TableId = table.Id, SeatNumber = targetSeatNum });
-
-
-
-            }
-            else
-            {
-                db.Remove(targetAssignment);
-                await db.SaveChangesAsync(ct);
-                db.Add(new PlanningSeatAssignment
-                {
-                    PlaceId = incomingPlaceId,
-                    TableId = table.Id,
-                    SeatNumber = targetSeatNum
-                });
-            }
-
-            db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_seat_assignments", incomingPlaceId, "SEATING_DAY_OF_CHANGE", user.UserId,
-                metadata: System.Text.Json.JsonSerializer.Serialize(new {
-                    action = "SWAP_UNATTENDED",
-                    incomingPlaceId,
-                    swappedWithPlaceId = targetAssignment.PlaceId,
-                    tableId = table.Id,
-                    tableName = table.Name,
-                    seatNumber = targetSeatNum,
-                    reason = input.Reason ?? "Đổi với khách chưa đến"
-                })));
-
-            await db.SaveChangesAsync(ct);
-            var unattendedWarnings = await CheckWarningsForGuestsAsync(weddingId, [incomingPlace.Guest.Id], ct);
-            warnings.AddRange(unattendedWarnings);
-        }
-        else if (input.Action == "OPERATIONAL_MOVE")
-        {
-            var targetPlaceIds = input.PlaceIds ?? (input.PlaceId.HasValue ? [input.PlaceId.Value] : null);
-            if (targetPlaceIds is null || targetPlaceIds.Count == 0)
-                throw Rule("PLACE_REQUIRED", "Cần chọn khách cần chuyển chỗ.");
-
-            var places = await (from p in db.Set<PlanningPlace>() join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
-                where g.WeddingId == weddingId && g.ArchivedAt == null && targetPlaceIds.Contains(p.Id)
-                select new { Place = p, Guest = g }).ToListAsync(ct);
-            if (places.Count != targetPlaceIds.Count) throw Missing("PLACE_NOT_FOUND");
-
-            if (table is not null)
-            {
-                if (await HasDeclinedNotCheckedInAsync(targetPlaceIds, ct))
-                    throw Rule("GUEST_NOT_ATTENDING", "Khách đã từ chối tham dự và chưa check-in, không thể xếp chỗ.");
-
-                var currentOnTable = await db.Set<PlanningSeatAssignment>()
-                    .Where(a => a.TableId == table.Id && !targetPlaceIds.Contains(a.PlaceId))
-                    .ToListAsync(ct);
-                var effectiveCapacity = table.Capacity + table.ExtraSeats;
-                if (currentOnTable.Count + targetPlaceIds.Count > effectiveCapacity)
-                    throw Rule("TABLE_OVER_CAPACITY", "Bàn đã đầy chỗ.");
-
-                var takenSeats = currentOnTable.Select(a => a.SeatNumber).ToHashSet();
-                var freeSeats = Enumerable.Range(1, effectiveCapacity).Where(s => !takenSeats.Contains(s)).ToList();
-
-                var oldAssignments = await db.Set<PlanningSeatAssignment>()
-                    .Where(a => targetPlaceIds.Contains(a.PlaceId))
-                    .ToListAsync(ct);
-                if (oldAssignments.Count > 0)
-                {
-                    db.RemoveRange(oldAssignments);
-                    await db.SaveChangesAsync(ct);
-                }
-
-                if (targetPlaceIds.Count == 1 && input.SeatNumber.HasValue)
-                {
-                    if (input.SeatNumber.Value < 1 || input.SeatNumber.Value > effectiveCapacity || takenSeats.Contains(input.SeatNumber.Value))
-                        throw Rule("SEAT_OCCUPIED", "Số ghế đã có người ngồi hoặc vượt sức chứa bàn.");
-                    db.Add(new PlanningSeatAssignment
-                    {
-                        PlaceId = targetPlaceIds[0],
-                        TableId = table.Id,
-                        SeatNumber = input.SeatNumber.Value
-                    });
-                }
-                else
-                {
-                    for (var i = 0; i < targetPlaceIds.Count; i++)
-                    {
-                        db.Add(new PlanningSeatAssignment
-                        {
-                            PlaceId = targetPlaceIds[i],
-                            TableId = table.Id,
-                            SeatNumber = freeSeats[i]
-                        });
-                    }
-                }
-            }
-            else
-            {
-                var oldAssignments = await db.Set<PlanningSeatAssignment>()
-                    .Where(a => targetPlaceIds.Contains(a.PlaceId))
-                    .ToListAsync(ct);
-                if (oldAssignments.Count > 0)
-                {
-                    db.RemoveRange(oldAssignments);
-                }
-            }
-
-            foreach (var pId in targetPlaceIds)
-            {
-                db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_seat_assignments", pId, "SEATING_DAY_OF_CHANGE", user.UserId,
-                    metadata: System.Text.Json.JsonSerializer.Serialize(new {
-                        action = "OPERATIONAL_MOVE",
-                        placeId = pId,
-                        tableId = table?.Id,
-                        tableName = table?.Name,
-                        seatNumber = input.SeatNumber,
-                        reason = input.Reason ?? "Điều chuyển trong ngày cưới"
-                    })));
-            }
-
-            await db.SaveChangesAsync(ct);
-            var guestIds = places.Select(p => p.Guest.Id).Distinct().ToList();
-            var opWarnings = await CheckWarningsForGuestsAsync(weddingId, guestIds, ct);
-            warnings.AddRange(opWarnings);
+            var assigned = db.Set<PlanningSeatAssignment>().Where(x => x.TableId == table!.Id);
+            if (await assigned.AnyAsync(x => input.Action == "DELETE_TABLE" || x.SeatNumber > input.Capacity, ct))
+                throw Rule("TABLE_HAS_ASSIGNED_PLACES", "Chuyển các chỗ đang xếp trước khi xóa bàn hoặc giảm số ghế.");
+            if (input.Action == "DELETE_TABLE") db.Remove(table!);
+            else { table!.Name = input.Name!.Trim(); table.Capacity = input.Capacity!.Value; if (input.GroupId.HasValue) table.GroupId = input.GroupId; }
         }
         else
         {
@@ -896,27 +113,20 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
             var places = await (from p in db.Set<PlanningPlace>() join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
                 where g.WeddingId == weddingId && g.ArchivedAt == null && ids.Contains(p.Id) && (scopeIds == null || g.GroupId != null && scopeIds.Contains(g.GroupId.Value)) orderby g.Id, p.Position select p.Id).ToListAsync(ct);
             if (places.Count != ids.Count) throw Missing("PLACE_NOT_FOUND");
-            if (table is not null)
+            if (table is not null && scopeIds is not null)
             {
-                if (await HasDeclinedNotCheckedInAsync(ids, ct))
-                    throw Rule("GUEST_NOT_ATTENDING", "Khách đã từ chối tham dự và chưa check-in, không thể xếp chỗ.");
-
-                if (scopeIds is not null)
-                {
-                    var destinationGroup = table.GroupId;
-                    var sourceGroups = await (from p in db.Set<PlanningPlace>() join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
-                        where ids.Contains(p.Id) select g.GroupId).Distinct().ToListAsync(ct);
-                    if (destinationGroup is null || sourceGroups.Any(x => x != destinationGroup))
-                        throw Rule("SEATING_CROSS_GROUP_MOVE_DENIED", "Không thể xếp khách của nhóm khác vào khu vực này.");
-                }
+                var destinationGroup = table.GroupId;
+                var sourceGroups = await (from p in db.Set<PlanningPlace>() join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
+                    where ids.Contains(p.Id) select g.GroupId).Distinct().ToListAsync(ct);
+                if (destinationGroup is null || sourceGroups.Any(x => x != destinationGroup))
+                    throw Rule("SEATING_CROSS_GROUP_MOVE_DENIED", "Không thể xếp khách của nhóm khác vào khu vực này.");
             }
             var old = await db.Set<PlanningSeatAssignment>().Where(x => ids.Contains(x.PlaceId)).ToListAsync(ct);
             var free = new List<int>();
             if (table is not null)
             {
-                var maxCapacity = table.Capacity + table.ExtraSeats;
                 var occupied = await db.Set<PlanningSeatAssignment>().Where(x => x.TableId == table.Id && !ids.Contains(x.PlaceId)).Select(x => x.SeatNumber).ToListAsync(ct);
-                free = Enumerable.Range(1, maxCapacity).Where(x => !occupied.Contains(x)).ToList();
+                free = Enumerable.Range(1, table.Capacity).Where(x => !occupied.Contains(x)).ToList();
                 if (input.SeatNumber is { } seat)
                 {
                     if (!free.Remove(seat)) throw Rule("SEAT_UNAVAILABLE", "Ghế đã có chỗ hoặc nằm ngoài sức chứa.");
@@ -929,191 +139,29 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
             await db.SaveChangesAsync(ct);
             if (table is not null)
                 db.AddRange(places.Select((place, i) => new PlanningSeatAssignment { PlaceId = place, TableId = table.Id, SeatNumber = free[i] }));
-            await db.SaveChangesAsync(ct);
-
-            var affectedGuestIds = await db.Set<PlanningPlace>()
-                .Where(p => ids.Contains(p.Id))
-                .Select(p => p.GuestId)
-                .Distinct()
-                .ToListAsync(ct);
-            var moveWarnings = await CheckWarningsForGuestsAsync(weddingId, affectedGuestIds, ct);
-            warnings.AddRange(moveWarnings);
         }
-
-        if (plan.IsEventStarted)
-        {
-            db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_seat_assignments", weddingId, "SEATING_DAY_OF_CHANGE", user.UserId,
-                metadata: System.Text.Json.JsonSerializer.Serialize(new {
-                    action = input.Action,
-                    tableId = input.TableId,
-                    placeId = input.PlaceId,
-                    targetPlaceId = input.TargetPlaceId,
-                    guestId = input.GuestId,
-                    reason = input.Reason
-                })));
-        }
-
         plan.Version++;
         await db.SaveChangesAsync(ct);
-        if (plannedBaseline is { Count: > 0 })
-        {
-            var baselinePlaceIds = plannedBaseline.Keys.ToArray();
-            var recreated = await db.Set<PlanningSeatAssignment>()
-                .Where(a => baselinePlaceIds.Contains(a.PlaceId) && a.PlannedTableId == null)
-                .ToListAsync(ct);
-            foreach (var a in recreated)
-            {
-                var baseline = plannedBaseline[a.PlaceId];
-                a.PlannedTableId = baseline.PlannedTableId;
-                a.PlannedSeatNumber = baseline.PlannedSeatNumber;
-            }
-            if (recreated.Count > 0) await db.SaveChangesAsync(ct);
-        }
-        var result = await Snapshot(weddingId, ct, groupScope, warnings);
+        var result = await Snapshot(weddingId, ct, groupScope);
         await tx.CommitAsync(ct);
         return result;
     }
 
-    // A declined person who shows up and is checked in may be seated like anyone else.
-    private Task<bool> HasDeclinedNotCheckedInAsync(IReadOnlyCollection<Guid> placeIds, CancellationToken ct) =>
-        (from p in db.Set<PlanningPlace>()
-         where placeIds.Contains(p.Id)
-         join person in db.Set<PlanningParticipant>() on p.ParticipantId equals (Guid?)person.Id
-         where person.AttendanceStatus == "DECLINED" && !db.Set<PlanningCheckIn>().Any(c => c.PlaceId == p.Id)
-         select p.Id).AnyAsync(ct);
-
-    private async Task<List<SeatingWarningDto>> CheckWarningsForGuestsAsync(
-        Guid weddingId,
-        IEnumerable<Guid> guestIds,
-        CancellationToken ct)
-    {
-        var warnings = new List<SeatingWarningDto>();
-        var distinctGuests = guestIds.Distinct().ToList();
-        if (distinctGuests.Count == 0) return warnings;
-
-        var guests = await db.Set<PlanningGuest>().AsNoTracking()
-            .Where(g => g.WeddingId == weddingId && distinctGuests.Contains(g.Id))
-            .ToListAsync(ct);
-        var places = await db.Set<PlanningPlace>().AsNoTracking()
-            .Where(p => distinctGuests.Contains(p.GuestId))
-            .ToListAsync(ct);
-        var placeIds = places.Select(p => p.Id).ToList();
-        var assignments = await db.Set<PlanningSeatAssignment>().AsNoTracking()
-            .Where(a => placeIds.Contains(a.PlaceId))
-            .ToListAsync(ct);
-        var assignedTableIds = assignments.Select(a => a.TableId).Distinct().ToList();
-        var tables = await db.Set<PlanningTable>().AsNoTracking()
-            .Where(t => t.WeddingId == weddingId && assignedTableIds.Contains(t.Id))
-            .ToDictionaryAsync(t => t.Id, ct);
-
-        var assignmentsByPlace = assignments.ToDictionary(a => a.PlaceId);
-
-        foreach (var g in guests)
-        {
-            var gPlaces = places.Where(p => p.GuestId == g.Id).ToList();
-            if (gPlaces.Count == 0) continue;
-
-            var assignedTablesForGuest = gPlaces
-                .Select(p => assignmentsByPlace.GetValueOrDefault(p.Id)?.TableId)
-                .Where(tid => tid.HasValue)
-                .Select(tid => tid!.Value)
-                .Distinct()
-                .ToList();
-
-            var unassignedCount = gPlaces.Count(p => !assignmentsByPlace.ContainsKey(p.Id));
-
-            if (gPlaces.Count > 1 && (assignedTablesForGuest.Count > 1 || (assignedTablesForGuest.Count == 1 && unassignedCount > 0)))
-            {
-                warnings.Add(new SeatingWarningDto(
-                    "PARTY_SPLIT",
-                    $"Khách {g.RecipientName} đang bị tách bàn với các thành viên khác trong thiệp.",
-                    assignedTablesForGuest.FirstOrDefault(),
-                    g.Id));
-            }
-
-            foreach (var p in gPlaces)
-            {
-                // Groom and bride guests may share a table, so a side difference is not a warning.
-                if (assignmentsByPlace.TryGetValue(p.Id, out var assign) && tables.TryGetValue(assign.TableId, out var tbl))
-                {
-                    if (tbl.GroupId != null && g.GroupId != null && tbl.GroupId != g.GroupId)
-                    {
-                        warnings.Add(new SeatingWarningDto(
-                            "GROUP_MIX",
-                            $"Khách {g.RecipientName} được xếp vào bàn của nhóm khác ({tbl.Name}).",
-                            tbl.Id,
-                            g.Id,
-                            p.Id));
-                    }
-                }
-            }
-        }
-
-        return warnings.DistinctBy(w => (w.Code, w.TableId, w.GuestId, w.PlaceId)).ToList();
-    }
-
-    private async Task ApplyTablePlacements(Guid weddingId, IReadOnlyList<SuggestedTablePlacementDto> placements, CancellationToken ct)
-    {
-        if (placements.Count == 0) return;
-        var ids = placements.Select(p => p.TableId).ToArray();
-        var tables = await db.Set<PlanningTable>().Where(x => x.WeddingId == weddingId && ids.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct);
-        foreach (var p in placements)
-        {
-            if (!tables.TryGetValue(p.TableId, out var table)) continue;
-            table.Half = p.Half;
-            table.Row = p.Row;
-            table.Column = p.Column;
-        }
-        await db.SaveChangesAsync(ct);
-    }
-
-    private async Task EnsureTableNumberFree(Guid weddingId, int number, Guid? exceptTableId, CancellationToken ct)
-    {
-        var holder = await db.Set<PlanningTable>().AsNoTracking()
-            .Where(x => x.WeddingId == weddingId && x.Number == number && x.Id != exceptTableId)
-            .Select(x => new { x.Id, x.Name }).FirstOrDefaultAsync(ct);
-        if (holder is not null)
-            throw new ApplicationProblemException(ProblemKind.Conflict, "TABLE_NUMBER_TAKEN", $"Số bàn {number} đang thuộc {holder.Name}.")
-            {
-                Extensions = new Dictionary<string, object?> { ["tableId"] = holder.Id, ["tableName"] = holder.Name }
-            };
-    }
-
-    private async Task<PlanningSeatingDto> Snapshot(Guid weddingId, CancellationToken ct, IReadOnlySet<Guid>? groupScope = null, IReadOnlyList<SeatingWarningDto>? warnings = null)
+    private async Task<PlanningSeatingDto> Snapshot(Guid weddingId, CancellationToken ct, IReadOnlySet<Guid>? groupScope = null)
     {
         var scopeIds = groupScope?.ToArray();
-        var plan = await db.Set<PlanningSeatingPlan>().AsNoTracking().SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
-        var version = plan?.Version ?? 0;
-
+        var version = await db.Set<PlanningSeatingPlan>().Where(x => x.WeddingId == weddingId).Select(x => x.Version).SingleOrDefaultAsync(ct);
         var tablesQuery = db.Set<PlanningTable>().AsNoTracking().Where(x => x.WeddingId == weddingId);
         if (scopeIds is not null) tablesQuery = tablesQuery.Where(x => x.GroupId != null && scopeIds.Contains(x.GroupId.Value));
-        var tables = await tablesQuery.OrderBy(x => x.Number).ThenBy(x => x.Name).ThenBy(x => x.Id)
-            .Select(x => new PlanningTableDto(x.Id, x.Name, x.Capacity, x.GroupId, x.Number, x.Side, x.Row, x.Column, x.IsVip, x.ExtraSeats, x.Half)).ToListAsync(ct);
+        var tables = await tablesQuery.OrderBy(x => x.Name).ThenBy(x => x.Id)
+            .Select(x => new PlanningTableDto(x.Id, x.Name, x.Capacity, x.GroupId)).ToListAsync(ct);
         var guestQuery = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null);
         if (scopeIds is not null) guestQuery = guestQuery.Where(x => x.GroupId != null && scopeIds.Contains(x.GroupId.Value));
-        var rawGuests = await (from g in guestQuery
+        var guests = await (from g in guestQuery
             join groupName in db.Set<PlanningGroup>() on g.GroupId equals (Guid?)groupName.Id into groups
             from groupName in groups.DefaultIfEmpty() orderby g.RecipientName, g.Id
-            select new {
-                g.Id, g.Version, g.RecipientName, g.Honorific, g.InvitationKind, g.ExpectedPeople, g.Side,
-                Group = groupName == null ? null : new PlanningGroupDto(groupName.Id, groupName.Name),
-                g.Phone, g.Note, g.Email, g.InvitationToken, g.ArchivedAt
-            }).ToListAsync(ct);
-
-        var guestIds = rawGuests.Select(g => g.Id).ToList();
-        var participants = await db.Set<PlanningParticipant>().AsNoTracking()
-            .Where(p => guestIds.Contains(p.GuestId))
-            .ToListAsync(ct);
-        var participantLookup = participants.GroupBy(p => p.GuestId).ToDictionary(g => g.Key, g => g.ToList());
-
-        var guests = rawGuests.Select(g => {
-            var parts = participantLookup.GetValueOrDefault(g.Id) ?? [];
-            var rsvpStatus = InvitationAnswer(parts.Select(p => p.AttendanceStatus).ToList());
-            return new PlanningGuestDto(g.Id, g.Version, g.RecipientName, g.Honorific, g.InvitationKind, g.ExpectedPeople, g.Side,
-                g.Group, g.Phone, g.Note, g.Email, g.InvitationToken == null ? null : "/invite/" + g.InvitationToken,
-                g.ArchivedAt, false, rsvpStatus);
-        }).ToList();
-
+            select new PlanningGuestDto(g.Id, g.Version, g.RecipientName, g.Honorific, g.InvitationKind, g.ExpectedPeople, g.Side,
+                groupName == null ? null : new PlanningGroupDto(groupName.Id, groupName.Name), g.Phone, g.Note, g.Email)).ToListAsync(ct);
         var places = await (from p in db.Set<PlanningPlace>().AsNoTracking()
             join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id where g.WeddingId == weddingId && g.ArchivedAt == null && (scopeIds == null || g.GroupId != null && scopeIds.Contains(g.GroupId.Value))
             join person in db.Set<PlanningParticipant>() on p.ParticipantId equals (Guid?)person.Id into people
@@ -1121,185 +169,7 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
             select new PlanningSeatingPlace(p.Id, p.GuestId, p.Position, person == null ? null : new PlanningPersonDto(person.Id, person.FullName, person.Role, person.AttendanceStatus))).ToListAsync(ct);
         var assignments = await (from a in db.Set<PlanningSeatAssignment>().AsNoTracking()
             join t in db.Set<PlanningTable>() on a.TableId equals t.Id where t.WeddingId == weddingId && (scopeIds == null || t.GroupId != null && scopeIds.Contains(t.GroupId.Value))
-            select new PlanningAssignmentDto(a.PlaceId, a.TableId, a.SeatNumber, a.PlannedTableId, a.PlannedSeatNumber)).ToListAsync(ct);
-
-        var isLocked = plan?.IsLocked ?? false;
-        var lockedAt = plan?.LockedAt;
-        var lockedBy = plan?.LockedBy;
-        var isEventStarted = plan?.IsEventStarted ?? false;
-        var eventStartedAt = plan?.EventStartedAt;
-        var eventStartedBy = plan?.EventStartedBy;
-
-        var layout = plan is null ? new SeatingLayoutDto(6, 3, 6, 3, "BY_ROW", 0, false, null, null, false, null, null)
-            : new SeatingLayoutDto(plan.GroomRows, plan.GroomColumns, plan.BrideRows, plan.BrideColumns, plan.Numbering, plan.Version,
-                isLocked, lockedAt, lockedBy, isEventStarted, eventStartedAt, eventStartedBy);
-
-        var declinedSeatedWarnings = new List<SeatingWarningDto>();
-        var assignmentsByPlaceId = assignments.ToDictionary(a => a.PlaceId);
-        var tableById = tables.ToDictionary(t => t.Id);
-        var declinedSeatedIds = places.Where(p => p.Person?.AttendanceStatus == "DECLINED" && assignmentsByPlaceId.ContainsKey(p.Id))
-            .Select(p => p.Id).ToList();
-        var declinedCheckedIn = (await db.Set<PlanningCheckIn>().AsNoTracking()
-            .Where(c => declinedSeatedIds.Contains(c.PlaceId)).Select(c => c.PlaceId).ToListAsync(ct)).ToHashSet();
-        foreach (var p in places)
-        {
-            if (p.Person?.AttendanceStatus == "DECLINED" && !declinedCheckedIn.Contains(p.Id) && assignmentsByPlaceId.TryGetValue(p.Id, out var asgn))
-            {
-                var tblName = tableById.TryGetValue(asgn.TableId, out var tbl) ? tbl.Name : "bàn";
-                declinedSeatedWarnings.Add(new SeatingWarningDto(
-                    "DECLINED_SEATED",
-                    $"Khách {p.Person.FullName} đã từ chối nhưng vẫn đang có ghế tại {tblName}.",
-                    asgn.TableId,
-                    p.GuestId,
-                    p.Id));
-            }
-        }
-        var answers = guests.ToDictionary(g => g.Id, g => g.RsvpStatus);
-        var emptySeated = places.Where(p => p.Person is null && PlanningSeatingRules.HasFirmAnswer(answers.GetValueOrDefault(p.GuestId))
-            && assignmentsByPlaceId.ContainsKey(p.Id)).ToList();
-        var emptyCheckedIn = emptySeated.Count == 0 ? [] : (await db.Set<PlanningCheckIn>().AsNoTracking()
-            .Where(c => emptySeated.Select(p => p.Id).Contains(c.PlaceId)).Select(c => c.PlaceId).ToListAsync(ct)).ToHashSet();
-        foreach (var p in emptySeated.Where(p => !emptyCheckedIn.Contains(p.Id)))
-        {
-            var seat = assignmentsByPlaceId[p.Id];
-            var owner = guests.FirstOrDefault(g => g.Id == p.GuestId)?.RecipientName ?? "khách";
-            var tableName = tableById.TryGetValue(seat.TableId, out var tbl) ? tbl.Name : "bàn";
-            declinedSeatedWarnings.Add(new SeatingWarningDto("UNUSED_PLACE_SEATED",
-                $"Thiệp {owner} đã trả lời và không dùng suất {p.Position}, nhưng suất này vẫn đang có ghế tại {tableName}.",
-                seat.TableId, p.GuestId, p.Id));
-        }
-        var allWarnings = (warnings ?? []).Concat(declinedSeatedWarnings).DistinctBy(w => (w.Code, w.TableId, w.GuestId, w.PlaceId)).ToList();
-
-        return new(weddingId, version, tables, guests, places, assignments, layout, allWarnings,
-            isLocked, lockedAt, lockedBy, isEventStarted, eventStartedAt, eventStartedBy);
-    }
-
-    // Answer of an invitation as seen from its people: someone attends → ATTENDING; everyone declined → DECLINED; else PENDING
-    // (no answer yet, or MAYBE, whose people stay PENDING).
-    private static string InvitationAnswer(IReadOnlyCollection<string> attendance) =>
-        attendance.Any(a => a == "ATTENDING") ? "ATTENDING"
-        : attendance.Count > 0 && attendance.All(a => a == "DECLINED") ? "DECLINED"
-        : attendance.Any(a => a == "WAITLISTED") ? "WAITLISTED"
-        : "PENDING";
-
-    private async Task<List<Guid>> FirmAnswerGuestIdsAsync(Guid weddingId, CancellationToken ct)
-    {
-        var people = await (from g in db.Set<PlanningGuest>()
-            join person in db.Set<PlanningParticipant>() on g.Id equals person.GuestId
-            where g.WeddingId == weddingId && g.ArchivedAt == null
-            select new { g.Id, person.AttendanceStatus }).ToListAsync(ct);
-        return people.GroupBy(x => x.Id)
-            .Where(x => PlanningSeatingRules.HasFirmAnswer(InvitationAnswer(x.Select(p => p.AttendanceStatus).ToList())))
-            .Select(x => x.Key).ToList();
-    }
-
-    public async Task<IReadOnlyList<UnattendedGuestDto>> GetUnattendedGuestsAsync(Guid weddingId, Guid tableId, CancellationToken ct, IReadOnlySet<Guid>? groupScope = null)
-    {
-        var table = await db.Set<PlanningTable>().AsNoTracking()
-            .SingleOrDefaultAsync(t => t.WeddingId == weddingId && t.Id == tableId, ct)
-            ?? throw Missing("TABLE_NOT_FOUND");
-
-        if (groupScope != null && (table.GroupId == null || !groupScope.Contains(table.GroupId.Value)))
-            throw new ApplicationProblemException(ProblemKind.Forbidden, "SEATING_SCOPE_DENIED", "Bạn không có quyền xem thông tin bàn ngoài nhóm được phân công.");
-
-        var assignments = await db.Set<PlanningSeatAssignment>().AsNoTracking()
-            .Where(a => a.TableId == tableId)
-            .OrderBy(a => a.SeatNumber)
-            .ToListAsync(ct);
-
-        var placeIds = assignments.Select(a => a.PlaceId).ToList();
-        var checkedInPlaceIds = await db.Set<PlanningCheckIn>().AsNoTracking()
-            .Where(c => placeIds.Contains(c.PlaceId))
-            .Select(c => c.PlaceId)
-            .ToListAsync(ct);
-
-        var unattendedPlaceIds = placeIds.Except(checkedInPlaceIds).ToList();
-        if (unattendedPlaceIds.Count == 0) return [];
-
-        var rows = await (from p in db.Set<PlanningPlace>().AsNoTracking()
-            where unattendedPlaceIds.Contains(p.Id)
-            join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
-            join person in db.Set<PlanningParticipant>() on p.ParticipantId equals (Guid?)person.Id into people
-            from person in people.DefaultIfEmpty()
-            join grp in db.Set<PlanningGroup>() on g.GroupId equals (Guid?)grp.Id into groups
-            from grp in groups.DefaultIfEmpty()
-            select new
-            {
-                PlaceId = p.Id,
-                GuestId = g.Id,
-                g.RecipientName,
-                PersonName = person == null ? null : person.FullName,
-                g.Side,
-                GroupName = grp == null ? null : grp.Name
-            }).ToListAsync(ct);
-
-        var assignmentByPlace = assignments.ToDictionary(a => a.PlaceId, a => a.SeatNumber);
-        return rows.Select(r => new UnattendedGuestDto(
-            r.PlaceId,
-            r.GuestId,
-            r.RecipientName,
-            r.PersonName,
-            assignmentByPlace.GetValueOrDefault(r.PlaceId),
-            r.Side,
-            r.GroupName)).OrderBy(x => x.SeatNumber).ToList();
-    }
-
-    public async Task<IReadOnlyList<SeatingAuditLogDto>> GetSeatingAuditLogsAsync(Guid weddingId, CancellationToken ct)
-    {
-        var actions = new[] { "SEATING_DAY_OF_CHANGE", "SEATING_EVENT_STARTED", "SEATING_PLAN_LOCKED", "SEATING_PLAN_UNLOCKED", "RELEASE_DECLINED_SEATS" };
-        var logs = await db.AuditLogs.AsNoTracking()
-            .Where(a => a.WeddingId == weddingId && actions.Contains(a.Action))
-            .OrderByDescending(a => a.CreatedAt)
-            .Take(100)
-            .Select(a => new SeatingAuditLogDto(a.Id, a.WeddingId, a.Action, a.ActorUserId, a.CreatedAt, a.Metadata))
-            .ToListAsync(ct);
-        return logs;
-    }
-
-    public async Task<SeatingSummaryDto> GetSummaryAsync(Guid weddingId, CancellationToken ct)
-    {
-        var layout = await GetLayoutAsync(weddingId, ct);
-        var tables = await db.Set<PlanningTable>().AsNoTracking()
-            .Where(t => t.WeddingId == weddingId)
-            .OrderBy(t => t.Number)
-            .ToListAsync(ct);
-
-        var tableIds = tables.Select(t => t.Id).ToList();
-        var assignments = await db.Set<PlanningSeatAssignment>().AsNoTracking()
-            .Where(a => tableIds.Contains(a.TableId))
-            .ToListAsync(ct);
-
-        var placeIds = assignments.Select(a => a.PlaceId).ToList();
-        var checkIns = await db.Set<PlanningCheckIn>().AsNoTracking()
-            .Where(c => placeIds.Contains(c.PlaceId))
-            .Select(c => c.PlaceId)
-            .ToListAsync(ct);
-        var checkedInPlaceSet = checkIns.ToHashSet();
-
-        var seatedByTable = assignments.GroupBy(a => a.TableId).ToDictionary(g => g.Key, g => g.Count());
-        var checkedInByTable = assignments.Where(a => checkedInPlaceSet.Contains(a.PlaceId))
-            .GroupBy(a => a.TableId).ToDictionary(g => g.Key, g => g.Count());
-
-        var summaryTables = tables.Select(t => new SeatingSummaryTableDto(
-            t.Id,
-            t.Name,
-            t.Number,
-            t.Side,
-            t.Row,
-            t.Column,
-            t.IsVip,
-            t.Capacity,
-            t.ExtraSeats,
-            seatedByTable.GetValueOrDefault(t.Id, 0),
-            checkedInByTable.GetValueOrDefault(t.Id, 0),
-            t.Half)).ToList();
-
-        var totalCapacity = tables.Sum(t => t.Capacity + t.ExtraSeats);
-        var totalSeated = assignments.Count;
-        var totalCheckedIn = checkedInPlaceSet.Count;
-        var placedTables = tables.Count(t => t.Row.HasValue && t.Column.HasValue);
-
-        return new SeatingSummaryDto(weddingId, layout, tables.Count, placedTables, totalCapacity, totalSeated, totalCheckedIn, summaryTables);
+            select new PlanningAssignmentDto(a.PlaceId, a.TableId, a.SeatNumber)).ToListAsync(ct);
+        return new(weddingId, version, tables, guests, places, assignments);
     }
 }
-

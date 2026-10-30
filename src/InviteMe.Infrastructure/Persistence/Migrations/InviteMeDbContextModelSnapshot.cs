@@ -2486,12 +2486,6 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("PlaceId")
                         .HasColumnType("uuid");
 
-                    b.Property<int?>("PlannedSeatNumber")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid?>("PlannedTableId")
-                        .HasColumnType("uuid");
-
                     b.Property<int>("SeatNumber")
                         .HasColumnType("integer");
 
@@ -2514,55 +2508,6 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("WeddingId")
                         .HasColumnType("uuid");
 
-                    b.Property<int>("BrideColumns")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(3);
-
-                    b.Property<int>("BrideRows")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(6);
-
-                    b.Property<DateTimeOffset?>("EventStartedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("EventStartedBy")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("GroomColumns")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(3);
-
-                    b.Property<int>("GroomRows")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(6);
-
-                    b.Property<bool>("IsEventStarted")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false);
-
-                    b.Property<bool>("IsLocked")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false);
-
-                    b.Property<DateTimeOffset?>("LockedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("LockedBy")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Numbering")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)")
-                        .HasDefaultValue("BY_ROW");
-
                     b.Property<DateTimeOffset?>("PublishedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -2575,14 +2520,7 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.HasKey("WeddingId");
 
-                    b.ToTable("planning_seating_plans", "inviteme", t =>
-                        {
-                            t.HasCheckConstraint("ck_planning_layout_bride", "\"BrideRows\" BETWEEN 1 AND 20 AND \"BrideColumns\" BETWEEN 1 AND 6");
-
-                            t.HasCheckConstraint("ck_planning_layout_groom", "\"GroomRows\" BETWEEN 1 AND 20 AND \"GroomColumns\" BETWEEN 1 AND 6");
-
-                            t.HasCheckConstraint("ck_planning_layout_numbering", "\"Numbering\" IN ('BY_ROW', 'ODD_EVEN')");
-                        });
+                    b.ToTable("planning_seating_plans", "inviteme");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Seating.PlanningTable", b =>
@@ -2594,40 +2532,13 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<int>("Capacity")
                         .HasColumnType("integer");
 
-                    b.Property<int?>("Column")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("ExtraSeats")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
                     b.Property<Guid?>("GroupId")
                         .HasColumnType("uuid");
-
-                    b.Property<string>("Half")
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<bool>("IsVip")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false);
 
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
-
-                    b.Property<int>("Number")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("Row")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Side")
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
 
                     b.Property<Guid>("WeddingId")
                         .HasColumnType("uuid");
@@ -2638,24 +2549,9 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("WeddingId", "GroupId");
 
-                    b.HasIndex("WeddingId", "Number")
-                        .IsUnique();
-
-                    b.HasIndex("WeddingId", "Half", "Row", "Column")
-                        .IsUnique()
-                        .HasFilter("\"Row\" IS NOT NULL");
-
                     b.ToTable("planning_tables", "inviteme", t =>
                         {
                             t.HasCheckConstraint("ck_planning_table_capacity", "\"Capacity\" BETWEEN 1 AND 20");
-
-                            t.HasCheckConstraint("ck_planning_table_coordinates", "(\"Half\" IS NULL AND \"Row\" IS NULL AND \"Column\" IS NULL) OR (\"Half\" IS NOT NULL AND \"Row\" IS NOT NULL AND \"Column\" IS NOT NULL)");
-
-                            t.HasCheckConstraint("ck_planning_table_extra_seats", "\"ExtraSeats\" BETWEEN 0 AND 2");
-
-                            t.HasCheckConstraint("ck_planning_table_half", "\"Half\" IS NULL OR \"Half\" IN ('GROOM', 'BRIDE')");
-
-                            t.HasCheckConstraint("ck_planning_table_side", "\"Side\" IS NULL OR \"Side\" IN ('GROOM', 'BRIDE', 'MUTUAL')");
                         });
                 });
 
@@ -4214,11 +4110,6 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasForeignKey("PlaceId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.HasOne("InviteMe.Domain.Seating.PlanningTable", null)
-                        .WithMany()
-                        .HasForeignKey("PlannedTableId")
-                        .OnDelete(DeleteBehavior.SetNull);
 
                     b.HasOne("InviteMe.Domain.Seating.PlanningTable", null)
                         .WithMany()

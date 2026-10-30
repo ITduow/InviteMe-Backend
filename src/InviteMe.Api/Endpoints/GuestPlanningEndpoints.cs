@@ -21,9 +21,6 @@ internal static class GuestPlanningEndpoints
         }).WithName("CreatePlanningGuest")
             .Produces<PlanningGuestDto>(201).Produces<PlanningGuestDto>(200)
             .ProducesValidationProblem().ProducesProblem(403).ProducesProblem(404).ProducesProblem(409);
-        // Dry run before importing: errors (block) and warnings per spreadsheet row; nothing is saved.
-        g.MapPost("/imports/check", (Guid weddingId, PlanningImport input, GuestPlanningHandler handler, CancellationToken ct) =>
-            handler.CheckImportAsync(weddingId, input, ct)).Produces<PlanningImportCheck>();
         g.MapPost("/imports", async (Guid weddingId, PlanningImport input, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
             GuestPlanningHandler handler, CancellationToken ct) =>
         {
@@ -61,37 +58,9 @@ internal static class GuestPlanningEndpoints
             Results.Ok(await handler.RestoreAsync(weddingId, guestId, expectedVersion, ct)))
             .WithName("RestorePlanningGuest")
             .Produces<PlanningGuestDto>().ProducesValidationProblem().ProducesProblem(403).ProducesProblem(404).ProducesProblem(409);
-
-
-
-
         g.MapGet("/seating-plan", (Guid weddingId, PlanningSeatingHandler handler, CancellationToken ct) => handler.GetAsync(weddingId, ct));
         g.MapPatch("/seating-plan", (Guid weddingId, ChangePlanningSeating input, PlanningSeatingHandler handler, CancellationToken ct) => handler.ChangeAsync(weddingId, input, ct));
         g.MapPost("/seating-suggestions", (Guid weddingId, SuggestPlanningSeating input, PlanningSeatingHandler handler, CancellationToken ct) => handler.SuggestAsync(weddingId, input, ct));
-        g.MapPost("/seating-suggestions/apply", (Guid weddingId, ApplySeatingSuggestionRequest input, PlanningSeatingHandler handler, CancellationToken ct) =>
-            handler.ChangeAsync(weddingId, new ChangePlanningSeating(input.ExpectedVersion, "APPLY_SUGGESTION", Strategy: input.Strategy, Mode: input.Mode, SourceFingerprint: input.SourceFingerprint, ConfirmReplace: input.ConfirmReplace, PlaceTables: input.PlaceTables), ct))
-            .WithName("ApplySeatingSuggestion").Produces<PlanningSeatingDto>().ProducesProblem(403).ProducesProblem(409).ProducesProblem(422);
-        g.MapGet("/seating/audit-logs", (Guid weddingId, PlanningSeatingHandler handler, CancellationToken ct) =>
-            handler.GetSeatingAuditLogsAsync(weddingId, ct))
-            .WithName("GetSeatingAuditLogs").Produces<IReadOnlyList<SeatingAuditLogDto>>().ProducesProblem(403);
-        g.MapGet("/seating/tables/{tableId:guid}/unattended-guests", (Guid weddingId, Guid tableId, PlanningSeatingHandler handler, CancellationToken ct) =>
-            handler.GetUnattendedGuestsAsync(weddingId, tableId, ct))
-            .WithName("GetUnattendedGuests").Produces<IReadOnlyList<UnattendedGuestDto>>().ProducesProblem(403).ProducesProblem(404);
-        g.MapGet("/seating-summary", (Guid weddingId, PlanningSeatingHandler handler, CancellationToken ct) =>
-            handler.GetSummaryAsync(weddingId, ct))
-            .WithName("GetSeatingSummary").Produces<SeatingSummaryDto>().ProducesProblem(403);
-        g.MapGet("/table-estimate", (Guid weddingId, int? capacity, int? reservePercent, PlanningSeatingHandler handler, CancellationToken ct) =>
-            handler.GetTableEstimateAsync(weddingId, capacity ?? 10, reservePercent ?? 0, ct))
-            .WithName("GetTableEstimate").WithSummary("Tables to book from the guest count (60 people: 6 tables of 10, 5 of 12).")
-            .Produces<TableEstimateDto>().ProducesProblem(400).ProducesProblem(403);
-        // Direct alias routes: /api/weddings/{weddingId}/seating-layout
-        var direct = endpoints.MapGroup("/api/weddings/{weddingId:guid}").RequireAuthorization().WithTags("Guest Planning v2");
-        direct.MapGet("/seating-layout", (Guid weddingId, PlanningSeatingHandler handler, CancellationToken ct) => handler.GetLayoutAsync(weddingId, ct))
-            .WithName("GetSeatingLayout").Produces<SeatingLayoutDto>().ProducesProblem(403);
-
-        direct.MapPut("/seating-layout", (Guid weddingId, UpdateSeatingLayout input, PlanningSeatingHandler handler, CancellationToken ct) => handler.UpdateLayoutAsync(weddingId, input, ct))
-            .WithName("UpdateSeatingLayout").Produces<SeatingLayoutDto>().ProducesProblem(403).ProducesProblem(409).ProducesProblem(422);
-
         return endpoints;
     }
 }
