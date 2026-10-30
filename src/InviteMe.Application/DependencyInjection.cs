@@ -25,6 +25,7 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Features.Guests.Planning.GuestPlanningHandler>();
         services.AddScoped<InviteMe.Application.Features.Invitations.InvitationWordingHandler>();
         services.AddScoped<InviteMe.Application.Features.Invitations.Messaging.InvitationMessagingHandler>();
+        services.AddScoped<InviteMe.Application.Features.Invitations.Messaging.TextbeeWebhookHandler>();
         services.AddScoped<InviteMe.Application.Features.Invitations.InvitationDesignHandler>();
         services.AddScoped<InviteMe.Application.Features.Weddings.Website.WeddingWebsiteHandler>();
         services.AddScoped<InviteMe.Application.Features.Weddings.Website.StoryWishHandler>();

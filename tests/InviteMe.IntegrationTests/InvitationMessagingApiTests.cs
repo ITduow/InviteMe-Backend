@@ -66,12 +66,10 @@ public sealed class InvitationMessagingApiTests
         var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "message-test");
         var coverUrl = $"/media/wedding-covers/{wedding.Id:N}/{new string('a', 48)}.jpg";
         wedding.UpdateSetup("Minh & Lan", wedding.Slug, wedding.MaxCapacity!.Value, coverUrl);
-        var venue = Venue.Create(wedding.Id);
-        venue.Configure("Nhà hàng Hoa Sen", "12 Đường Hoa, TP. Hồ Chí Minh");
-        db.Venues.Add(venue);
-        db.WeddingEvents.Add(WeddingEvent.CreateMain(wedding.Id,
-            new DateTimeOffset(2026, 11, 1, 10, 0, 0, TimeSpan.FromHours(7)), venue.Id));
-        db.WeddingSettings.Add(WeddingSettings.Create(wedding.Id));
+        var settings = WeddingSettings.Create(wedding.Id);
+        settings.SetMainEvent(new DateTimeOffset(2026, 11, 1, 10, 0, 0, TimeSpan.FromHours(7)),
+            "Nhà hàng Hoa Sen", "12 Đường Hoa, TP. Hồ Chí Minh");
+        db.WeddingSettings.Add(settings);
         await db.SaveChangesAsync();
         var guestsPath = $"/api/weddings/{wedding.Id}/guest-planning";
         using var importRequest = new HttpRequestMessage(HttpMethod.Post, guestsPath + "/imports")

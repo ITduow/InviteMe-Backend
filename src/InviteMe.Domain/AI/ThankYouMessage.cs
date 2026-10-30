@@ -90,6 +90,10 @@ public sealed class ThankYouSendJob
     public DateTimeOffset? LeaseExpiresAt { get; private set; }
     public DateTimeOffset? SentAt { get; private set; }
     public string? ProviderMessageId { get; private set; }
+    public string? ProviderName { get; private set; }
+    public DateTimeOffset? ProviderAcceptedAt { get; private set; }
+    public DateTimeOffset? ProviderStatusUpdatedAt { get; private set; }
+    public DateTimeOffset? DeliveredAt { get; private set; }
     public string? ErrorCode { get; private set; }
 
     public static ThankYouSendJob Create(Guid batchId, Guid weddingId, Guid messageId, Guid guestId, string channel,
@@ -113,10 +117,64 @@ public sealed class ThankYouSendJob
         return true;
     }
 
+    public void SetProviderNameForClaim(string providerName)
+    {
+        if (Status != Sending || string.IsNullOrWhiteSpace(providerName))
+            throw new InvalidOperationException("Provider can only be assigned to a claimed send job.");
+        ProviderName = providerName.Trim().ToUpperInvariant();
+    }
+
     public bool MarkSent(Guid leaseId, string? providerMessageId, DateTimeOffset now)
     {
         if (Status != Sending || LeaseId != leaseId) return false;
-        Status = Sent; SentAt = now; ProviderMessageId = providerMessageId; LeaseId = null; LeaseExpiresAt = null; ErrorCode = null;
+        Status = Sent; SentAt = now; ProviderMessageId = providerMessageId; ProviderName = "SMTP";
+        ProviderStatusUpdatedAt = now; LeaseId = null; LeaseExpiresAt = null; ErrorCode = null;
+        return true;
+    }
+
+    public bool MarkAccepted(Guid leaseId, string providerName, string providerMessageId, DateTimeOffset now)
+    {
+        if (Status != Sending || LeaseId != leaseId) return false;
+        Status = "ACCEPTED"; ProviderName = providerName.ToUpperInvariant(); ProviderMessageId = providerMessageId;
+        ProviderAcceptedAt = now; ProviderStatusUpdatedAt = null; LeaseId = null; LeaseExpiresAt = null; ErrorCode = null;
+        return true;
+    }
+
+    public bool MarkSimulated(Guid leaseId, string providerMessageId, DateTimeOffset now)
+    {
+        if (Status != Sending || LeaseId != leaseId) return false;
+        Status = "SIMULATED"; ProviderName = "MOCK"; ProviderMessageId = providerMessageId;
+        ProviderStatusUpdatedAt = null; LeaseId = null; LeaseExpiresAt = null; ErrorCode = null;
+        return true;
+    }
+
+    public bool MarkUnknown(Guid leaseId, string errorCode, DateTimeOffset now)
+    {
+        if (Status != Sending || LeaseId != leaseId) return false;
+        Status = "UNKNOWN"; ErrorCode = errorCode; ProviderStatusUpdatedAt = null;
+        LeaseId = null; LeaseExpiresAt = null;
+        return true;
+    }
+
+    public bool ApplyProviderStatus(string providerStatus, string? errorCode, DateTimeOffset? providerOccurredAt,
+        DateTimeOffset? sentAt, DateTimeOffset? deliveredAt, DateTimeOffset now)
+    {
+        if (Channel != "SMS" || ProviderName != "TEXTBEE" || ProviderMessageId is null) return false;
+        var next = providerStatus.ToUpperInvariant();
+        if (providerOccurredAt is { } occurred && ProviderStatusUpdatedAt is { } previous && occurred < previous) return false;
+        var allowed = Status switch
+        {
+            "ACCEPTED" => next is "SENT" or "DELIVERED" or "FAILED" or "UNKNOWN",
+            "UNKNOWN" => next is "SENT" or "DELIVERED" or "FAILED",
+            "SENT" => next is "DELIVERED" or "FAILED",
+            _ => false
+        };
+        if (!allowed) return false;
+        Status = next;
+        ProviderStatusUpdatedAt = next == "UNKNOWN" ? providerOccurredAt : providerOccurredAt ?? now;
+        if (next == "SENT") SentAt = sentAt ?? providerOccurredAt ?? now;
+        if (next == "DELIVERED") { SentAt ??= sentAt ?? providerOccurredAt ?? now; DeliveredAt = deliveredAt ?? providerOccurredAt ?? now; }
+        ErrorCode = next == "FAILED" ? errorCode ?? "TEXTBEE_SEND_FAILED" : null;
         return true;
     }
 
@@ -136,7 +194,8 @@ public sealed class ThankYouSendJob
     public bool Retry(DateTimeOffset now)
     {
         if (Status != Failed) return false;
-        Status = Pending; NextAttemptAt = now; ErrorCode = null; AttemptCount = 0; return true;
+        Status = Pending; NextAttemptAt = now; ErrorCode = null; AttemptCount = 0; ProviderMessageId = null;
+        ProviderAcceptedAt = null; ProviderStatusUpdatedAt = null; DeliveredAt = null; SentAt = null; return true;
     }
 }
 

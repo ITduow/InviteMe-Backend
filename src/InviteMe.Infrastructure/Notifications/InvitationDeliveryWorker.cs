@@ -30,22 +30,30 @@ public sealed class InvitationDeliveryWorker(
         var store = scope.ServiceProvider.GetRequiredService<IInvitationMessagingStore>();
         var sender = scope.ServiceProvider.GetRequiredService<IInvitationChannelSender>();
         var leaseId = Guid.NewGuid();
-        var messages = await store.ClaimDueAsync(leaseId, 10, ct);
+        var smsAvailable = sender.IsAvailable("SMS");
+        var messages = await store.ClaimDueAsync(leaseId, 10, ct, smsAvailable, sender.ProviderNameFor("SMS"));
         foreach (var message in messages)
         {
             try
             {
                 var receipt = await sender.SendAsync(message, ct);
-                await store.MarkSentAsync(message.JobId, leaseId, receipt.ProviderMessageId, ct);
+                if (receipt.Status == "ACCEPTED")
+                    await store.MarkAcceptedAsync(message.JobId, leaseId, receipt.ProviderName, receipt.ProviderMessageId!, ct);
+                else if (receipt.Status == "SIMULATED")
+                    await store.MarkSimulatedAsync(message.JobId, leaseId, receipt.ProviderMessageId ?? "mock", ct);
+                else
+                    await store.MarkSentAsync(message.JobId, leaseId, receipt.ProviderMessageId, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (InvitationDeliveryException exception)
             {
-                await store.MarkFailedAsync(message.JobId, leaseId, exception.Code, exception.Transient, ct);
+                if (exception.OutcomeUnknown) await store.MarkUnknownAsync(message.JobId, leaseId, exception.Code, ct);
+                else await store.MarkFailedAsync(message.JobId, leaseId, exception.Code, exception.Transient, ct);
             }
             catch (Exception)
             {
-                await store.MarkFailedAsync(message.JobId, leaseId, "DELIVERY_UNEXPECTED_ERROR", retry: true, ct);
+                if (message.Channel == "SMS") await store.MarkUnknownAsync(message.JobId, leaseId, "SMS_SEND_OUTCOME_UNKNOWN", ct);
+                else await store.MarkFailedAsync(message.JobId, leaseId, "DELIVERY_UNEXPECTED_ERROR", retry: true, ct);
             }
         }
         return messages.Count;

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.DataProtection;
 using InviteMe.Infrastructure.Notifications;
 using InviteMe.Infrastructure.Media;
@@ -15,7 +16,7 @@ namespace InviteMe.Infrastructure;
 
 public static class DependencyInjection
 {
-    public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration, IHostEnvironment? hostEnvironment = null)
     {
         services.AddOptions<DatabaseOptions>().BindConfiguration("ConnectionStrings")
             .Validate(x => !string.IsNullOrWhiteSpace(x.PostgreSQL), "ConnectionStrings:PostgreSQL must be configured.")
@@ -50,18 +51,35 @@ public static class DependencyInjection
         if (configuration.GetValue("AccountConfirmationEmail:WorkerEnabled", true))
             services.AddHostedService<AccountConfirmationEmailWorker>();
         services.AddScoped<InviteMe.Infrastructure.Notifications.IInvitationChannelProvider, InviteMe.Infrastructure.Notifications.SmtpInvitationChannelProvider>();
-        services.AddOptions<InviteMe.Infrastructure.Notifications.SpeedSmsOptions>()
-            .BindConfiguration(InviteMe.Infrastructure.Notifications.SpeedSmsOptions.SectionName);
-        services.AddHttpClient<InviteMe.Infrastructure.Notifications.SpeedSmsChannelProvider>()
+        services.AddOptions<InviteMe.Infrastructure.Notifications.InvitationSmsOptions>()
+            .BindConfiguration(InviteMe.Infrastructure.Notifications.InvitationSmsOptions.SectionName)
+            .Validate(x => IsValidSmsSelection(x.Provider, x.Enabled, hostEnvironment?.IsProduction() ??
+                    string.Equals(Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"), "Production", StringComparison.OrdinalIgnoreCase)),
+                "Production SMS must use Textbee or be disabled; Mock is development/demo only.")
+            .ValidateOnStart();
+        services.AddOptions<InviteMe.Infrastructure.Notifications.TextbeeOptions>()
+            .BindConfiguration(InviteMe.Infrastructure.Notifications.TextbeeOptions.SectionName)
+            .Validate(x => !configuration.GetValue("InvitationMessaging:Sms:Enabled", true) ||
+                !string.Equals(configuration["InvitationMessaging:Sms:Provider"] ?? "Mock", "Textbee", StringComparison.OrdinalIgnoreCase) || x.IsConfigured,
+                "Textbee requires HTTPS BaseUrl, API key, device ID, webhook secret (20+ chars), and a valid timeout.")
+            .ValidateOnStart();
+        services.AddHttpClient<InviteMe.Infrastructure.Notifications.TextbeeSmsChannelProvider>()
+            .ConfigureHttpClient((sp, client) => client.Timeout = TimeSpan.FromSeconds(
+                sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<InviteMe.Infrastructure.Notifications.TextbeeOptions>>().Value.TimeoutSeconds))
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddScoped<InviteMe.Infrastructure.Notifications.IInvitationChannelProvider>(sp =>
-            sp.GetRequiredService<InviteMe.Infrastructure.Notifications.SpeedSmsChannelProvider>());
+            sp.GetRequiredService<InviteMe.Infrastructure.Notifications.TextbeeSmsChannelProvider>());
+        services.AddScoped<InviteMe.Infrastructure.Notifications.IInvitationChannelProvider, InviteMe.Infrastructure.Notifications.MockSmsChannelProvider>();
         services.AddScoped<InviteMe.Application.Features.Invitations.Messaging.IInvitationChannelSender,
             InviteMe.Infrastructure.Notifications.InvitationChannelSender>();
         if (configuration.GetValue("InvitationMessaging:WorkerEnabled", true))
             services.AddHostedService<InviteMe.Infrastructure.Notifications.InvitationDeliveryWorker>();
         services.AddScoped<InviteMe.Application.Features.AI.ThankYouMessages.IThankYouMessageStore,
             InviteMe.Infrastructure.Persistence.Adapters.ThankYouMessageStore>();
+        services.AddScoped<InviteMe.Application.Features.Invitations.Messaging.ITextbeeDeliveryStore,
+            InviteMe.Infrastructure.Notifications.TextbeeDeliveryStore>();
+        services.AddScoped<InviteMe.Application.Features.Invitations.Messaging.ITextbeeWebhookSignatureVerifier,
+            InviteMe.Infrastructure.Notifications.TextbeeWebhookSignatureVerifier>();
         if (configuration.GetValue("ThankYouMessages:WorkerEnabled", true))
             services.AddHostedService<InviteMe.Infrastructure.Notifications.ThankYouDeliveryWorker>();
         services.AddOptions<InviteMe.Infrastructure.Authentication.GoogleAuthOptions>().BindConfiguration("Authentication:Google");
@@ -147,6 +165,13 @@ public static class DependencyInjection
         !string.IsNullOrWhiteSpace(email) && email.Length <= 255 &&
         System.Net.Mail.MailAddress.TryCreate(email.Trim(), out var parsed) &&
         string.Equals(parsed.Address, email.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsValidSmsSelection(string provider, bool enabled, bool production)
+    {
+        if (!string.Equals(provider, "Mock", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(provider, "Textbee", StringComparison.OrdinalIgnoreCase)) return false;
+        return !enabled || !production || string.Equals(provider, "Textbee", StringComparison.OrdinalIgnoreCase);
+    }
 }
 
 public sealed class PasswordResetTokenProviderOptions : DataProtectionTokenProviderOptions
@@ -156,6 +181,7 @@ public sealed class PasswordResetTokenProviderOptions : DataProtectionTokenProvi
         Name = "PasswordResetDataProtectorTokenProvider";
         TokenLifespan = TimeSpan.FromMinutes(15);
     }
+
 }
 
 public sealed class PasswordResetTokenProvider<TUser>(

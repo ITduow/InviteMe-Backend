@@ -58,7 +58,7 @@ public sealed class ThankYouMessageConfiguration : IEntityTypeConfiguration<Than
     {
         b.ToTable("thank_you_send_jobs", t =>
         {
-            t.HasCheckConstraint("ck_thank_you_send_jobs_status", "status IN ('PENDING','SENDING','SENT','FAILED')");
+            t.HasCheckConstraint("ck_thank_you_send_jobs_status", "status IN ('PENDING','SENDING','ACCEPTED','SENT','DELIVERED','FAILED','UNKNOWN','REVIEW_REQUIRED','SIMULATED')");
             t.HasCheckConstraint("ck_thank_you_send_jobs_source", "(message_id IS NOT NULL AND template_id IS NULL) OR (message_id IS NULL AND template_id IS NOT NULL)");
             t.HasCheckConstraint("ck_thank_you_send_jobs_channel", "channel IN ('EMAIL','SMS')");
             t.HasCheckConstraint("ck_thank_you_send_jobs_attempt", "attempt_count >= 0");
@@ -75,8 +75,14 @@ public sealed class ThankYouMessageConfiguration : IEntityTypeConfiguration<Than
         b.Property(x => x.NextAttemptAt).HasColumnName("next_attempt_at"); b.Property(x => x.LeaseId).HasColumnName("lease_id");
         b.Property(x => x.LeaseExpiresAt).HasColumnName("lease_expires_at"); b.Property(x => x.SentAt).HasColumnName("sent_at");
         b.Property(x => x.ProviderMessageId).HasColumnName("provider_message_id").HasMaxLength(200);
+        b.Property(x => x.ProviderName).HasColumnName("provider_name").HasMaxLength(20);
+        b.Property(x => x.ProviderAcceptedAt).HasColumnName("provider_accepted_at");
+        b.Property(x => x.ProviderStatusUpdatedAt).HasColumnName("provider_status_updated_at");
+        b.Property(x => x.DeliveredAt).HasColumnName("delivered_at");
         b.Property(x => x.ErrorCode).HasColumnName("error_code").HasMaxLength(100);
         b.HasIndex(x => new { x.Status, x.NextAttemptAt, x.Id }).HasDatabaseName("ix_thank_you_send_jobs_due");
+        b.HasIndex(x => x.ProviderMessageId).IsUnique().HasFilter("provider_name = 'TEXTBEE' AND provider_message_id IS NOT NULL")
+            .HasDatabaseName("uq_thank_you_send_jobs_textbee_batch");
         b.HasIndex(x => new { x.BatchId, x.Id }).HasDatabaseName("ix_thank_you_send_jobs_batch");
         b.HasIndex(x => x.TemplateId).HasDatabaseName("ix_thank_you_send_jobs_template");
         b.HasOne<ThankYouSendBatch>().WithMany().HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_thank_you_send_jobs_batch");

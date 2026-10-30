@@ -47,9 +47,11 @@ public sealed class WeddingSetupApiTests(ApiFactory apiFactory) : IClassFixture<
         Assert.Equal("https://example.com/cover.jpg", first.CoverImageUrl);
         Assert.Equal(1, await db.Weddings.CountAsync(x => x.Id == first.Id));
         Assert.Equal(ownerId, (await db.Weddings.SingleAsync(x => x.Id == first.Id)).OwnerUserId);
-        Assert.Equal(1, await db.WeddingEvents.CountAsync(x => x.WeddingId == first.Id && x.IsMain));
-        Assert.Equal(1, await db.Venues.CountAsync(x => x.WeddingId == first.Id));
-        Assert.Equal(1, await db.WeddingSettings.CountAsync(x => x.WeddingId == first.Id));
+        var storedSetup = await db.WeddingSettings.SingleAsync(x => x.WeddingId == first.Id);
+        Assert.Equal(first.EventDateTime, storedSetup.MainEventAt);
+        Assert.Equal("White Palace", storedSetup.VenueName);
+        Assert.Equal("TP. Hồ Chí Minh", storedSetup.VenueAddress);
+        Assert.Equal("[]", storedSetup.MediaCatalogJson);
         Assert.Contains(await db.AuditLogs.Where(x => x.WeddingId == first.Id).Select(x => x.Action).ToListAsync(), x => x == "WEDDING_CREATED");
         Assert.Equal(HttpStatusCode.OK, (await owner.GetAsync($"/api/weddings/{first.Id}/co-hosts")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await owner.GetAsync($"/api/weddings/{first.Id}/audit-logs")).StatusCode);

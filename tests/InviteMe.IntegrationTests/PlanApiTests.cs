@@ -71,7 +71,10 @@ public sealed class PlanApiTests
         Assert.False((await stranger.GetFromJsonAsync<WeddingSlugAvailability>("/api/weddings/check-slug?slug=plan-wedding"))!.Available);
         var renamed = await owner.GetFromJsonAsync<WeddingSetupDto>($"/api/weddings/{w}");
         Assert.Equal("plan-wedding", (await Read<WeddingSetupDto>(await owner.PutAsJsonAsync($"/api/weddings/{w}", Update(renamed!, "plan-wedding")), HttpStatusCode.OK)).Slug);
-        Assert.Equal(new[] { "plan-wedding-new" }, await db.Set<Domain.Weddings.WeddingSlugHistory>().Where(x => x.WeddingId == w).Select(x => x.Slug).ToArrayAsync());
+        var previousSlugs = System.Text.Json.JsonDocument.Parse(
+            (await db.WeddingSettings.SingleAsync(x => x.WeddingId == w)).PreviousSlugsJson).RootElement;
+        Assert.Equal(new[] { "plan-wedding-new" }, previousSlugs.EnumerateArray()
+            .Select(x => x.GetProperty("slug").GetString()).ToArray());
         Assert.Equal(1, await db.Set<Subscription>().CountAsync(x => x.WeddingId == w && x.Status == Subscription.Active));
     });
 

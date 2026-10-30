@@ -11,6 +11,7 @@ namespace InviteMe.IntegrationTests;
 public sealed class SchemaV2MigrationTests
 {
     private const string LegacyMigration = "20260924151913_AddIdentitySupport";
+    private const string PreCleanupMigration = "20261029123550_AddGiftBankHubLink";
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task UpgradePreservesLegacyRecordsAndEnforcesV2Rules() => InDatabase(async db =>
@@ -18,26 +19,47 @@ public sealed class SchemaV2MigrationTests
         await db.GetService<IMigrator>().MigrateAsync(LegacyMigration);
         await db.Database.ExecuteSqlRawAsync(LegacyData);
         await db.Database.MigrateAsync();
-        Assert.Equal("IN_REVIEW", await Scalar<string>(db, "SELECT status FROM inviteme.invitations"));
-        Assert.Equal(2, await Scalar<int>(db, "SELECT confirmed_party_size FROM inviteme.rsvps"));
-        Assert.Equal("ARCHIVED", await Scalar<string>(db, "SELECT record_status FROM inviteme.guests"));
-        Assert.Equal("Head table", await Scalar<string>(db, "SELECT table_number FROM inviteme.tables"));
         Assert.Equal("WEDDING_GUEST", await Scalar<string>(db, "SELECT actor_type FROM inviteme.audit_logs"));
-        Assert.True(await Scalar<bool>(db, "SELECT gift.guest_id = p.guest_id AND gift.amount = 500000 FROM inviteme.gifts gift JOIN inviteme.gift_participant_legacy old ON old.gift_id = gift.id JOIN inviteme.guest_participants p ON p.id = old.participant_id"));
-        Assert.Equal(1, await Scalar<int>(db, "SELECT old_confirmed_party_size FROM inviteme.rsvp_history"));
-
-        await db.Database.ExecuteSqlRawAsync("UPDATE inviteme.tables SET status = 'ACTIVE'");
-        var activated = await Scalar<DateTime>(db, "SELECT activated_at FROM inviteme.tables");
-        // Only a BACKUP-kind table may return to BACKUP status (ck_tables_kind_status).
-        await db.Database.ExecuteSqlRawAsync("UPDATE inviteme.tables SET table_kind = 'BACKUP'; UPDATE inviteme.tables SET status = 'BACKUP'; UPDATE inviteme.tables SET status = 'ACTIVE'");
-        Assert.Equal(activated, await Scalar<DateTime>(db, "SELECT activated_at FROM inviteme.tables"));
-        var error = await Assert.ThrowsAsync<PostgresException>(() => db.Database.ExecuteSqlRawAsync("UPDATE inviteme.rsvps SET status = 'DECLINED'"));
-        Assert.Equal("23514", error.SqlState);
-        await db.Database.ExecuteSqlRawAsync("UPDATE inviteme.rsvps SET status = 'DECLINED', confirmed_party_size = 0; INSERT INTO inviteme.gifts(wedding_id,guest_id,amount,method) SELECT wedding_id,id,100000,'CASH' FROM inviteme.guests");
-        Assert.Equal(2L, await Scalar<long>(db, "SELECT count(*) FROM inviteme.gifts"));
-        error = await Assert.ThrowsAsync<PostgresException>(() => db.Database.ExecuteSqlRawAsync("INSERT INTO inviteme.gifts(wedding_id,method) SELECT id,'CASH' FROM inviteme.weddings"));
-        Assert.Equal("23514", error.SqlState);
+        Assert.Equal(Guid.Parse("00000000-0000-0000-0000-000000000003"),
+            await Scalar<Guid>(db, "SELECT actor_guest_id FROM inviteme.audit_logs"));
+        Assert.Equal(1L, await Scalar<long>(db, "SELECT count(*) FROM inviteme.wedding_settings WHERE wedding_id='00000000-0000-0000-0000-000000000002'"));
+        Assert.Equal(0L, await Scalar<long>(db, """
+            SELECT count(*) FROM information_schema.tables WHERE table_schema='inviteme' AND table_name IN
+            ('guests','guest_groups','guest_participants','invitations','invitation_deliveries','rsvps','rsvp_history',
+             'waitlist_entries','tables','seats','seating_assignments','seating_change_logs','table_status_history',
+             'check_ins','walk_ins','gifts','gift_messages','ai_generations','love_stories','template_sections',
+             'wedding_events','venues','wedding_media','wedding_slug_history')
+            """));
         Assert.Empty(await db.Database.GetPendingMigrationsAsync());
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task CleanupFoldsWeddingEventVenueMediaAndSlugDataIntoSettings() => InDatabase(async db =>
+    {
+        await db.GetService<IMigrator>().MigrateAsync(PreCleanupMigration);
+        var weddingId = Guid.Parse("10000000-0000-0000-0000-000000000002");
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO inviteme.users(id,email,full_name) VALUES ('10000000-0000-0000-0000-000000000001','fold@example.test','Fold Owner');
+            INSERT INTO inviteme.weddings(id,owner_user_id,title,slug) VALUES ({weddingId},'10000000-0000-0000-0000-000000000001','Fold test','fold-test');
+            INSERT INTO inviteme.wedding_settings(wedding_id) VALUES ({weddingId});
+            INSERT INTO inviteme.venues(id,wedding_id,name,address,created_at,updated_at)
+                VALUES ('10000000-0000-0000-0000-000000000003',{weddingId},'Test Venue','Test Address',NOW(),NOW());
+            INSERT INTO inviteme.wedding_events(id,wedding_id,venue_id,name,start_at,is_main,created_at,updated_at)
+                VALUES ('10000000-0000-0000-0000-000000000004',{weddingId},'10000000-0000-0000-0000-000000000003','Main', '2026-12-20T11:30:00Z', TRUE,NOW(),NOW());
+            INSERT INTO inviteme.wedding_media(id,wedding_id,media_type,media_url,storage_key,created_at)
+                VALUES ('10000000-0000-0000-0000-000000000005',{weddingId},'IMAGE','https://cdn.example.test/photo.jpg','photo.jpg',NOW());
+            INSERT INTO inviteme.wedding_slug_history(id,wedding_id,slug,released_at)
+                VALUES ('10000000-0000-0000-0000-000000000006',{weddingId},'fold-old',NOW());
+            """);
+        await db.Database.MigrateAsync();
+
+        Assert.Equal(new DateTime(2026, 12, 20, 11, 30, 0, DateTimeKind.Utc),
+            await Scalar<DateTime>(db, $"SELECT main_event_at FROM inviteme.wedding_settings WHERE wedding_id='{weddingId}'"));
+        Assert.Equal("Test Venue", await Scalar<string>(db, $"SELECT venue_name FROM inviteme.wedding_settings WHERE wedding_id='{weddingId}'"));
+        Assert.Equal("Test Address", await Scalar<string>(db, $"SELECT venue_address FROM inviteme.wedding_settings WHERE wedding_id='{weddingId}'"));
+        Assert.Equal(1, await Scalar<int>(db, $"SELECT jsonb_array_length(media_catalog_json) FROM inviteme.wedding_settings WHERE wedding_id='{weddingId}'"));
+        Assert.Equal(1, await Scalar<int>(db, $"SELECT jsonb_array_length(previous_slugs_json) FROM inviteme.wedding_settings WHERE wedding_id='{weddingId}'"));
+        Assert.Equal(1, await Scalar<int>(db, $"SELECT jsonb_array_length(settings_json->'_retiredWeddingSetup'->'events') FROM inviteme.wedding_settings WHERE wedding_id='{weddingId}'"));
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]

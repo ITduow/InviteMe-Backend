@@ -21,9 +21,11 @@ public sealed record ThankYouMessageDto(Guid Id, Guid WeddingId, Guid GuestId, s
     DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, DateTimeOffset? ApprovedAt);
 public sealed record ThankYouPublicLetterDto(string GuestName, string WeddingTitle, string Content, DateTimeOffset SentAt);
 public sealed record ThankYouSendJobDto(Guid Id, Guid? MessageId, Guid? TemplateId, Guid GuestId, string Channel, string Recipient, string Status,
-    int AttemptCount, DateTimeOffset? SentAt, string? ErrorCode);
+    int AttemptCount, DateTimeOffset? SentAt, string? ErrorCode, DateTimeOffset? ProviderAcceptedAt = null,
+    DateTimeOffset? DeliveredAt = null);
 public sealed record ThankYouSendBatchDto(Guid Id, string Status, int TotalCount, int SentCount, int FailedCount,
-    int PendingCount, DateTimeOffset CreatedAt, IReadOnlyList<ThankYouSendJobDto> Jobs);
+    int PendingCount, DateTimeOffset CreatedAt, IReadOnlyList<ThankYouSendJobDto> Jobs,
+    int AcceptedCount = 0, int DeliveredCount = 0, int UnknownCount = 0, int SimulatedCount = 0);
 public sealed record ThankYouBatchQueued(Guid Id, bool Replayed);
 public sealed record ThankYouDeliveryMessage(Guid JobId, Guid WeddingId, Guid? MessageId, Guid? TemplateId, Guid GuestId, string Channel,
     string Recipient, string Content, string Subject, string PublicLink);
@@ -43,8 +45,12 @@ public interface IThankYouMessageStore
     Task<ThankYouSendBatchDto> BatchAsync(Guid weddingId, Guid batchId, CancellationToken ct);
     Task<int> RetryAsync(Guid weddingId, Guid batchId, Guid actor, CancellationToken ct);
     Task<ThankYouPublicLetterDto?> PublicLetterAsync(string token, CancellationToken ct);
-    Task<IReadOnlyList<ThankYouDeliveryMessage>> ClaimDueAsync(Guid leaseId, int limit, string frontendUrl, CancellationToken ct);
+    Task<IReadOnlyList<ThankYouDeliveryMessage>> ClaimDueAsync(Guid leaseId, int limit, string frontendUrl, CancellationToken ct,
+        bool smsEnabled = true, string? smsProviderName = null);
     Task MarkSentAsync(Guid jobId, Guid leaseId, string? providerId, CancellationToken ct);
+    Task MarkAcceptedAsync(Guid jobId, Guid leaseId, string providerName, string providerId, CancellationToken ct);
+    Task MarkSimulatedAsync(Guid jobId, Guid leaseId, string providerId, CancellationToken ct);
+    Task MarkUnknownAsync(Guid jobId, Guid leaseId, string code, CancellationToken ct);
     Task MarkFailedAsync(Guid jobId, Guid leaseId, string code, bool retry, CancellationToken ct);
 }
 

@@ -48,6 +48,10 @@ public sealed class InvitationSendJob
     public DateTimeOffset NextAttemptAt { get; set; }
     public DateTimeOffset? SentAt { get; set; }
     public string? ProviderMessageId { get; set; }
+    public string? ProviderName { get; set; }
+    public DateTimeOffset? ProviderAcceptedAt { get; set; }
+    public DateTimeOffset? ProviderStatusUpdatedAt { get; set; }
+    public DateTimeOffset? DeliveredAt { get; set; }
     public string? LastErrorCode { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }

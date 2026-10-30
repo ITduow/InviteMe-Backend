@@ -188,6 +188,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(3000)")
                         .HasColumnName("content_snapshot");
 
+                    b.Property<DateTimeOffset?>("DeliveredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("delivered_at");
+
                     b.Property<string>("ErrorCode")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
@@ -218,10 +222,23 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("next_attempt_at");
 
+                    b.Property<DateTimeOffset?>("ProviderAcceptedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("provider_accepted_at");
+
                     b.Property<string>("ProviderMessageId")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)")
                         .HasColumnName("provider_message_id");
+
+                    b.Property<string>("ProviderName")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("provider_name");
+
+                    b.Property<DateTimeOffset?>("ProviderStatusUpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("provider_status_updated_at");
 
                     b.Property<string>("Recipient")
                         .IsRequired()
@@ -250,6 +267,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.HasKey("Id")
                         .HasName("thank_you_send_jobs_pkey");
 
+                    b.HasIndex("ProviderMessageId")
+                        .IsUnique()
+                        .HasDatabaseName("uq_thank_you_send_jobs_textbee_batch")
+                        .HasFilter("provider_name = 'TEXTBEE' AND provider_message_id IS NOT NULL");
+
                     b.HasIndex("TemplateId")
                         .HasDatabaseName("ix_thank_you_send_jobs_template");
 
@@ -269,7 +291,7 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_thank_you_send_jobs_source", "(message_id IS NOT NULL AND template_id IS NULL) OR (message_id IS NULL AND template_id IS NOT NULL)");
 
-                            t.HasCheckConstraint("ck_thank_you_send_jobs_status", "status IN ('PENDING','SENDING','SENT','FAILED')");
+                            t.HasCheckConstraint("ck_thank_you_send_jobs_status", "status IN ('PENDING','SENDING','ACCEPTED','SENT','DELIVERED','FAILED','UNKNOWN','REVIEW_REQUIRED','SIMULATED')");
                         });
                 });
 
@@ -1735,6 +1757,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnName("created_at")
                         .HasDefaultValueSql("NOW()");
 
+                    b.Property<DateTimeOffset?>("DeliveredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("delivered_at");
+
                     b.Property<string>("EmailHtmlContent")
                         .HasMaxLength(64000)
                         .HasColumnType("character varying(64000)")
@@ -1768,10 +1794,23 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("planning_guest_id");
 
+                    b.Property<DateTimeOffset?>("ProviderAcceptedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("provider_accepted_at");
+
                     b.Property<string>("ProviderMessageId")
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)")
                         .HasColumnName("provider_message_id");
+
+                    b.Property<string>("ProviderName")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("provider_name");
+
+                    b.Property<DateTimeOffset?>("ProviderStatusUpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("provider_status_updated_at");
 
                     b.Property<string>("QrLink")
                         .IsRequired()
@@ -1798,8 +1837,8 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<string>("Status")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
-                        .HasMaxLength(10)
-                        .HasColumnType("character varying(10)")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
                         .HasDefaultValue("PENDING")
                         .HasColumnName("status");
 
@@ -1815,6 +1854,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ProviderMessageId")
+                        .IsUnique()
+                        .HasDatabaseName("uq_invitation_send_jobs_textbee_batch")
+                        .HasFilter("provider_name = 'TEXTBEE' AND provider_message_id IS NOT NULL");
+
                     b.HasIndex("BatchId", "PlanningGuestId", "Channel")
                         .IsUnique()
                         .HasDatabaseName("uq_invitation_send_jobs_guest_channel")
@@ -1829,7 +1873,7 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_invitation_send_jobs_channel", "channel IN ('EMAIL','SMS')");
 
-                            t.HasCheckConstraint("ck_invitation_send_jobs_status", "status IN ('PENDING','SENDING','SENT','FAILED')");
+                            t.HasCheckConstraint("ck_invitation_send_jobs_status", "status IN ('PENDING','SENDING','ACCEPTED','SENT','DELIVERED','FAILED','UNKNOWN','REVIEW_REQUIRED','SIMULATED')");
                         });
                 });
 

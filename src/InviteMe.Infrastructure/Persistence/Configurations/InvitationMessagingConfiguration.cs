@@ -56,7 +56,7 @@ public sealed class InvitationMessagingConfiguration : IEntityTypeConfiguration<
         builder.ToTable("invitation_send_jobs", "inviteme", table =>
         {
             table.HasCheckConstraint("ck_invitation_send_jobs_channel", "channel IN ('EMAIL','SMS')");
-            table.HasCheckConstraint("ck_invitation_send_jobs_status", "status IN ('PENDING','SENDING','SENT','FAILED')");
+            table.HasCheckConstraint("ck_invitation_send_jobs_status", "status IN ('PENDING','SENDING','ACCEPTED','SENT','DELIVERED','FAILED','UNKNOWN','REVIEW_REQUIRED','SIMULATED')");
             table.HasCheckConstraint("ck_invitation_send_jobs_attempts", "attempt_count >= 0");
         });
         builder.HasKey(x => x.Id);
@@ -72,18 +72,24 @@ public sealed class InvitationMessagingConfiguration : IEntityTypeConfiguration<
         builder.Property(x => x.QrLink).HasColumnName("qr_link").HasMaxLength(2048);
         builder.Property(x => x.EmailHtmlContent).HasColumnName("email_html_content").HasMaxLength(64000);
         builder.Property(x => x.EmailPlainTextContent).HasColumnName("email_plain_text_content").HasMaxLength(12000);
-        builder.Property(x => x.Status).HasColumnName("status").HasMaxLength(10).HasDefaultValue("PENDING");
+        builder.Property(x => x.Status).HasColumnName("status").HasMaxLength(20).HasDefaultValue("PENDING");
         builder.Property(x => x.LeaseId).HasColumnName("lease_id");
         builder.Property(x => x.LeaseUntil).HasColumnName("lease_until");
         builder.Property(x => x.AttemptCount).HasColumnName("attempt_count").HasDefaultValue(0);
         builder.Property(x => x.NextAttemptAt).HasColumnName("next_attempt_at").HasDefaultValueSql("NOW()");
         builder.Property(x => x.SentAt).HasColumnName("sent_at");
         builder.Property(x => x.ProviderMessageId).HasColumnName("provider_message_id").HasMaxLength(255);
+        builder.Property(x => x.ProviderName).HasColumnName("provider_name").HasMaxLength(20);
+        builder.Property(x => x.ProviderAcceptedAt).HasColumnName("provider_accepted_at");
+        builder.Property(x => x.ProviderStatusUpdatedAt).HasColumnName("provider_status_updated_at");
+        builder.Property(x => x.DeliveredAt).HasColumnName("delivered_at");
         builder.Property(x => x.LastErrorCode).HasColumnName("last_error_code").HasMaxLength(80);
         builder.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("NOW()");
         builder.HasIndex(x => new { x.BatchId, x.PlanningGuestId, x.Channel }).IsUnique()
             .HasFilter("planning_guest_id IS NOT NULL").HasDatabaseName("uq_invitation_send_jobs_guest_channel");
         builder.HasIndex(x => new { x.Status, x.NextAttemptAt, x.LeaseUntil }).HasDatabaseName("ix_invitation_send_jobs_poll");
+        builder.HasIndex(x => x.ProviderMessageId).IsUnique().HasFilter("provider_name = 'TEXTBEE' AND provider_message_id IS NOT NULL")
+            .HasDatabaseName("uq_invitation_send_jobs_textbee_batch");
         builder.HasOne<InvitationSendBatch>().WithMany().HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Cascade);
         builder.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade);
         builder.HasOne<PlanningGuest>().WithMany().HasForeignKey(x => x.PlanningGuestId).OnDelete(DeleteBehavior.Cascade);

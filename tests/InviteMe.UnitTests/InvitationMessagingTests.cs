@@ -202,114 +202,100 @@ public sealed class InvitationMessagingTests
     }
 
     [Fact]
-    public async Task SpeedSms_sends_one_recipient_with_basic_token_and_returns_transaction_id()
+    public async Task Textbee_sends_one_e164_recipient_and_returns_accepted_batch()
     {
         var handler = new CaptureHandler(new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent("{\"status\":\"success\",\"code\":\"00\",\"data\":{\"tranId\":12345}}", Encoding.UTF8, "application/json")
+            Content = new StringContent("{\"data\":{\"success\":true,\"smsBatchId\":\"batch-123\",\"recipientCount\":1}}", Encoding.UTF8, "application/json")
         });
-        var provider = new SpeedSmsChannelProvider(new HttpClient(handler), Options.Create(new SpeedSmsOptions
+        var provider = new TextbeeSmsChannelProvider(new HttpClient(handler), Options.Create(new TextbeeOptions
         {
-            AccessToken = "secret-token", Sender = "INVITEME", SmsType = 3
+            ApiKey = "secret-token", DeviceId = "device-1", WebhookSecret = new string('s', 24)
         }));
 
         var receipt = await provider.SendAsync(new InvitationOutboundMessage(Guid.NewGuid(), Guid.NewGuid(), "SMS",
-            "+84901234567", "Invite", "Please RSVP", "https://invite.test/a", "https://api.test/qr/a"), default);
+            "0901234567", "Invite", "Please RSVP", "https://invite.test/a", ""), default);
 
         Assert.True(provider.IsConfigured);
-        Assert.Equal("12345", receipt.ProviderMessageId);
-        Assert.Equal("https://api.speedsms.vn/index.php/sms/send", handler.Request!.RequestUri!.ToString());
-        Assert.Equal("Basic", handler.Request.Headers.Authorization!.Scheme);
-        Assert.Equal("secret-token:x", Encoding.UTF8.GetString(Convert.FromBase64String(handler.Request.Headers.Authorization.Parameter!)));
-        Assert.Contains("\\u002B84901234567", handler.Body);
-        Assert.Contains("INVITEME", handler.Body);
+        Assert.Equal("batch-123", receipt.ProviderMessageId);
+        Assert.Equal("Textbee", receipt.ProviderName);
+        Assert.Equal("ACCEPTED", receipt.Status);
+        Assert.Equal("https://api.textbee.dev/api/v1/gateway/send-sms", handler.Request!.RequestUri!.ToString());
+        Assert.Equal("secret-token", handler.Request.Headers.GetValues("x-api-key").Single());
+        Assert.Contains("+84901234567", handler.Body);
+        Assert.Contains("device-1", handler.Body);
     }
 
     [Fact]
-    public async Task SpeedSms_rejects_provider_level_error_without_exposing_provider_text()
+    public async Task Textbee_rejects_provider_request_without_exposing_provider_text()
     {
         var handler = new CaptureHandler(new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent("{\"status\":\"error\",\"code\":\"300\",\"message\":\"private provider detail\"}", Encoding.UTF8, "application/json")
+            Content = new StringContent("{\"data\":{\"success\":false,\"error\":\"private provider detail\"}}", Encoding.UTF8, "application/json")
         });
-        var provider = new SpeedSmsChannelProvider(new HttpClient(handler), Options.Create(new SpeedSmsOptions
+        var provider = new TextbeeSmsChannelProvider(new HttpClient(handler), Options.Create(new TextbeeOptions
         {
-            AccessToken = "secret-token", Sender = "INVITEME"
+            ApiKey = "secret-token", DeviceId = "device-1", WebhookSecret = new string('s', 24)
         }));
 
         var error = await Assert.ThrowsAsync<InvitationDeliveryException>(() => provider.SendAsync(
-            new InvitationOutboundMessage(Guid.NewGuid(), Guid.NewGuid(), "SMS", "bad-number", "Invite", "Hi", "https://invite.test/a", "https://api.test/qr/a"), default));
+            new InvitationOutboundMessage(Guid.NewGuid(), Guid.NewGuid(), "SMS", "0901234567", "Invite", "Hi", "https://invite.test/a", ""), default));
 
-        Assert.Equal("SPEEDSMS_INSUFFICIENT_BALANCE", error.Code);
+        Assert.Equal("TEXTBEE_OUTCOME_UNKNOWN", error.Code);
+        Assert.True(error.OutcomeUnknown);
         Assert.DoesNotContain("private provider detail", error.Message);
     }
 
     [Fact]
-    public async Task SpeedSms_maps_invalid_phone_to_a_safe_actionable_error()
+    public async Task Textbee_maps_invalid_phone_to_a_safe_actionable_error()
     {
-        var handler = new CaptureHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        var handler = new CaptureHandler(new HttpResponseMessage(HttpStatusCode.OK));
+        var provider = new TextbeeSmsChannelProvider(new HttpClient(handler), Options.Create(new TextbeeOptions
         {
-            Content = new StringContent("{\"status\":\"error\",\"code\":105,\"message\":\"invalid phone\"}", Encoding.UTF8, "application/json")
-        });
-        var provider = new SpeedSmsChannelProvider(new HttpClient(handler), Options.Create(new SpeedSmsOptions
-        {
-            AccessToken = "secret-token", SmsType = 2
+            ApiKey = "secret-token", DeviceId = "device-1", WebhookSecret = new string('s', 24)
         }));
 
         var error = await Assert.ThrowsAsync<InvitationDeliveryException>(() => provider.SendAsync(
-            new InvitationOutboundMessage(Guid.NewGuid(), Guid.NewGuid(), "SMS", "bad-number", "Invite", "Hi", "https://invite.test/a", "https://api.test/qr/a"), default));
+            new InvitationOutboundMessage(Guid.NewGuid(), Guid.NewGuid(), "SMS", "not a phone", "Invite", "Hi", "https://invite.test/a", ""), default));
 
-        Assert.Equal("SPEEDSMS_INVALID_PHONE", error.Code);
-        Assert.DoesNotContain("invalid phone", error.Message);
+        Assert.Equal("SMS_PHONE_INVALID", error.Code);
+        Assert.Null(handler.Request);
+    }
+
+    [Theory]
+    [InlineData("0901234567", "+84901234567")]
+    [InlineData("84901234567", "+84901234567")]
+    [InlineData("+84901234567", "+84901234567")]
+    public void Vietnamese_phone_numbers_are_normalized_to_e164(string input, string expected)
+    {
+        Assert.Equal(expected, VietnamesePhoneNumber.ToE164(input));
     }
 
     [Fact]
-    public void SpeedSms_cskh_type_does_not_require_a_brand_sender_but_brandname_type_does()
+    public void Sms_segment_counter_accounts_for_gsm_extensions_and_unicode_parts()
     {
-        var cskh = new SpeedSmsOptions { AccessToken = "token", SmsType = 2, Sender = "" };
-        var brandnameWithoutApproval = new SpeedSmsOptions { AccessToken = "token", SmsType = 3, Sender = "" };
-        var approvedBrandname = new SpeedSmsOptions { AccessToken = "token", SmsType = 3, Sender = "APPROVED" };
-
-        Assert.True(cskh.IsConfigured);
-        Assert.False(brandnameWithoutApproval.IsConfigured);
-        Assert.True(approvedBrandname.IsConfigured);
+        Assert.Equal(1, SmsSegmentCounter.CountSegments(new string('a', 160)));
+        Assert.Equal(2, SmsSegmentCounter.CountSegments(new string('a', 161)));
+        Assert.Equal(2, SmsSegmentCounter.CountSegments(new string('^', 81)));
+        Assert.Equal(2, SmsSegmentCounter.CountSegments(new string('ế', 71)));
     }
 
     [Theory]
-    [InlineData("sender not found")]
-    [InlineData(" Sender Not Found ")]
-    public async Task SpeedSms_live_error_without_code_maps_missing_sender_to_permanent_configuration_failure(string message)
+    [InlineData(HttpStatusCode.Unauthorized, "TEXTBEE_AUTH_FAILED")]
+    [InlineData(HttpStatusCode.Forbidden, "TEXTBEE_ACCESS_DENIED")]
+    [InlineData(HttpStatusCode.NotFound, "TEXTBEE_DEVICE_NOT_FOUND")]
+    [InlineData(HttpStatusCode.TooManyRequests, "TEXTBEE_RATE_LIMITED")]
+    [InlineData(HttpStatusCode.BadRequest, "TEXTBEE_REQUEST_REJECTED")]
+    public async Task Textbee_maps_provider_statuses_to_safe_error_codes(HttpStatusCode status, string code)
     {
-        var handler = new CaptureHandler(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent(System.Text.Json.JsonSerializer.Serialize(new
-            { status = "error", message }), Encoding.UTF8, "application/json")
-        });
-        var provider = new SpeedSmsChannelProvider(new HttpClient(handler), Options.Create(new SpeedSmsOptions
-        { AccessToken = "test-token", SmsType = 2, Sender = "" }));
-
-        var error = await Assert.ThrowsAsync<InvitationDeliveryException>(() => provider.SendAsync(
-            new InvitationOutboundMessage(Guid.NewGuid(), Guid.NewGuid(), "SMS", "test-recipient", "Invite", "Hello guest",
-                "https://invite.test/token", ""), default));
-
-        Assert.Equal("SPEEDSMS_SENDER_NOT_FOUND", error.Code);
-        Assert.False(error.Transient);
-    }
-
-    [Theory]
-    [InlineData("[]")]
-    [InlineData("{\"status\":\"success\",\"code\":\"00\",\"data\":null}")]
-    [InlineData("{\"status\":\"success\",\"code\":\"00\",\"data\":{}}")]
-    public async Task SpeedSms_requires_a_valid_receipt_before_marking_sent(string body)
-    {
-        var handler = new CaptureHandler(new HttpResponseMessage(HttpStatusCode.OK)
-        { Content = new StringContent(body, Encoding.UTF8, "application/json") });
-        var provider = new SpeedSmsChannelProvider(new HttpClient(handler),
-            Options.Create(new SpeedSmsOptions { AccessToken = "test-token" }));
+        var handler = new CaptureHandler(new HttpResponseMessage(status));
+        var provider = new TextbeeSmsChannelProvider(new HttpClient(handler),
+            Options.Create(new TextbeeOptions { ApiKey = "test-token", DeviceId = "device-1", WebhookSecret = new string('s', 24) }));
         var error = await Assert.ThrowsAsync<InvitationDeliveryException>(() => provider.SendAsync(
             new InvitationOutboundMessage(Guid.NewGuid(), Guid.NewGuid(), "SMS", "0901234567",
                 "Invite", "Hello", "https://invite.test/a", ""), default));
-        Assert.Equal("SPEEDSMS_INVALID_RESPONSE", error.Code);
+        Assert.Equal(code, error.Code);
+        Assert.False(error.OutcomeUnknown);
     }
 
     private sealed class CaptureHandler(HttpResponseMessage response) : HttpMessageHandler
