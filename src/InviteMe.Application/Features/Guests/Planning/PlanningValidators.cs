@@ -46,6 +46,8 @@ public sealed class PlanningRowValidator : AbstractValidator<PlanningRow>
         RuleFor(x => x.ExpectedPeople).Must(x => (x ?? 1) is >= 1 and <= 500).WithErrorCode("INVALID_EXPECTED_PEOPLE");
         RuleFor(x => x.InvitationKind).Must(x => x is null or "" or "INDIVIDUAL" or "FAMILY" or "GROUP").WithErrorCode("INVALID_KIND");
         RuleFor(x => x.Side).Must(PlanningText.ValidSide).WithErrorCode("INVALID_SIDE");
+        RuleFor(x => x.GroupName).Must(x => x is null || PlanningText.Valid(x, 100, required: true)).WithErrorCode("INVALID_GROUP");
+        RuleFor(x => x).Must(x => x.GroupName is null || x.Group is null).WithErrorCode("INVALID_GROUP");
         When(x => x.Group is not null, () =>
         {
             RuleFor(x => x.Group).Must(g => g!.ExistingId is { } id

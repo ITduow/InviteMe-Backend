@@ -125,7 +125,7 @@ public sealed class RsvpValidationTests
 
     private static RsvpDashboardGuest G(string name, string side, string? status, int maybe = 0, bool request = false, bool over = false,
         params (string Role, string Attendance, string? Diet)[] people) =>
-        new(Guid.NewGuid(), name, 2, side, null, null, "+84", "a@b.c", status, people.Count(p => p.Attendance == "ATTENDING"), maybe, 4, over, null, null, null,
+        new(Guid.NewGuid(), name, side, null, null, "+84", "a@b.c", status, people.Count(p => p.Attendance == "ATTENDING"), maybe, 4, over, null, null, null,
             false, request, people.Select(p => new RsvpDashboardPerson(Guid.NewGuid(), p.Role, p.Attendance, p.Diet)).ToList());
 
     [Fact]

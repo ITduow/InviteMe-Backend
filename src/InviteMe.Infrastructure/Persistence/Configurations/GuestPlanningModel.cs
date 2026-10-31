@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 namespace InviteMe.Infrastructure.Persistence.Configurations;
 
 public sealed class GuestPlanningModel :
-    IEntityTypeConfiguration<PlanningGroup>, IEntityTypeConfiguration<PlanningImportBatch>,
+    IEntityTypeConfiguration<PlanningGroup>, IEntityTypeConfiguration<PlanningRequestReceipt>,
     IEntityTypeConfiguration<PlanningGuest>, IEntityTypeConfiguration<PlanningParticipant>, IEntityTypeConfiguration<PlanningPlace>
 {
     public void Configure(EntityTypeBuilder<PlanningGroup> groups)
@@ -17,9 +17,9 @@ public sealed class GuestPlanningModel :
         groups.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade);
     }
 
-    public void Configure(EntityTypeBuilder<PlanningImportBatch> imports)
+    public void Configure(EntityTypeBuilder<PlanningRequestReceipt> imports)
     {
-        imports.ToTable("planning_imports"); imports.HasKey(x => x.Id);
+        imports.ToTable("planning_request_receipts"); imports.HasKey(x => x.Id);
         imports.HasIndex(x => new { x.WeddingId, x.Key }).IsUnique();
         imports.Property(x => x.RequestHash).HasMaxLength(64);
         imports.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade);
@@ -40,7 +40,6 @@ public sealed class GuestPlanningModel :
         guests.Property(x => x.Version).IsConcurrencyToken();
         guests.HasIndex(x => new { x.WeddingId, x.RecipientName });
         guests.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade);
-        guests.HasOne<PlanningImportBatch>().WithMany().HasForeignKey(x => x.ImportId).OnDelete(DeleteBehavior.Cascade);
         guests.HasOne<PlanningGroup>().WithMany().HasForeignKey(x => x.GroupId).OnDelete(DeleteBehavior.Restrict);
     }
 

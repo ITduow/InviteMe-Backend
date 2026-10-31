@@ -13,7 +13,7 @@ namespace InviteMe.Application.Features.Rsvps;
 
 /// <summary>One person of an invitation: role (PRIMARY / COMPANION), RSVP attendance and the dietary note (kept on the recipient).</summary>
 public sealed record RsvpDashboardPerson(Guid GuestId, string Role, string AttendanceStatus, string? DietaryNote);
-public sealed record RsvpDashboardGuest(Guid Id, string RecipientName, int RowNumber, string Side, Guid? GroupId, string? GroupName,
+public sealed record RsvpDashboardGuest(Guid Id, string RecipientName, string Side, Guid? GroupId, string? GroupName,
     string? Phone, string? Email, string? RsvpStatus, int ConfirmedPartySize, int MaybePartySize, int MaxPeople, bool OverLimit, string? Note,
     DateTimeOffset? SubmittedAt, DateTimeOffset? UpdatedAt, bool Locked, bool PendingRequest, IReadOnlyList<RsvpDashboardPerson> People, int RemindersSent = 0, DateTimeOffset? LastRemindedAt = null, string? LastReminderStatus = null);
 public sealed record RsvpDashboardData(Guid WeddingId, int? Capacity, long Occupied, DateTimeOffset? RsvpDeadline, IReadOnlyList<RsvpDashboardGuest> Guests);
@@ -142,7 +142,7 @@ public static class RsvpDashboardMath
             .Where(g => filter.GroupId is null || g.GroupId == filter.GroupId)
             .Where(g => string.IsNullOrEmpty(search) || g.RecipientName.Contains(search, StringComparison.OrdinalIgnoreCase))
             .Where(g => filter.Status is null || RsvpGuestStatus.Matches(g, filter.Status))
-            .OrderBy(g => g.RecipientName, StringComparer.CurrentCultureIgnoreCase).ThenBy(g => g.RowNumber).ThenBy(g => g.Id)
+            .OrderBy(g => g.RecipientName, StringComparer.CurrentCultureIgnoreCase).ThenBy(g => g.Id)
             .ToList();
     }
 

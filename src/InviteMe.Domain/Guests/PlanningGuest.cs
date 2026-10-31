@@ -1,12 +1,10 @@
 namespace InviteMe.Domain.Guests;
 
-// Import-v2 owns these records independently from the legacy guest workflow.
+// Guest planning records are independent of how a guest was created.
 public sealed class PlanningGuest
 {
     public Guid Id { get; set; }
     public Guid WeddingId { get; set; }
-    public Guid ImportId { get; set; }
-    public int RowNumber { get; set; }
     public string RecipientName { get; set; } = "";
     public string? Honorific { get; set; }
     public string InvitationKind { get; set; } = "INDIVIDUAL";
@@ -43,7 +41,7 @@ public sealed class PlanningPlace
     public int Position { get; set; }
     public Guid? ParticipantId { get; set; }
 }
-public sealed class PlanningImportBatch
+public sealed class PlanningRequestReceipt
 {
     public Guid Id { get; set; }
     public Guid WeddingId { get; set; }

@@ -226,7 +226,7 @@ public sealed class GuestPlanningApiTests
         Assert.Equal(0, await db.Set<PlanningGuest>().CountAsync());
         Assert.Equal(0, await db.Set<PlanningGroup>().CountAsync());
         var key = Guid.NewGuid();
-        var body = new PlanningImport([good, new(3, "Trần Thị Hoa", ExpectedPeople: 2, Group: new(NewName: " Họ  ngoại ", Confirmed: true))]);
+        var body = new PlanningImport([good, new(3, "Trần Thị Hoa", ExpectedPeople: 2, GroupName: " Họ  ngoại ")]);
         var response = await Import(body, key);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var result = (await response.Content.ReadFromJsonAsync<PlanningImportResult>())!;

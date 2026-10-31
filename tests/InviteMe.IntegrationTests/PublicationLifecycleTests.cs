@@ -47,7 +47,7 @@ public sealed class PublicationLifecycleTests
             };
             request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
             await Ok<PlanningImportResult>(await owner.SendAsync(request));
-            var guests = await db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == wedding.Id).OrderBy(x => x.RowNumber).ToArrayAsync();
+            var guests = await db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == wedding.Id).OrderBy(x => x.RecipientName).ToArrayAsync();
             var publicPath = $"/api/guest-invitations/{guests[0].InvitationToken}";
             var path = $"/api/weddings/{wedding.Id}/invitation-design";
             var wordingPath = $"/api/weddings/{wedding.Id}/invitation-wording";

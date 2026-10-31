@@ -22,7 +22,7 @@ public sealed class GuestPlanningStore(InviteMeDbContext db, InviteMe.Applicatio
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(input))));
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await LockWedding(db, weddingId, ct);
-        var prior = await db.Set<PlanningImportBatch>().SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.Key == key, ct);
+        var prior = await db.Set<PlanningRequestReceipt>().SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.Key == key, ct);
         if (prior is not null)
         {
             if (prior.RequestHash != hash) throw Conflict("IDEMPOTENCY_KEY_REUSED");
@@ -41,25 +41,9 @@ public sealed class GuestPlanningStore(InviteMeDbContext db, InviteMe.Applicatio
 
         var possibleDuplicate = await HasPossibleDuplicateAsync(weddingId, input.RecipientName, input.Phone,
             null, groupScope, ct);
-        var batch = new PlanningImportBatch { Id = Guid.NewGuid(), WeddingId = weddingId, Key = key, RequestHash = hash };
-        var guest = new PlanningGuest
-        {
-            Id = Guid.NewGuid(), WeddingId = weddingId, ImportId = batch.Id, RowNumber = 1,
-            RecipientName = PlanningText.Clean(input.RecipientName), Honorific = Optional(input.Honorific),
-            InvitationKind = input.InvitationKind, ExpectedPeople = input.ExpectedPeople, Side = input.Side,
-            GroupId = input.GroupId, Phone = Optional(input.Phone), Email = Optional(input.Email), Note = Optional(input.Note),
-            InvitationToken = InvitationToken.Generate()
-        };
+        var batch = new PlanningRequestReceipt { Id = Guid.NewGuid(), WeddingId = weddingId, Key = key, RequestHash = hash };
         db.Add(batch);
-        db.Add(guest);
-        var primary = new PlanningParticipant { Id = Guid.NewGuid(), GuestId = guest.Id, FullName = guest.RecipientName };
-        db.Add(primary);
-        for (var position = 1; position <= guest.ExpectedPeople; position++)
-            db.Add(new PlanningPlace
-            {
-                Id = Guid.NewGuid(), GuestId = guest.Id, Position = position,
-                ParticipantId = position == 1 ? primary.Id : null
-            });
+        var guest = AddGuest(weddingId, input);
         db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_guests", guest.Id, "GUEST_CREATED", actorId,
             metadata: JsonSerializer.Serialize(new { guest.ExpectedPeople, guest.InvitationKind, guest.Side, guest.GroupId })));
         await db.SaveChangesAsync(ct);
@@ -186,7 +170,7 @@ public sealed class GuestPlanningStore(InviteMeDbContext db, InviteMe.Applicatio
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(input))));
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await LockWedding(db, weddingId, ct);
-        var prior = await db.Set<PlanningImportBatch>().SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.Key == key, ct);
+        var prior = await db.Set<PlanningRequestReceipt>().SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.Key == key, ct);
         if (prior is not null)
         {
             if (prior.RequestHash != hash) throw Conflict("IDEMPOTENCY_KEY_REUSED");
@@ -199,7 +183,7 @@ public sealed class GuestPlanningStore(InviteMeDbContext db, InviteMe.Applicatio
                 errors.Add(new(row.RowNumber, "group", "GROUP_NOT_FOUND", "Nhóm không thuộc wedding này."));
         if (errors.Count > 0) return new(null, errors);
         await entitlements.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.GuestPlaces, input.Rows!.Sum(x => x!.ExpectedPeople ?? 1), ct);
-        var batch = new PlanningImportBatch { Id = Guid.NewGuid(), WeddingId = weddingId, Key = key, RequestHash = hash };
+        var batch = new PlanningRequestReceipt { Id = Guid.NewGuid(), WeddingId = weddingId, Key = key, RequestHash = hash };
         db.Add(batch);
         var createdGroups = new List<PlanningGroupDto>();
         var items = new List<PlanningImportedRow>();
@@ -212,7 +196,7 @@ public sealed class GuestPlanningStore(InviteMeDbContext db, InviteMe.Applicatio
         {
             var r = row!;
             Guid? groupId = r.Group?.ExistingId;
-            if (r.Group?.NewName is { } newName)
+            if ((r.GroupName ?? r.Group?.NewName) is { } newName)
             {
                 var normalized = PlanningText.Key(newName);
                 var group = groups.SingleOrDefault(x => x.NormalizedName == normalized);
@@ -223,30 +207,20 @@ public sealed class GuestPlanningStore(InviteMeDbContext db, InviteMe.Applicatio
                 }
                 groupId = group.Id;
             }
-            string? Optional(string? value) => string.IsNullOrWhiteSpace(value) ? null : PlanningText.Clean(value);
-            var guest = new PlanningGuest {
-                Id = Guid.NewGuid(), WeddingId = weddingId, ImportId = batch.Id, RowNumber = r.RowNumber,
-                RecipientName = PlanningText.Clean(r.RecipientName), Honorific = Optional(r.Honorific),
-                InvitationKind = string.IsNullOrEmpty(r.InvitationKind) ? "INDIVIDUAL" : r.InvitationKind,
-                ExpectedPeople = r.ExpectedPeople ?? 1, Side = string.IsNullOrEmpty(r.Side) ? "UNSPECIFIED" : r.Side,
-                GroupId = groupId, Phone = Optional(r.Phone), Note = Optional(r.Note), Email = Optional(r.Email),
-                InvitationToken = InvitationToken.Generate()
-            };
+            var guest = AddGuest(weddingId, new CreatePlanningGuest(r.RecipientName!, r.Honorific,
+                string.IsNullOrEmpty(r.InvitationKind) ? "INDIVIDUAL" : r.InvitationKind,
+                r.ExpectedPeople ?? 1, string.IsNullOrEmpty(r.Side) ? "UNSPECIFIED" : r.Side,
+                groupId, r.Phone, r.Note, r.Email));
             if (names.Contains(PlanningText.Key(guest.RecipientName)) ||
                 (guest.Phone is not null && phones.Contains(PlanningText.PhoneKey(guest.Phone))))
                 warnings.Add(new(r.RowNumber, "recipientName", "POSSIBLE_DUPLICATE", "Có khách trùng tên hoặc SĐT; đã giữ thành đầu mối riêng."));
             names.Add(PlanningText.Key(guest.RecipientName));
             if (guest.Phone is not null) phones.Add(PlanningText.PhoneKey(guest.Phone));
-            db.Add(guest);
-            var person = new PlanningParticipant { Id = Guid.NewGuid(), GuestId = guest.Id, FullName = guest.RecipientName };
-            db.Add(person);
-            for (var i = 0; i < guest.ExpectedPeople; i++)
-                db.Add(new PlanningPlace { Id = Guid.NewGuid(), GuestId = guest.Id, Position = i + 1, ParticipantId = i == 0 ? person.Id : null });
             items.Add(new(r.RowNumber, guest.Id, guest.ExpectedPeople));
         }
         var result = new PlanningImportResult(batch.Id, items.Count, items.Sum(x => x.ExpectedPeople), items, createdGroups, warnings);
         batch.ResultJson = JsonSerializer.Serialize(result);
-        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_import_batches", batch.Id, "GUESTS_IMPORTED", actorId,
+        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_request_receipts", batch.Id, "GUESTS_IMPORTED", actorId,
             metadata: JsonSerializer.Serialize(new { guestCount = items.Count, expectedPeople = result.CreatedPlaceCount,
                 warningCount = warnings.Count, groupCount = createdGroups.Count })));
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
@@ -262,6 +236,25 @@ public sealed class GuestPlanningStore(InviteMeDbContext db, InviteMe.Applicatio
             g.InvitationToken == null ? null : "/invite/" + g.InvitationToken, g.ArchivedAt, false);
 
     private static string? Optional(string? value) => string.IsNullOrWhiteSpace(value) ? null : PlanningText.Clean(value);
+
+    private PlanningGuest AddGuest(Guid weddingId, CreatePlanningGuest input)
+    {
+        var guest = new PlanningGuest
+        {
+            Id = Guid.NewGuid(), WeddingId = weddingId,
+            RecipientName = PlanningText.Clean(input.RecipientName), Honorific = Optional(input.Honorific),
+            InvitationKind = input.InvitationKind, ExpectedPeople = input.ExpectedPeople, Side = input.Side,
+            GroupId = input.GroupId, Phone = Optional(input.Phone), Email = Optional(input.Email), Note = Optional(input.Note),
+            InvitationToken = InvitationToken.Generate()
+        };
+        db.Add(guest);
+        var primary = new PlanningParticipant { Id = Guid.NewGuid(), GuestId = guest.Id, FullName = guest.RecipientName };
+        db.Add(primary);
+        for (var position = 1; position <= guest.ExpectedPeople; position++)
+            db.Add(new PlanningPlace { Id = Guid.NewGuid(), GuestId = guest.Id, Position = position,
+                ParticipantId = position == 1 ? primary.Id : null });
+        return guest;
+    }
 
     public Task<PlanningGuestPage> ListAsync(Guid weddingId, int page, int pageSize, string? search, string? side, Guid? groupId, CancellationToken ct) =>
         ListScopedAsync(weddingId, page, pageSize, search, side, groupId, ct, null);

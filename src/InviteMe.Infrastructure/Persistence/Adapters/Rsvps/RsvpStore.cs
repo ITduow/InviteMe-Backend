@@ -79,7 +79,7 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock, InviteMe
                             join grp in db.Set<PlanningGroup>() on g.GroupId equals (Guid?)grp.Id into groups
                             from grp in groups.DefaultIfEmpty()
                             where g.WeddingId == weddingId && g.ArchivedAt == null && (scopedIds == null || g.GroupId.HasValue && scopedIds.Contains(g.GroupId.Value))
-                            select new { g.Id, g.RecipientName, g.RowNumber, g.Side, g.GroupId, GroupName = grp == null ? null : grp.Name, g.Phone, g.Email, g.ExpectedPeople }).ToListAsync(ct);
+                            select new { g.Id, g.RecipientName, g.Side, g.GroupId, GroupName = grp == null ? null : grp.Name, g.Phone, g.Email, g.ExpectedPeople }).ToListAsync(ct);
         var rsvps = await db.Set<PlanningRsvp>().AsNoTracking().Where(x => x.WeddingId == weddingId).ToDictionaryAsync(x => x.GuestId, ct);
         var people = (await (from p in db.Set<PlanningParticipant>().AsNoTracking()
                              join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
@@ -102,7 +102,7 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         {
             var rsvp = rsvps.GetValueOrDefault(g.Id);
             var threshold = PlanningRsvpSettings.Threshold(g.ExpectedPeople, plusOneLimit);
-            return new RsvpDashboardGuest(g.Id, g.RecipientName, g.RowNumber, g.Side, g.GroupId, g.GroupName, g.Phone, g.Email,
+            return new RsvpDashboardGuest(g.Id, g.RecipientName, g.Side, g.GroupId, g.GroupName, g.Phone, g.Email,
                 rsvp?.Status, rsvp?.ConfirmedPartySize ?? 0, rsvp?.MaybePartySize ?? 0, threshold, rsvp?.OverThreshold(threshold) ?? false,
                 rsvp?.Note, rsvp?.SubmittedAt, rsvp?.UpdatedAt,
                 lateForAll || locked.Contains(g.Id), pending.Contains(g.Id), people[g.Id].ToList(),

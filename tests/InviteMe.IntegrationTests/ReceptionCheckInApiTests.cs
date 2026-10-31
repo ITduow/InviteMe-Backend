@@ -33,8 +33,9 @@ public sealed class ReceptionCheckInApiTests
         };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
         Assert.Equal(HttpStatusCode.Created, (await owner.SendAsync(import)).StatusCode);
-        var guests = await db.Set<PlanningGuest>().AsNoTracking().OrderBy(x => x.RowNumber).ToListAsync();
-        var (duc, binh) = (guests[0], guests[1]);
+        var guests = await db.Set<PlanningGuest>().AsNoTracking().ToListAsync();
+        var duc = guests.Single(x => x.RecipientName == "Nguyễn Văn Đức");
+        var binh = guests.Single(x => x.RecipientName == "Trần Thị Bình");
         using var anonymous = factory.CreateHttpsClient();
 
         // Đức answers for himself only: places 2-3 become UNUSED. Bình never answers (PENDING). Đức sits at "Bàn 1".

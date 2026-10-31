@@ -125,7 +125,7 @@ public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : I
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("WALK_IN:" + JsonSerializer.Serialize(input))));
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await LockWedding(db, weddingId, ct);
-        var prior = await db.Set<PlanningImportBatch>().SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.Key == key, ct);
+        var prior = await db.Set<PlanningRequestReceipt>().SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.Key == key, ct);
         if (prior is not null)
         {
             if (prior.RequestHash != hash)
@@ -147,7 +147,7 @@ public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : I
             throw new ApplicationProblemException(ProblemKind.BusinessRule, "WALK_IN_OVER_CAPACITY",
                 $"Vượt sức chứa, slot còn lại {Math.Max(0, capacity!.Value - occupied)} người. Nhập lý do để vẫn nhận khách.");
 
-        var batch = new PlanningImportBatch { Id = Guid.NewGuid(), WeddingId = weddingId, Key = key, RequestHash = hash };
+        var batch = new PlanningRequestReceipt { Id = Guid.NewGuid(), WeddingId = weddingId, Key = key, RequestHash = hash };
         db.Add(batch);
         var newGuest = guest is null;
         var people = new List<PlanningParticipant>();
@@ -155,7 +155,7 @@ public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : I
         {
             guest = new PlanningGuest
             {
-                Id = Guid.NewGuid(), WeddingId = weddingId, ImportId = batch.Id, RowNumber = 1, RecipientName = PlanningText.Clean(input.RecipientName),
+                Id = Guid.NewGuid(), WeddingId = weddingId, RecipientName = PlanningText.Clean(input.RecipientName),
                 Honorific = string.IsNullOrWhiteSpace(input.Honorific) ? null : PlanningText.Clean(input.Honorific),
                 InvitationKind = input.People > 1 ? "GROUP" : "INDIVIDUAL", ExpectedPeople = input.People,
                 Side = string.IsNullOrEmpty(input.Side) ? "UNSPECIFIED" : input.Side, Note = "Khách vãng lai, thêm tại quầy lễ tân.",

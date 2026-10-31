@@ -9,7 +9,8 @@ namespace InviteMe.Application.Features.Guests.Planning;
 public sealed record PlanningGroupInput(Guid? ExistingId = null, string? NewName = null, bool Confirmed = false);
 public sealed record PlanningRow(int RowNumber, string? RecipientName, string? Honorific = null,
     string? InvitationKind = null, int? ExpectedPeople = null, string? Side = null,
-    PlanningGroupInput? Group = null, string? Phone = null, string? Note = null, string? Email = null);
+    PlanningGroupInput? Group = null, string? Phone = null, string? Note = null, string? Email = null,
+    string? GroupName = null);
 public sealed record PlanningImport(IReadOnlyList<PlanningRow?>? Rows);
 public sealed record ImportIssue(int RowNumber, string Field, string Code, string Message);
 public sealed record PlanningGroupDto(Guid Id, string Name);

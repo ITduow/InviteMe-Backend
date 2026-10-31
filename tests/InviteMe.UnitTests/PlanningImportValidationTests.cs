@@ -75,6 +75,14 @@ public sealed class PlanningImportValidationTests
     }
 
     [Fact]
+    public void GroupNameCanBeSentWithoutAGroupCommand()
+    {
+        Assert.Empty(Validate(new([new(2, "An", GroupName: "Họ ngoại")])));
+        Assert.Contains(Validate(new([new(2, "An", GroupName: "=SUM(1)")])),
+            x => x.Code == "INVALID_GROUP");
+    }
+
+    [Fact]
     public void ValidationErrorsUseSpreadsheetLineRatherThanArrayIndex()
     {
         var errors = Validate(new([new(17, "An", ExpectedPeople: 0), new(17, "Hoa")]));
