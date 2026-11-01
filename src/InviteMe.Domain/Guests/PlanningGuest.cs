@@ -10,7 +10,7 @@ public sealed class PlanningGuest
     public string InvitationKind { get; set; } = "INDIVIDUAL";
     public int ExpectedPeople { get; set; }
     public string Side { get; set; } = "UNSPECIFIED";
-    public Guid? GroupId { get; set; }
+    public PlanningGroupKind? Group { get; set; } = PlanningGroupKind.OTHER;
     public string? Phone { get; set; }
     public string? Email { get; set; }
     public string? Note { get; set; }
@@ -18,13 +18,6 @@ public sealed class PlanningGuest
     public string? InvitationToken { get; set; }
     public int Version { get; set; } = 1;
     public DateTimeOffset? ArchivedAt { get; set; }
-}
-public sealed class PlanningGroup
-{
-    public Guid Id { get; set; }
-    public Guid WeddingId { get; set; }
-    public string Name { get; set; } = "";
-    public string NormalizedName { get; set; } = "";
 }
 public sealed class PlanningParticipant
 {

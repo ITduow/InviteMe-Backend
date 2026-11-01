@@ -25,7 +25,7 @@ public sealed class GuestAccessApiTests
         var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "guest-access");
         var path = $"/api/weddings/{wedding.Id}/guest-planning";
         var import = new HttpRequestMessage(HttpMethod.Post, path + "/imports")
-        { Content = JsonContent.Create(new PlanningImport([new(2, "Nguyễn Văn An", "Bác", "INDIVIDUAL", 4, "BRIDE", new PlanningGroupInput(NewName: "Họ nhà gái", Confirmed: true))])) };
+        { Content = JsonContent.Create(new PlanningImport([new(2, "Nguyễn Văn An", "Bác", "INDIVIDUAL", 4, "BRIDE", InviteMe.Domain.Guests.PlanningGroupKind.RELATIVES)])) };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
         Assert.Equal(HttpStatusCode.Created, (await owner.SendAsync(import)).StatusCode);
         var guest = await db.Set<PlanningGuest>().AsNoTracking().SingleAsync();
@@ -102,7 +102,7 @@ public sealed class GuestAccessApiTests
         var coHosts = $"/api/weddings/{wedding.Id}/co-hosts";
         await CoHostPermissionTests.AddCoHostAsync(owner, groupSeater, wedding.Id);
         Assert.True((await owner.PutAsJsonAsync($"{coHosts}/{seater.Id}/scopes", new UpdateCoHostScopesInput(
-            [new("SEATING_VIEW", [guest.GroupId!.Value]), new("SEATING_EDIT", [guest.GroupId!.Value])]))).IsSuccessStatusCode);
+            [new("SEATING_VIEW", [guest.Group!.Value]), new("SEATING_EDIT", [guest.Group!.Value])]))).IsSuccessStatusCode);
         Assert.False((await Read<SeatingPublicationDto>(await groupSeater.GetAsync(path + "/seating-plan/publication"))).Published);
         await Problem(HttpStatusCode.Forbidden, "WEDDING_SCOPE_REQUIRED", await groupSeater.PostAsync(path + "/seating-plan/publish", null));
         await Problem(HttpStatusCode.Forbidden, "WEDDING_SCOPE_REQUIRED", await groupSeater.DeleteAsync(path + "/seating-plan/publish"));
@@ -114,7 +114,7 @@ public sealed class GuestAccessApiTests
         Assert.True(scopes["WEDDING_VIEW"].GetProperty("weddingWide").GetBoolean());
         Assert.False(scopes["SEATING_EDIT"].GetProperty("weddingWide").GetBoolean());
         var group = Assert.Single(scopes["SEATING_EDIT"].GetProperty("groups").EnumerateArray());
-        Assert.Equal((guest.GroupId!.Value, "Họ nhà gái"), (group.GetProperty("id").GetGuid(), group.GetProperty("name").GetString()));
+        Assert.Equal((guest.Group!.Value.ToString(), "Họ hàng"), (group.GetProperty("group").GetString(), group.GetProperty("name").GetString()));
         var ownerScopes = (await Read<JsonElement>(await owner.GetAsync($"/api/weddings/{wedding.Id}/access"))).GetProperty("scopes").EnumerateArray().ToList();
         Assert.Equal(13, ownerScopes.Count); // every wedding permission, GIFT_RECORD included
         Assert.All(ownerScopes, x => Assert.True(x.GetProperty("weddingWide").GetBoolean()));

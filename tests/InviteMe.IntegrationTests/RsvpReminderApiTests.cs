@@ -184,9 +184,10 @@ public sealed class RsvpReminderApiTests
 
         // A co-host limited to one guest group (Couple04 scope) may not remind the whole wedding.
         using var groupImport = new HttpRequestMessage(HttpMethod.Post, $"/api/weddings/{w}/guest-planning/imports")
-        { Content = JsonContent.Create(new PlanningImport([new PlanningRow(9, "Nhóm khách", Group: new(NewName: "Nhà gái", Confirmed: true))])) };
+        { Content = JsonContent.Create(new PlanningImport([new PlanningRow(9, "Nhóm khách", Group: PlanningGroupKind.RELATIVES)])) };
         groupImport.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        var groupId = (await Read<PlanningImportResult>(await owner.SendAsync(groupImport))).CreatedGroups.Single().Id;
+        await Read<PlanningImportResult>(await owner.SendAsync(groupImport));
+        var groupId = PlanningGroupKind.RELATIVES;
         using var scoped = await SignIn(factory, "reminder-scoped");
         var scopedMe = (await scoped.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
         await CoHostPermissionTests.AddCoHostAsync(owner, scoped, w, "RSVP_VIEW");

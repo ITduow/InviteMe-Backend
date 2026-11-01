@@ -32,20 +32,20 @@ public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : I
     public async Task<IReadOnlyList<ReceptionCandidate>> CandidatesAsync(Guid weddingId, CancellationToken ct)
         => await CandidatesScopedAsync(weddingId, ct, null);
 
-    public async Task<IReadOnlyList<ReceptionCandidate>> CandidatesScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<Guid>? groupScope)
+    public async Task<IReadOnlyList<ReceptionCandidate>> CandidatesScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope)
     {
         var scopeIds = groupScope?.ToArray();
         var guestQuery = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null);
-        if (scopeIds is not null) guestQuery = guestQuery.Where(x => x.GroupId.HasValue && scopeIds.Contains(x.GroupId.Value));
+        if (scopeIds is not null) guestQuery = guestQuery.Where(x => x.Group.HasValue && scopeIds.Contains(x.Group.Value));
         var guests = await guestQuery
             .Select(x => new { x.Id, x.RecipientName, x.Honorific, x.Side, x.Phone }).ToListAsync(ct);
         var people = (await (from p in db.Set<PlanningParticipant>().AsNoTracking()
                              join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
-                             where g.WeddingId == weddingId && (scopeIds == null || g.GroupId.HasValue && scopeIds.Contains(g.GroupId.Value))
+                             where g.WeddingId == weddingId && (scopeIds == null || g.Group.HasValue && scopeIds.Contains(g.Group.Value))
                              select new { p.GuestId, p.FullName }).ToListAsync(ct)).ToLookup(x => x.GuestId, x => x.FullName);
         var places = (await (from place in db.Set<PlanningPlace>().AsNoTracking()
                              join g in db.Set<PlanningGuest>() on place.GuestId equals g.Id
-                             where g.WeddingId == weddingId && (scopeIds == null || g.GroupId.HasValue && scopeIds.Contains(g.GroupId.Value))
+                             where g.WeddingId == weddingId && (scopeIds == null || g.Group.HasValue && scopeIds.Contains(g.Group.Value))
                              join assignment in db.Set<PlanningSeatAssignment>() on place.Id equals assignment.PlaceId into assignments
                              from assignment in assignments.DefaultIfEmpty()
                              join table in db.Set<PlanningTable>() on assignment.TableId equals table.Id into tables
@@ -90,13 +90,13 @@ public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : I
 
     public Task<IReadOnlyList<CheckInPlaceStats>> PlaceStatsAsync(Guid weddingId, CancellationToken ct) => PlaceStatsScopedAsync(weddingId, ct, null);
 
-    public async Task<IReadOnlyList<CheckInPlaceStats>> PlaceStatsScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<Guid>? groupScope)
+    public async Task<IReadOnlyList<CheckInPlaceStats>> PlaceStatsScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope)
     {
         var scopeIds = groupScope?.ToArray();
         var rows = await (from place in db.Set<PlanningPlace>().AsNoTracking()
                           join g in db.Set<PlanningGuest>() on place.GuestId equals g.Id
                           // archived invitations are no longer expected (same rule as RSVP capacity)
-                          where g.WeddingId == weddingId && g.ArchivedAt == null && (scopeIds == null || g.GroupId.HasValue && scopeIds.Contains(g.GroupId.Value))
+                          where g.WeddingId == weddingId && g.ArchivedAt == null && (scopeIds == null || g.Group.HasValue && scopeIds.Contains(g.Group.Value))
                           join person in db.Set<PlanningParticipant>() on place.ParticipantId equals (Guid?)person.Id into people
                           from person in people.DefaultIfEmpty()
                           select new

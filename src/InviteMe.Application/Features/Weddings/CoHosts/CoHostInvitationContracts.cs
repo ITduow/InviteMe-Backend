@@ -9,9 +9,9 @@ using System.Text;
 
 namespace InviteMe.Application.Features.Weddings.CoHosts;
 
-public sealed record CoHostPermissionScopeInput(string Permission, IReadOnlyList<Guid> GroupIds, bool WeddingWide = false);
+public sealed record CoHostPermissionScopeInput(string Permission, IReadOnlyList<InviteMe.Domain.Guests.PlanningGroupKind> GroupIds, bool WeddingWide = false);
 public sealed record CreateCoHostInvitationInput(string Email, IReadOnlyList<CoHostPermissionScopeInput> Grants);
-public sealed record CoHostInvitationGrantDto(string Permission, bool WeddingWide, IReadOnlyList<Guid> GroupIds);
+public sealed record CoHostInvitationGrantDto(string Permission, bool WeddingWide, IReadOnlyList<InviteMe.Domain.Guests.PlanningGroupKind> GroupIds);
 public sealed record CoHostInvitationDto(Guid Id, Guid WeddingId, string Email, string Status, DateTimeOffset ExpiresAt,
     string WeddingTitle, IReadOnlyList<CoHostInvitationGrantDto> Grants);
 public sealed record CoHostInvitationCreated(Guid Id, string Email, string Status, DateTimeOffset ExpiresAt);
@@ -21,7 +21,7 @@ public interface ICoHostInvitationStore
     Task<Guid?> GetWeddingOwnerIdAsync(Guid weddingId, CancellationToken ct);
     Task<string?> GetWeddingTitleAsync(Guid weddingId, CancellationToken ct);
     Task<Guid> CreateAsync(Guid weddingId, string email, string tokenHash, Guid actorId, DateTimeOffset expiresAt,
-        IReadOnlyList<(WeddingPermission Permission, bool WeddingWide, IReadOnlyList<Guid> GroupIds)> grants, CancellationToken ct);
+        IReadOnlyList<(WeddingPermission Permission, bool WeddingWide, IReadOnlyList<InviteMe.Domain.Guests.PlanningGroupKind> GroupIds)> grants, CancellationToken ct);
     Task MarkSentAsync(Guid invitationId, CancellationToken ct);
     Task<CoHostInvitationDto?> GetForAcceptAsync(string tokenHash, Guid userId, CancellationToken ct);
     Task AcceptAsync(string tokenHash, Guid userId, CancellationToken ct);
@@ -47,7 +47,7 @@ public sealed class CreateCoHostInvitationValidator : AbstractValidator<CreateCo
         {
             g.RuleFor(x => x.Permission).Must(CoHostPermissionCodes.IsAssignable);
             g.RuleFor(x => x.GroupIds).NotNull();
-            g.RuleFor(x => x.GroupIds).Must(x => x is not null && x.Distinct().Count() == x.Count && x.All(id => id != Guid.Empty));
+            g.RuleFor(x => x.GroupIds).Must(x => x is not null && x.Distinct().Count() == x.Count && x.All(Enum.IsDefined));
             g.RuleFor(x => x).Must(x => x.GroupIds is not null && (x.WeddingWide ? x.GroupIds.Count == 0 : x.GroupIds.Count > 0))
                 .WithMessage("Choose either wedding-wide scope or one or more guest groups.");
             g.RuleFor(x => x).Must(x => x.Permission is not (nameof(WeddingPermission.CHECKIN_MANAGE) or nameof(WeddingPermission.GIFT_RECORD)) ||

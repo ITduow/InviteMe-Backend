@@ -14,7 +14,7 @@ public sealed class PlanningTable
     public Guid WeddingId { get; set; }
     public string Name { get; set; } = "";
     public int Capacity { get; set; }
-    public Guid? GroupId { get; set; }
+    public InviteMe.Domain.Guests.PlanningGroupKind? Group { get; set; } = InviteMe.Domain.Guests.PlanningGroupKind.OTHER;
 }
 public sealed class PlanningSeatAssignment
 {

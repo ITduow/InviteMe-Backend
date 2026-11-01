@@ -6,7 +6,7 @@ using InviteMe.Domain.Weddings;
 
 namespace InviteMe.Application.Features.Seating.Planning;
 
-public sealed record PlanningTableDto(Guid Id, string Name, int Capacity, Guid? GroupId = null);
+public sealed record PlanningTableDto(Guid Id, string Name, int Capacity, InviteMe.Domain.Guests.PlanningGroupKind? Group = null);
 public sealed record PlanningAssignmentDto(Guid PlaceId, Guid TableId, int SeatNumber);
 public sealed record PlanningSeatingPlace(Guid Id, Guid GuestId, int Position, PlanningPersonDto? Person);
 public sealed record PlanningSeatingDto(Guid WeddingId, int Version, IReadOnlyList<PlanningTableDto> Tables,
@@ -14,14 +14,14 @@ public sealed record PlanningSeatingDto(Guid WeddingId, int Version, IReadOnlyLi
 public sealed record ChangePlanningSeating(int ExpectedVersion, string Action, Guid? TableId = null,
     string? Name = null, int? Capacity = null, IReadOnlyList<Guid>? PlaceIds = null, int? SeatNumber = null,
     int? TableCount = null, string? Strategy = null, string Mode = "UNASSIGNED", string? SourceFingerprint = null, bool ConfirmReplace = false,
-    Guid? DragToken = null, Guid? GroupId = null);
+    Guid? DragToken = null, InviteMe.Domain.Guests.PlanningGroupKind? Group = null);
 
 public interface IPlanningSeatingStore
 {
     Task<PlanningSeatingDto> GetAsync(Guid weddingId, CancellationToken ct);
     Task<PlanningSeatingDto> ChangeAsync(Guid weddingId, ChangePlanningSeating input, CancellationToken ct);
-    Task<PlanningSeatingDto> GetScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<Guid>? groupScope) => GetAsync(weddingId, ct);
-    Task<PlanningSeatingDto> ChangeScopedAsync(Guid weddingId, ChangePlanningSeating input, CancellationToken ct, IReadOnlySet<Guid>? groupScope) => ChangeAsync(weddingId, input, ct);
+    Task<PlanningSeatingDto> GetScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope) => GetAsync(weddingId, ct);
+    Task<PlanningSeatingDto> ChangeScopedAsync(Guid weddingId, ChangePlanningSeating input, CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope) => ChangeAsync(weddingId, input, ct);
 }
 public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePlanningSeating>
 {
@@ -30,7 +30,7 @@ public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePla
         RuleFor(x => x.ExpectedVersion).GreaterThanOrEqualTo(0);
         RuleFor(x => x.Action).Must(x => x is "CREATE_TABLE" or "CREATE_TABLES" or "UPDATE_TABLE" or "DELETE_TABLE" or "MOVE_PLACES" or "APPLY_SUGGESTION");
         RuleFor(x => x.TableId).NotEqual(Guid.Empty).When(x => x.TableId.HasValue);
-        RuleFor(x => x.GroupId).NotEqual(Guid.Empty).When(x => x.GroupId.HasValue);
+        RuleFor(x => x.Group).Must(x => x is null || Enum.IsDefined(x.Value));
         RuleFor(x => x).Must(x => x.TableId.HasValue).When(x => x.Action is "UPDATE_TABLE" or "DELETE_TABLE");
         When(x => x.Action is "CREATE_TABLE" or "UPDATE_TABLE", () =>
         {

@@ -16,7 +16,7 @@ namespace InviteMe.Infrastructure.Notifications;
 /// </summary>
 public sealed class WeddingNotifier(InviteMeDbContext db, IWeddingAccessReader access, TimeProvider clock)
 {
-    public async Task RsvpAsync(Guid weddingId, Guid? guestGroupId, string type, RsvpNotificationData data, CancellationToken ct)
+    public async Task RsvpAsync(Guid weddingId, InviteMe.Domain.Guests.PlanningGroupKind? guestGroupId, string type, RsvpNotificationData data, CancellationToken ct)
     {
         var content = JsonSerializer.Serialize(data, RsvpNotifications.Json);
         foreach (var userId in await RsvpViewersAsync(weddingId, guestGroupId, ct))
@@ -30,7 +30,7 @@ public sealed class WeddingNotifier(InviteMeDbContext db, IWeddingAccessReader a
         db.Add(Notification.ForUser(weddingId, ownerId, type, JsonSerializer.Serialize(data, RsvpNotifications.Json), clock.GetUtcNow()));
     }
 
-    private async Task<IReadOnlyList<Guid>> RsvpViewersAsync(Guid weddingId, Guid? guestGroupId, CancellationToken ct)
+    private async Task<IReadOnlyList<Guid>> RsvpViewersAsync(Guid weddingId, InviteMe.Domain.Guests.PlanningGroupKind? guestGroupId, CancellationToken ct)
     {
         var owner = await db.Weddings.AsNoTracking().Where(x => x.Id == weddingId).Select(x => (Guid?)x.OwnerUserId).SingleOrDefaultAsync(ct);
         if (owner is null) return [];

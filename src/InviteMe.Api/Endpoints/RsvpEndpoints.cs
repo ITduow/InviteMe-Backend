@@ -63,19 +63,19 @@ internal static class RsvpEndpoints
             .WithName("RejectRsvpChangeRequest")
             .Produces<RsvpDto>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
         // Couple06 dashboard (RSVP_VIEW). Clients refetch on realtime events and after reconnecting.
-        host.MapGet("/rsvps/dashboard", (Guid weddingId, RsvpDashboardHandler h, CancellationToken ct, string? side = null, Guid? groupId = null) =>
-                h.SummaryAsync(weddingId, new RsvpDashboardFilter(side, groupId), ct))
+        host.MapGet("/rsvps/dashboard", (Guid weddingId, RsvpDashboardHandler h, CancellationToken ct, string? side = null, InviteMe.Domain.Guests.PlanningGroupKind? group = null) =>
+                h.SummaryAsync(weddingId, new RsvpDashboardFilter(side, group), ct))
             .WithName("GetRsvpDashboard")
             .Produces<RsvpDashboardDto>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden);
-        host.MapGet("/rsvps/dashboard/guests", (Guid weddingId, RsvpDashboardHandler h, CancellationToken ct, string? side = null, Guid? groupId = null,
+        host.MapGet("/rsvps/dashboard/guests", (Guid weddingId, RsvpDashboardHandler h, CancellationToken ct, string? side = null, InviteMe.Domain.Guests.PlanningGroupKind? group = null,
                 string? status = null, string? search = null, int page = 1, int pageSize = 25) =>
-                h.GuestsAsync(weddingId, new RsvpDashboardFilter(side, groupId, status, search), new PageRequest(page, pageSize), ct))
+                h.GuestsAsync(weddingId, new RsvpDashboardFilter(side, group, status, search), new PageRequest(page, pageSize), ct))
             .WithName("ListRsvpDashboardGuests")
             .Produces<PagedResult<RsvpGuestRowDto>>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden);
         host.MapGet("/rsvps/dashboard/export", async (Guid weddingId, RsvpDashboardHandler h, HttpContext http, CancellationToken ct, string? side = null,
-                Guid? groupId = null, string? status = null, string? search = null) =>
+                InviteMe.Domain.Guests.PlanningGroupKind? group = null, string? status = null, string? search = null) =>
             {
-                var file = await h.ExportAsync(weddingId, new RsvpDashboardFilter(side, groupId, status, search), ct);
+                var file = await h.ExportAsync(weddingId, new RsvpDashboardFilter(side, group, status, search), ct);
                 http.Response.Headers.CacheControl = "no-store";
                 // Not text/*: Swagger UI reads text responses as a string and drops the UTF-8 BOM, so Excel shows broken Vietnamese.
                 return Results.File(file.Content, "application/octet-stream", file.FileName);

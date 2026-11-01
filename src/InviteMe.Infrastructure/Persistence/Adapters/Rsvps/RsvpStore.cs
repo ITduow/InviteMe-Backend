@@ -69,23 +69,21 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         return new(weddingId, settings?.PlusOneLimit ?? 0, settings?.Version ?? 0, await Deadline(weddingId, ct));
     }
 
-    public async Task<RsvpDashboardData> DashboardAsync(Guid weddingId, IReadOnlySet<Guid>? groupScope, CancellationToken ct)
+    public async Task<RsvpDashboardData> DashboardAsync(Guid weddingId, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope, CancellationToken ct)
     {
         // One consistent snapshot of the wedding (a host may be editing while the dashboard reads).
         await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct);
         var wedding = await db.Weddings.AsNoTracking().SingleOrDefaultAsync(x => x.Id == weddingId, ct) ?? throw Missing("WEDDING_NOT_FOUND");
         var scopedIds = groupScope?.ToArray();
         var guests = await (from g in db.Set<PlanningGuest>().AsNoTracking()
-                            join grp in db.Set<PlanningGroup>() on g.GroupId equals (Guid?)grp.Id into groups
-                            from grp in groups.DefaultIfEmpty()
-                            where g.WeddingId == weddingId && g.ArchivedAt == null && (scopedIds == null || g.GroupId.HasValue && scopedIds.Contains(g.GroupId.Value))
-                            select new { g.Id, g.RecipientName, g.Side, g.GroupId, GroupName = grp == null ? null : grp.Name, g.Phone, g.Email, g.ExpectedPeople }).ToListAsync(ct);
+                            where g.WeddingId == weddingId && g.ArchivedAt == null && (scopedIds == null || g.Group.HasValue && scopedIds.Contains(g.Group.Value))
+                            select new { g.Id, g.RecipientName, g.Side, g.Group, g.Phone, g.Email, g.ExpectedPeople }).ToListAsync(ct);
         var rsvps = await db.Set<PlanningRsvp>().AsNoTracking().Where(x => x.WeddingId == weddingId).ToDictionaryAsync(x => x.GuestId, ct);
         var people = (await (from p in db.Set<PlanningParticipant>().AsNoTracking()
                              join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
                              join n in db.Set<PlanningDietaryNote>() on p.Id equals n.ParticipantId into notes
                              from n in notes.DefaultIfEmpty()
-                             where g.WeddingId == weddingId && g.ArchivedAt == null && (scopedIds == null || g.GroupId.HasValue && scopedIds.Contains(g.GroupId.Value))
+                             where g.WeddingId == weddingId && g.ArchivedAt == null && (scopedIds == null || g.Group.HasValue && scopedIds.Contains(g.Group.Value))
                              select new RsvpDashboardPerson(p.GuestId, p.Role, p.AttendanceStatus, n == null ? null : n.Note)).ToListAsync(ct))
             .ToLookup(x => x.GuestId);
         var locked = (await db.Set<PlanningRsvpLock>().AsNoTracking().Where(x => x.WeddingId == weddingId).Select(x => x.GuestId).ToListAsync(ct)).ToHashSet();
@@ -102,7 +100,7 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         {
             var rsvp = rsvps.GetValueOrDefault(g.Id);
             var threshold = PlanningRsvpSettings.Threshold(g.ExpectedPeople, plusOneLimit);
-            return new RsvpDashboardGuest(g.Id, g.RecipientName, g.Side, g.GroupId, g.GroupName, g.Phone, g.Email,
+            return new RsvpDashboardGuest(g.Id, g.RecipientName, g.Side, g.Group, g.Group?.Vietnamese(), g.Phone, g.Email,
                 rsvp?.Status, rsvp?.ConfirmedPartySize ?? 0, rsvp?.MaybePartySize ?? 0, threshold, rsvp?.OverThreshold(threshold) ?? false,
                 rsvp?.Note, rsvp?.SubmittedAt, rsvp?.UpdatedAt,
                 lateForAll || locked.Contains(g.Id), pending.Contains(g.Id), people[g.Id].ToList(),
@@ -121,7 +119,7 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         // Tell the couple (and co-hosts who see this guest) in the same transaction as the answer.
         if (InviteMe.Application.Features.Notifications.RsvpNotifications.For(result, input.ExpectedVersion, input.Decision, input.PartySize) is { } note)
         {
-            await notifier.RsvpAsync(wedding.Id, guest.GroupId, note.Type, note.Data, ct);
+            await notifier.RsvpAsync(wedding.Id, guest.Group, note.Type, note.Data, ct);
             await db.SaveChangesAsync(ct);
         }
         await tx.CommitAsync(ct); return result;
@@ -377,10 +375,9 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         var ids = (input.GuestIds ?? []).ToHashSet();
         if (ids.Count > 0 && await db.Set<PlanningGuest>().CountAsync(x => x.WeddingId == weddingId && ids.Contains(x.Id), ct) != ids.Count)
             throw Missing("GUEST_NOT_FOUND");
-        if (input.GroupId is { } groupId)
+        if (input.Group is { } group)
         {
-            if (!await db.Set<PlanningGroup>().AnyAsync(x => x.Id == groupId && x.WeddingId == weddingId, ct)) throw Missing("GROUP_NOT_FOUND");
-            ids.UnionWith(await db.Set<PlanningGuest>().Where(x => x.WeddingId == weddingId && x.GroupId == groupId).Select(x => x.Id).ToListAsync(ct));
+            ids.UnionWith(await db.Set<PlanningGuest>().Where(x => x.WeddingId == weddingId && x.Group == group).Select(x => x.Id).ToListAsync(ct));
         }
         var existing = await db.Set<PlanningRsvpLock>().Where(x => x.WeddingId == weddingId && ids.Contains(x.GuestId)).ToListAsync(ct);
         int affected;
@@ -393,7 +390,7 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         }
         else { db.RemoveRange(existing); affected = existing.Count; }
         db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_rsvp_locks", weddingId, input.Locked ? "RSVP_LOCKED" : "RSVP_UNLOCKED", actor, null,
-            JsonSerializer.Serialize(new { guests = ids.Count, input.GroupId }, SnapshotJson)));
+            JsonSerializer.Serialize(new { guests = ids.Count, input.Group }, SnapshotJson)));
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
         return new(affected, input.Locked);
     }
@@ -529,10 +526,10 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock, InviteMe
 
     // People coming (ATTENDING), optionally only in some groups. Walk-ins added at the counter (Cohost04) are planning
     // participants with ATTENDING, so they are already counted here.
-    private async Task<long> Occupied(Guid weddingId, CancellationToken ct, Guid[]? groups = null) =>
+    private async Task<long> Occupied(Guid weddingId, CancellationToken ct, PlanningGroupKind[]? groups = null) =>
         await (from p in db.Set<PlanningParticipant>() join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id
                where g.WeddingId == weddingId && g.ArchivedAt == null && p.AttendanceStatus == Attending
-                     && (groups == null || g.GroupId.HasValue && groups.Contains(g.GroupId.Value))
+                     && (groups == null || g.Group.HasValue && groups.Contains(g.Group.Value))
                select p).LongCountAsync(ct);
 
     private async Task<Wedding> LockWedding(Guid weddingId, CancellationToken ct)

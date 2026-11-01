@@ -2,6 +2,7 @@ using InviteMe.Application.Common.Behaviors;
 using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Application.Ports.Authorization;
+using InviteMe.Domain.Guests;
 using InviteMe.Domain.Weddings;
 
 namespace InviteMe.UnitTests;
@@ -43,18 +44,18 @@ public sealed class PlanningInvitationLinkTests
     private sealed class Store : IGuestPlanningStore
     {
         public PlanningGuestDto Guest { get; } = new(Guid.NewGuid(), 1, "An", null, "INDIVIDUAL", 1,
-            "BRIDE", null, null, null, InvitationPath: "/invite/" + new string('a', 64));
-        public Task<PlanningGuestPage> ListAsync(Guid id, int page, int size, string? search, string? side, Guid? groupId, CancellationToken ct) =>
+            "BRIDE", PlanningGroupKind.OTHER, null, null, InvitationPath: "/invite/" + new string('a', 64));
+        public Task<PlanningGuestPage> ListAsync(Guid id, int page, int size, string? search, string? side, PlanningGroupKind? group, CancellationToken ct) =>
             Task.FromResult(new PlanningGuestPage([Guest], page, size, 1));
-        public Task<IReadOnlyList<PlanningGroupDto>> ListGroupsAsync(Guid weddingId, CancellationToken ct,
-            IReadOnlySet<Guid>? groupScope = null) => Task.FromResult<IReadOnlyList<PlanningGroupDto>>([]);
+        public Task<IReadOnlyList<PlanningGroupKind>> ListGroupsAsync(Guid weddingId, CancellationToken ct,
+            IReadOnlySet<PlanningGroupKind>? groupScope = null) => Task.FromResult<IReadOnlyList<PlanningGroupKind>>([]);
         public Task<PlanningGuestDetail> DetailAsync(Guid id, Guid guestId, CancellationToken ct) =>
             Task.FromResult(new PlanningGuestDetail(Guest, []));
         public Task<PlanningImportOutcome> ImportAsync(Guid id, Guid key, PlanningImport input, Guid actorId, CancellationToken ct) =>
             throw new NotSupportedException();
         public Task<CreatePlanningGuestOutcome> CreateAsync(Guid weddingId, Guid key, CreatePlanningGuest input,
-            Guid actorId, CancellationToken ct, IReadOnlySet<Guid>? groupScope = null) => throw new NotSupportedException();
+            Guid actorId, CancellationToken ct, IReadOnlySet<PlanningGroupKind>? groupScope = null) => throw new NotSupportedException();
         public Task<ArchivePlanningGuestResult> ArchiveAsync(Guid weddingId, Guid guestId, int expectedVersion,
-            Guid actorId, CancellationToken ct, IReadOnlySet<Guid>? groupScope = null) => throw new NotSupportedException();
+            Guid actorId, CancellationToken ct, IReadOnlySet<PlanningGroupKind>? groupScope = null) => throw new NotSupportedException();
     }
 }

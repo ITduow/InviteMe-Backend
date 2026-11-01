@@ -75,11 +75,11 @@ public interface IReceptionStore
     // Same open-wedding rule as the token lookup: active owner, DRAFT or PUBLISHED wedding.
     Task<ReceptionGuest?> FindGuestAsync(Guid weddingId, Guid guestId, CancellationToken ct);
     Task<IReadOnlyList<ReceptionCandidate>> CandidatesAsync(Guid weddingId, CancellationToken ct);
-    Task<IReadOnlyList<ReceptionCandidate>> CandidatesScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<Guid>? groupScope) => CandidatesAsync(weddingId, ct);
+    Task<IReadOnlyList<ReceptionCandidate>> CandidatesScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope) => CandidatesAsync(weddingId, ct);
     // Inserts the missing check-ins (existing ones are kept) with one audit row each; returns the places checked in now.
     Task<IReadOnlyCollection<Guid>> CheckInAsync(Guid weddingId, Guid guestId, IReadOnlyList<CheckInPlace> places, Guid actor, CancellationToken ct);
     Task<IReadOnlyList<CheckInPlaceStats>> PlaceStatsAsync(Guid weddingId, CancellationToken ct);
-    Task<IReadOnlyList<CheckInPlaceStats>> PlaceStatsScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<Guid>? groupScope) => PlaceStatsAsync(weddingId, ct);
+    Task<IReadOnlyList<CheckInPlaceStats>> PlaceStatsScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope) => PlaceStatsAsync(weddingId, ct);
     Task<Guid?> FindGuestIdByPlaceAsync(Guid weddingId, Guid placeId, CancellationToken ct) => Task.FromResult<Guid?>(null);
     // Idempotent by key: the same key and body replays the first outcome. Adds ATTENDING people with WALK_IN check-ins.
     Task<WalkInOutcome> AddWalkInAsync(Guid weddingId, Guid key, AddWalkIn input, Guid actor, CancellationToken ct);

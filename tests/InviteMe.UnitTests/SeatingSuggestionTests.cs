@@ -1,5 +1,6 @@
 using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Application.Features.Seating.Planning;
+using InviteMe.Domain.Guests;
 
 namespace InviteMe.UnitTests;
 
@@ -9,7 +10,7 @@ public sealed class SeatingSuggestionTests
     private static PlanningSeatingDto Source(int[] capacities, params (int Count, string Side, int Group)[] rows)
     {
         var guests = rows.Select((r, i) => new PlanningGuestDto(Id(i + 1), 1, $"Khách {i + 1}", "Bạn", "FAMILY", r.Count, r.Side,
-            r.Group == 0 ? null : new PlanningGroupDto(Id(100 + r.Group), $"Nhóm {r.Group}"), null, "Ghi chú không phải ràng buộc")).ToArray();
+            r.Group == 1 ? PlanningGroupKind.RELATIVES : r.Group == 2 ? PlanningGroupKind.FRIENDS : PlanningGroupKind.OTHER, null, "Ghi chú không phải ràng buộc")).ToArray();
         var places = guests.SelectMany((g, i) => Enumerable.Range(1, rows[i].Count).Select(n => new PlanningSeatingPlace(Id(1000 + i * 100 + n), g.Id, n, null))).ToArray();
         return new(Id(999), 0, capacities.Select((c, i) => new PlanningTableDto(Id(500 + i), $"Bàn {i + 1}", c)).ToArray(), guests, places, []);
     }
@@ -39,7 +40,7 @@ public sealed class SeatingSuggestionTests
     {
         var source = Source([6,4], (3,"BRIDE",1), (3,"BRIDE",1), (2,"BRIDE",2));
         var result = Suggest(source);
-        var friendPlaces = source.Places.Where(p => source.Guests.Single(g => g.Id == p.GuestId).Group!.Id == Id(101)).Select(p => p.Id).ToHashSet();
+        var friendPlaces = source.Places.Where(p => source.Guests.Single(g => g.Id == p.GuestId).Group == PlanningGroupKind.RELATIVES).Select(p => p.Id).ToHashSet();
         Assert.Single(result.Assignments.Where(a => friendPlaces.Contains(a.PlaceId)).Select(a => a.TableId).Distinct());
         Assert.Equal(8, result.Assignments.Count);
     }

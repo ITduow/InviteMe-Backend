@@ -1,6 +1,7 @@
 using InviteMe.Application.Common.Models;
 using InviteMe.Application.Features.AI.ThankYouTemplates;
 using InviteMe.Application.Features.Invitations.Messaging;
+using InviteMe.Domain.Guests;
 
 namespace InviteMe.UnitTests;
 
@@ -33,6 +34,6 @@ public sealed class MessageRecipientSelectionTests
         var repeated = Guid.NewGuid();
         var validator = new QueueInvitationBatchValidator();
         Assert.False(validator.Validate(new QueueInvitationBatch([repeated, repeated], null, ["EMAIL"])).IsValid);
-        Assert.False(validator.Validate(new QueueInvitationBatch([Guid.NewGuid()], Guid.NewGuid(), ["EMAIL"])).IsValid);
+        Assert.False(validator.Validate(new QueueInvitationBatch([Guid.NewGuid()], PlanningGroupKind.RELATIVES, ["EMAIL"])).IsValid);
     }
 }

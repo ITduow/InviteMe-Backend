@@ -80,10 +80,10 @@ public sealed class RsvpValidationTests
         Assert.False(settings.Validate(new SaveRsvpSettings(-1, 1)).IsValid);
         var locks = new LockRsvpsValidator();
         Assert.True(locks.Validate(new LockRsvps(true, [A])).IsValid);
-        Assert.True(locks.Validate(new LockRsvps(false, GroupId: B)).IsValid);
+        Assert.True(locks.Validate(new LockRsvps(false, Group: InviteMe.Domain.Guests.PlanningGroupKind.RELATIVES)).IsValid);
         Assert.False(locks.Validate(new LockRsvps(true)).IsValid);
         Assert.False(locks.Validate(new LockRsvps(true, [A, A])).IsValid);
-        Assert.False(locks.Validate(new LockRsvps(true, GroupId: Guid.Empty)).IsValid);
+        Assert.False(locks.Validate(new LockRsvps(true, Group: (InviteMe.Domain.Guests.PlanningGroupKind)99)).IsValid);
     }
 
     [Fact]

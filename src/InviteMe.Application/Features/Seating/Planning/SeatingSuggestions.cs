@@ -49,7 +49,7 @@ public static class SeatingSuggestions
         var tables = source.Tables.OrderBy(x => x.Name, StringComparer.Ordinal).ThenBy(x => x.Id).ToArray();
         var warnings = new List<string>();
         var unassigned = new List<UnplacedPlanningGroup>();
-        string GroupKey(PlanningGuestDto g) => $"{g.Side}/{(g.Group is null ? "guest/" + g.Id : "group/" + g.Group.Id)}";
+        string GroupKey(PlanningGuestDto g) => $"{g.Side}/group/{g.Group}";
         var groupSizes = eligible.GroupBy(p => GroupKey(guests[p.GuestId])).ToDictionary(g => g.Key, g => g.Count());
         var fixedIds = assignments.Select(a => a.PlaceId).ToHashSet();
         var placedIds = fixedIds.ToHashSet();
@@ -108,7 +108,7 @@ public static class SeatingSuggestions
             var members = g.Select(a => guests[places[a.PlaceId].GuestId]).ToArray();
             var sides = members.Select(x => x.Side).Distinct().Order().ToArray();
             if (sides.Length > 1) warnings.Add($"Bàn {tables.Single(t => t.Id == g.Key).Name} đã ghép khác phía bằng tay; gợi ý giữ nguyên và không thêm khách vào bàn đó.");
-            return new PlanningTableReason(g.Key, sides, members.Select(x => x.Group?.Name).OfType<string>().Distinct().Order(StringComparer.Ordinal).ToArray(), g.Count(),
+            return new PlanningTableReason(g.Key, sides, members.Select(x => x.Group.ToString()).Distinct().Order(StringComparer.Ordinal).ToArray(), g.Count(),
                 input.Strategy == "AFFINITY" ? "Ưu tiên cùng phía và cùng nhóm quen biết."
                 : input.Strategy == "COMPACT" ? "Ưu tiên nhóm đông và bàn còn ít chỗ vừa đủ; giữ riêng từng phía."
                 : "Xếp từng nhóm đi cùng vào một bàn, không ưu tiên nhóm quan hệ.");

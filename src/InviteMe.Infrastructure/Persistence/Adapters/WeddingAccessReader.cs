@@ -1,5 +1,6 @@
 using InviteMe.Application.Ports.Authorization;
 using InviteMe.Domain.Weddings;
+using InviteMe.Domain.Guests;
 using InviteMe.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -36,10 +37,10 @@ public sealed class WeddingAccessReader(InviteMeDbContext db) : IWeddingAccessRe
                                join permission in db.Permissions.AsNoTracking() on grant.PermissionId equals permission.Id
                                where member.WeddingId == weddingId && member.UserId == userId && member.Status == "ACTIVE" &&
                                      user.Status == "ACTIVE" && grant.WeddingId == weddingId && permission.Scope == "WEDDING"
-                               select new { permission.Code, grant.GroupId }).ToListAsync(cancellationToken);
+                               select new { permission.Code, grant.Group }).ToListAsync(cancellationToken);
         var groupPermissions = groupRows.Where(x => PermissionMap.ContainsKey(x.Code))
             .GroupBy(x => PermissionMap[x.Code])
-            .ToDictionary(x => x.Key, x => (IReadOnlySet<Guid>)x.Select(row => row.GroupId).ToHashSet());
+            .ToDictionary(x => x.Key, x => (IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>)x.Select(row => row.Group).ToHashSet());
         var allPermissions = weddingPermissions.Concat(groupPermissions.Keys).ToHashSet();
 
         return new WeddingAccess(
@@ -50,19 +51,14 @@ public sealed class WeddingAccessReader(InviteMeDbContext db) : IWeddingAccessRe
             groupPermissions);
     }
 
-    public async Task<IReadOnlyDictionary<Guid, string>> FindGroupNamesAsync(Guid weddingId, IReadOnlyCollection<Guid> groupIds,
-        CancellationToken cancellationToken)
-    {
-        var ids = groupIds.ToArray();
-        return await db.Set<InviteMe.Domain.Guests.PlanningGroup>().AsNoTracking()
-            .Where(x => x.WeddingId == weddingId && ids.Contains(x.Id))
-            .ToDictionaryAsync(x => x.Id, x => x.Name, cancellationToken);
-    }
+    public Task<IReadOnlyDictionary<InviteMe.Domain.Guests.PlanningGroupKind, string>> FindGroupNamesAsync(Guid weddingId, IReadOnlyCollection<InviteMe.Domain.Guests.PlanningGroupKind> groupIds,
+        CancellationToken cancellationToken) => Task.FromResult<IReadOnlyDictionary<InviteMe.Domain.Guests.PlanningGroupKind, string>>(
+            groupIds.ToDictionary(x => x, x => x.Vietnamese()));
 
-    public Task<Guid?> FindGuestGroupIdAsync(Guid weddingId, Guid guestId, CancellationToken cancellationToken) =>
+    public Task<InviteMe.Domain.Guests.PlanningGroupKind?> FindGuestGroupIdAsync(Guid weddingId, Guid guestId, CancellationToken cancellationToken) =>
         db.Set<InviteMe.Domain.Guests.PlanningGuest>().AsNoTracking()
             .Where(x => x.WeddingId == weddingId && x.Id == guestId)
-            .Select(x => x.GroupId).SingleOrDefaultAsync(cancellationToken);
+            .Select(x => x.Group).SingleOrDefaultAsync(cancellationToken);
 
     internal IQueryable<WeddingAccessRow> BuildQuery(Guid weddingId, Guid userId)
     {

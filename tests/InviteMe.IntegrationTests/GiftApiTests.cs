@@ -258,7 +258,7 @@ public sealed class GiftApiTests
         var deskEmail = (await desk.GetFromJsonAsync<AccountDto>("/api/auth/me"))!.Email;
         var guests = await Import(db, owner, w, "Lan");
         Assert.Equal(HttpStatusCode.BadRequest, (await owner.PostAsJsonAsync($"/api/weddings/{w}/co-host-invitations",
-            new CreateCoHostInvitationInput(deskEmail, [new("GIFT_RECORD", [Guid.NewGuid()], false)]))).StatusCode);
+            new CreateCoHostInvitationInput(deskEmail, [new("GIFT_RECORD", [PlanningGroupKind.RELATIVES], false)]))).StatusCode);
         await CoHostPermissionTests.AddCoHostAsync(owner, desk, w, "GIFT_RECORD");
         var envelope = await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Cash, 500_000, guests["Lan"].Id), "desk-1"), HttpStatusCode.Created);
         Assert.Equal(("Lan", PlanningGift.Paid), (envelope.GiverName, envelope.Status));

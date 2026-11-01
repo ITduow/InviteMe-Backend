@@ -24,10 +24,8 @@ public sealed class ThankYouMessageStore(InviteMeDbContext db, TimeProvider cloc
     {
         var guests = await db.Set<PlanningGuest>().AsNoTracking()
             .Where(x => x.WeddingId == weddingId && x.ArchivedAt == null && guestIds.Contains(x.Id))
-            .Select(x => new { x.Id, x.RecipientName, x.Email, x.Phone, x.GroupId, x.Side }).ToListAsync(ct);
+            .Select(x => new { x.Id, x.RecipientName, x.Email, x.Phone, x.Group, x.Side }).ToListAsync(ct);
         var ids = guests.Select(x => x.Id).ToArray();
-        var groups = await db.Set<PlanningGroup>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Id != Guid.Empty)
-            .ToDictionaryAsync(x => x.Id, x => x.Name, ct);
         var rsvps = await db.Set<PlanningRsvp>().AsNoTracking().Where(x => x.WeddingId == weddingId && ids.Contains(x.GuestId))
             .ToDictionaryAsync(x => x.GuestId, ct);
         var participantCounts = await db.Set<PlanningParticipant>().AsNoTracking().Where(x => ids.Contains(x.GuestId) && x.AttendanceStatus == "ATTENDING")
@@ -41,7 +39,7 @@ public sealed class ThankYouMessageStore(InviteMeDbContext db, TimeProvider cloc
                 .OrderByDescending(x => x.Status == PlanningGift.Paid).Select(x => x.Message).FirstOrDefault();
             var paidAmount = gifts.Where(x => x.GuestId == g.Id && x.Status == PlanningGift.Paid).Sum(x => x.AmountReceived ?? 0);
             return new ThankYouGuestContext(g.Id, g.RecipientName, g.Email, g.Phone,
-                g.GroupId is { } groupId && groups.TryGetValue(groupId, out var name) ? name : null,
+                g.Group?.Vietnamese(),
                 g.Side, rsvp?.Status ?? "PENDING", rsvp?.ConfirmedPartySize ?? participantCounts.GetValueOrDefault(g.Id, 0),
                 publicWish, paidAmount > 0 ? paidAmount : null);
         }).ToArray();

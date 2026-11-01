@@ -69,8 +69,8 @@ public sealed class WeddingPermissionService(
         if (access is null || !access.Allows(userId.Value, permission))
             throw new ApplicationProblemException(ProblemKind.Forbidden, "WEDDING_ACCESS_DENIED", "Wedding permission is required.");
         if (access.IsWeddingWide(userId.Value, permission)) return;
-        var groupId = await reader.FindGuestGroupIdAsync(weddingId, guestId, cancellationToken);
-        if (groupId is null || !access.GroupsFor(permission).Contains(groupId.Value))
+        var group = await reader.FindGuestGroupIdAsync(weddingId, guestId, cancellationToken);
+        if (group is null || !access.GroupsFor(permission).Contains(group.Value))
             throw new ApplicationProblemException(ProblemKind.NotFound, "GUEST_NOT_FOUND", "Guest is not available in this wedding.");
     }
 }

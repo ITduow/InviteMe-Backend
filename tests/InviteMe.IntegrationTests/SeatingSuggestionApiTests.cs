@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using InviteMe.Application.Features.Guests.Planning;
+using InviteMe.Domain.Guests;
 using InviteMe.Application.Features.Seating.Planning;
 using InviteMe.Application.Features.Identity.Accounts;
 using InviteMe.Application.Ports.Authentication;
@@ -44,8 +45,8 @@ public sealed class SeatingSuggestionApiTests
         static ChangePlanningSeating Apply(PlanningSeatingSuggestion p, bool confirm = false) => new(p.SourceVersion, "APPLY_SUGGESTION",
             Strategy: p.Strategy, Mode: p.Mode, SourceFingerprint: p.SourceFingerprint, ConfirmReplace: confirm);
         var empty = await Preview(); Assert.Empty(empty.Assignments);
-        await Import(new(2,"An",ExpectedPeople:4,Side:"BRIDE",Group:new(NewName:"Họ ngoại",Confirmed:true)),
-            new(3,"Hoa",ExpectedPeople:2,Side:"BRIDE",Group:new(NewName:"Họ ngoại",Confirmed:true)),
+        await Import(new(2,"An",ExpectedPeople:4,Side:"BRIDE",Group:PlanningGroupKind.RELATIVES),
+            new(3,"Hoa",ExpectedPeople:2,Side:"BRIDE",Group:PlanningGroupKind.RELATIVES),
             new(4,"Minh",ExpectedPeople:2,Side:"GROOM"), new(5,"Hà",Side:"GROOM"), new(6,"Nam",Side:"MUTUAL"));
         var noTables = await Preview(); Assert.Equal(10, noTables.Unassigned.Sum(g => g.PlaceIds.Count));
         var plan = await Change(new(0,"CREATE_TABLES",Capacity:4,TableCount:3));

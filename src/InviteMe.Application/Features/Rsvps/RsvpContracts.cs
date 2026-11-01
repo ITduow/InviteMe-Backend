@@ -95,7 +95,7 @@ public sealed record SaveRsvpSettings(int ExpectedVersion, int PlusOneLimit);
 
 /// <summary>Lock or unlock RSVP changes for some guests and/or every guest of a planning group.</summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-public sealed record LockRsvps(bool Locked, IReadOnlyList<Guid>? GuestIds = null, Guid? GroupId = null);
+public sealed record LockRsvps(bool Locked, IReadOnlyList<Guid>? GuestIds = null, InviteMe.Domain.Guests.PlanningGroupKind? Group = null);
 
 public sealed record LockRsvpsResult(int Affected, bool Locked);
 
@@ -133,8 +133,8 @@ public sealed class LockRsvpsValidator : AbstractValidator<LockRsvps>
 {
     public LockRsvpsValidator()
     {
-        RuleFor(x => x).Must(x => (x.GuestIds?.Count ?? 0) > 0 || x.GroupId is not null).WithMessage("Choose guests or a group.");
+        RuleFor(x => x).Must(x => (x.GuestIds?.Count ?? 0) > 0 || x.Group is not null).WithMessage("Choose guests or a group.");
         RuleFor(x => x.GuestIds).Must(x => x is null || (x.Count <= 500 && x.All(id => id != Guid.Empty) && x.Distinct().Count() == x.Count));
-        RuleFor(x => x.GroupId).Must(x => x is null || x != Guid.Empty);
+        RuleFor(x => x.Group).Must(x => x is null || Enum.IsDefined(x.Value));
     }
 }

@@ -30,9 +30,9 @@ internal static class GuestPlanningEndpoints
         }).Produces<PlanningImportResult>(201).Produces<PlanningImportResult>(200).Produces(422);
         g.MapGet("/guests", async (Guid weddingId, GuestPlanningHandler handler,
             CancellationToken ct, int page = 1, int pageSize = 20, string? search = null, string? side = null,
-            Guid? groupId = null, bool archivedOnly = false) =>
+            InviteMe.Domain.Guests.PlanningGroupKind? group = null, bool archivedOnly = false) =>
         {
-            return await handler.ListAsync(weddingId, new(page, pageSize, search, side, groupId, archivedOnly), ct);
+            return await handler.ListAsync(weddingId, new(page, pageSize, search, side, group, archivedOnly), ct);
         });
         g.MapGet("/groups", (Guid weddingId, GuestPlanningHandler handler, CancellationToken ct) =>
             handler.ListGroupsAsync(weddingId, ct));

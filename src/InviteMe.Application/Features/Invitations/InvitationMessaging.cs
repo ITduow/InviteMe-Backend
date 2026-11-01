@@ -21,7 +21,7 @@ public sealed record InvitationDraftDto(Guid WeddingId, string Subject, string C
 public sealed record InvitationPreviewDto(Guid GuestId, string RecipientName, string Subject, string Content, string SmsContent,
     string RsvpLink, string QrLink, string EmailHtml, string EmailPlainText, string? WeddingImageUrl);
 public sealed record InvitationTestSendDto(Guid GuestId);
-public sealed record QueueInvitationBatch(IReadOnlyList<Guid>? GuestIds, Guid? GroupId, IReadOnlyList<string> Channels,
+public sealed record QueueInvitationBatch(IReadOnlyList<Guid>? GuestIds, InviteMe.Domain.Guests.PlanningGroupKind? Group, IReadOnlyList<string> Channels,
     string? Subject = null, string? Content = null, string? SmsContent = null);
 public sealed record InvitationSendJobDto(Guid Id, Guid GuestId, string Channel, string Recipient, string Status,
     int AttemptCount, DateTimeOffset? SentAt, string? ErrorCode, DateTimeOffset? ProviderAcceptedAt = null,
@@ -95,8 +95,8 @@ public sealed class QueueInvitationBatchValidator : AbstractValidator<QueueInvit
     {
         RuleFor(x => x.Channels).NotNull().Must(x => x is { Count: >= 1 and <= 2 } &&
             x.All(c => c is "EMAIL" or "SMS") && x.Distinct(StringComparer.Ordinal).Count() == x.Count);
-        RuleFor(x => x).Must(x => (x.GroupId.HasValue && x.GuestIds is null) ||
-            (!x.GroupId.HasValue && x.GuestIds is { Count: >= 1 } && x.GuestIds.Count <= MessageRecipientLimits.Maximum && x.GuestIds.All(id => id != Guid.Empty) && x.GuestIds.Distinct().Count() == x.GuestIds.Count));
+        RuleFor(x => x).Must(x => (x.Group.HasValue && x.GuestIds is null) ||
+            (!x.Group.HasValue && x.GuestIds is { Count: >= 1 } && x.GuestIds.Count <= MessageRecipientLimits.Maximum && x.GuestIds.All(id => id != Guid.Empty) && x.GuestIds.Distinct().Count() == x.GuestIds.Count));
         RuleFor(x => x.Subject).MaximumLength(200).Must(x => x is null || (!x.Contains('\r') && !x.Contains('\n')));
         RuleFor(x => x.Content).MaximumLength(10000).Must((batch, content) => content is null ||
             (batch.Channels?.Contains("EMAIL", StringComparer.Ordinal) == true

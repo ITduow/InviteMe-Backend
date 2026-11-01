@@ -3,37 +3,35 @@ using InviteMe.Application.Common.Behaviors;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Application.Ports.Authorization;
 using InviteMe.Domain.Weddings;
+using InviteMe.Domain.Guests;
 
 namespace InviteMe.Application.Features.Guests.Planning;
 
-public sealed record PlanningGroupInput(Guid? ExistingId = null, string? NewName = null, bool Confirmed = false);
 public sealed record PlanningRow(int RowNumber, string? RecipientName, string? Honorific = null,
     string? InvitationKind = null, int? ExpectedPeople = null, string? Side = null,
-    PlanningGroupInput? Group = null, string? Phone = null, string? Note = null, string? Email = null,
-    string? GroupName = null);
+    PlanningGroupKind? Group = null, string? Phone = null, string? Note = null, string? Email = null);
 public sealed record PlanningImport(IReadOnlyList<PlanningRow?>? Rows);
 public sealed record ImportIssue(int RowNumber, string Field, string Code, string Message);
-public sealed record PlanningGroupDto(Guid Id, string Name);
 public sealed record PlanningImportedRow(int RowNumber, Guid GuestId, int ExpectedPeople);
 public sealed record PlanningImportResult(Guid ImportId, int CreatedGuestCount, int CreatedPlaceCount,
-    IReadOnlyList<PlanningImportedRow> Items, IReadOnlyList<PlanningGroupDto> CreatedGroups, IReadOnlyList<ImportIssue> Warnings);
+    IReadOnlyList<PlanningImportedRow> Items, IReadOnlyList<ImportIssue> Warnings);
 public sealed record PlanningImportOutcome(PlanningImportResult? Result, IReadOnlyList<ImportIssue> Errors, bool Replayed = false);
 public sealed record PlanningPersonDto(Guid Id, string FullName, string Role, string AttendanceStatus);
 public sealed record PlanningPlaceDto(Guid Id, PlanningPersonDto? Person);
 public sealed record PlanningGuestDto(Guid Id, int Version, string RecipientName, string? Honorific,
-    string InvitationKind, int ExpectedPeople, string Side, PlanningGroupDto? Group, string? Phone, string? Note, string? Email = null,
+    string InvitationKind, int ExpectedPeople, string Side, PlanningGroupKind Group, string? Phone, string? Note, string? Email = null,
     string? InvitationPath = null, DateTimeOffset? ArchivedAt = null, bool PossibleDuplicate = false);
 public sealed record PlanningGuestDetail(PlanningGuestDto Guest, IReadOnlyList<PlanningPlaceDto> Places);
 public sealed record UpdatePlanningGuest(int ExpectedVersion, string RecipientName, string? Honorific, string Side,
-    Guid? GroupId, string? Phone, string? Note, string? Email);
+    PlanningGroupKind Group, string? Phone, string? Note, string? Email);
 public sealed record CreatePlanningGuest(string RecipientName, string? Honorific = null, string InvitationKind = "INDIVIDUAL",
-    int ExpectedPeople = 1, string Side = "UNSPECIFIED", Guid? GroupId = null, string? Phone = null,
+    int ExpectedPeople = 1, string Side = "UNSPECIFIED", PlanningGroupKind Group = PlanningGroupKind.OTHER, string? Phone = null,
     string? Note = null, string? Email = null);
 public sealed record CreatePlanningGuestOutcome(PlanningGuestDto Guest, bool Replayed = false);
 public sealed record ArchivePlanningGuestResult(Guid Id, int Version, DateTimeOffset ArchivedAt);
-public sealed record PlanningGroupList(bool IsWeddingWide, IReadOnlyList<PlanningGroupDto> Items);
+public sealed record PlanningGroupList(bool IsWeddingWide, IReadOnlyList<PlanningGroupKind> Items);
 public sealed record PlanningGuestQuery(int Page = 1, int PageSize = 20, string? Search = null, string? Side = null,
-    Guid? GroupId = null, bool ArchivedOnly = false);
+    PlanningGroupKind? Group = null, bool ArchivedOnly = false);
 public sealed class UpdatePlanningGuestValidator : AbstractValidator<UpdatePlanningGuest>
 {
     public UpdatePlanningGuestValidator()
@@ -42,7 +40,7 @@ public sealed class UpdatePlanningGuestValidator : AbstractValidator<UpdatePlann
         RuleFor(x => x.RecipientName).Must(x => PlanningText.Valid(x, 150, required: true));
         RuleFor(x => x.Honorific).Must(x => PlanningText.Valid(x, 50));
         RuleFor(x => x.Side).Must(PlanningText.ValidSide);
-        RuleFor(x => x.GroupId).Must(x => x is null || x != Guid.Empty);
+        RuleFor(x => x.Group).IsInEnum();
         RuleFor(x => x.Phone).Must(PlanningText.ValidPhone).WithErrorCode("INVALID_PHONE")
             .WithMessage("SĐT cần 7–15 chữ số, có thể có dấu + ở đầu, khoảng trắng, dấu chấm, gạch nối hoặc ngoặc.");
         RuleFor(x => x.Note).Must(x => PlanningText.Valid(x, 2000));
@@ -53,25 +51,25 @@ public sealed record PlanningGuestPage(IReadOnlyList<PlanningGuestDto> Items, in
 public interface IGuestPlanningStore
 {
     Task<CreatePlanningGuestOutcome> CreateAsync(Guid weddingId, Guid key, CreatePlanningGuest input, Guid actorId,
-        CancellationToken ct, IReadOnlySet<Guid>? groupScope = null);
+        CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope = null);
     Task<ArchivePlanningGuestResult> ArchiveAsync(Guid weddingId, Guid guestId, int expectedVersion, Guid actorId,
-        CancellationToken ct, IReadOnlySet<Guid>? groupScope = null);
+        CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope = null);
     Task<PlanningImportOutcome> ImportAsync(Guid weddingId, Guid key, PlanningImport input, Guid actorId, CancellationToken ct);
-    Task<PlanningGuestPage> ListAsync(Guid weddingId, int page, int pageSize, string? search, string? side, Guid? groupId, CancellationToken ct);
-    Task<PlanningGuestPage> ListScopedAsync(Guid weddingId, int page, int pageSize, string? search, string? side, Guid? groupId, CancellationToken ct, IReadOnlySet<Guid>? groupScope) =>
-        ListAsync(weddingId, page, pageSize, search, side, groupId, ct);
+    Task<PlanningGuestPage> ListAsync(Guid weddingId, int page, int pageSize, string? search, string? side, InviteMe.Domain.Guests.PlanningGroupKind? group, CancellationToken ct);
+    Task<PlanningGuestPage> ListScopedAsync(Guid weddingId, int page, int pageSize, string? search, string? side, InviteMe.Domain.Guests.PlanningGroupKind? group, CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope) =>
+        ListAsync(weddingId, page, pageSize, search, side, group, ct);
     Task<PlanningGuestPage> ListByArchiveStatusAsync(Guid weddingId, int page, int pageSize, string? search, string? side,
-        Guid? groupId, bool archivedOnly, CancellationToken ct, IReadOnlySet<Guid>? groupScope) =>
-        ListScopedAsync(weddingId, page, pageSize, search, side, groupId, ct, groupScope);
-    Task<IReadOnlyList<PlanningGroupDto>> ListGroupsAsync(Guid weddingId, CancellationToken ct,
-        IReadOnlySet<Guid>? groupScope = null);
+        InviteMe.Domain.Guests.PlanningGroupKind? group, bool archivedOnly, CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope) =>
+        ListScopedAsync(weddingId, page, pageSize, search, side, group, ct, groupScope);
+    Task<IReadOnlyList<PlanningGroupKind>> ListGroupsAsync(Guid weddingId, CancellationToken ct,
+        IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope = null);
     Task<PlanningGuestDetail> DetailAsync(Guid weddingId, Guid guestId, CancellationToken ct);
     Task<PlanningGuestDetail> DetailWithArchiveAsync(Guid weddingId, Guid guestId, bool includeArchived, CancellationToken ct) =>
         DetailAsync(weddingId, guestId, ct);
     Task<PlanningGuestDto> UpdateAsync(Guid weddingId, Guid guestId, UpdatePlanningGuest input, Guid actorId, CancellationToken ct,
-        IReadOnlySet<Guid>? groupScope = null) => throw new NotSupportedException();
+        IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope = null) => throw new NotSupportedException();
     Task<PlanningGuestDto> RestoreAsync(Guid weddingId, Guid guestId, int expectedVersion, Guid actorId,
-        CancellationToken ct, IReadOnlySet<Guid>? groupScope = null) => throw new NotSupportedException();
+        CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope = null) => throw new NotSupportedException();
 }
 
 public sealed class GuestPlanningHandler(IGuestPlanningStore store, IWeddingPermissionService permissions,
@@ -86,15 +84,8 @@ public sealed class GuestPlanningHandler(IGuestPlanningStore store, IWeddingPerm
         if (!Guid.TryParse(idempotencyKey, out var key) || key == Guid.Empty)
             throw new ValidationException([new("Idempotency-Key", "Idempotency-Key must be a non-empty UUID.")]);
         await creates.ValidateAsync(input, ct);
-        if (scope.IsWeddingWide)
+        if (!scope.IsWeddingWide && !scope.GroupIds.Contains(input.Group))
         {
-            if (input.GroupId is { } groupId && groupId == Guid.Empty)
-                throw new ValidationException([new("GroupId", "GroupId must be a valid group.")]);
-        }
-        else if (input.GroupId is not { } scopedGroup || !scope.GroupIds.Contains(scopedGroup))
-        {
-            if (input.GroupId is null)
-                throw new ValidationException([new("GroupId", "Chọn một nhóm khách trong phạm vi được giao.")]);
             throw new InviteMe.Application.Common.Errors.ApplicationProblemException(
                 InviteMe.Application.Common.Errors.ProblemKind.NotFound, "GROUP_NOT_FOUND",
                 "A co-host can only create guests in an assigned guest group.");
@@ -149,9 +140,9 @@ public sealed class GuestPlanningHandler(IGuestPlanningStore store, IWeddingPerm
     {
         var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.GUEST_VIEW, ct);
         await queries.ValidateAsync(query, ct);
-        if (!scope.IsWeddingWide && query.GroupId.HasValue && !scope.GroupIds.Contains(query.GroupId.Value))
+        if (!scope.IsWeddingWide && query.Group.HasValue && !scope.GroupIds.Contains(query.Group.Value))
             return new([], query.Page, query.PageSize, 0);
-        var effectiveGroup = scope.IsWeddingWide ? query.GroupId : query.GroupId ?? (scope.GroupIds.Count == 1 ? scope.GroupIds.Single() : null);
+        var effectiveGroup = scope.IsWeddingWide ? query.Group : query.Group ?? (scope.GroupIds.Count == 1 ? scope.GroupIds.Single() : null);
         var page = await store.ListByArchiveStatusAsync(weddingId, query.Page, query.PageSize, query.Search,
             query.Side, effectiveGroup, query.ArchivedOnly, ct, scope.IsWeddingWide ? null : scope.GroupIds);
         if (!await permissions.HasPermissionAsync(weddingId, WeddingPermission.INVITATION_SEND, ct))
@@ -179,7 +170,7 @@ public sealed class GuestPlanningHandler(IGuestPlanningStore store, IWeddingPerm
         var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
         await permissions.RequireGuestAsync(weddingId, WeddingPermission.GUEST_EDIT, guestId, ct);
         await updates.ValidateAsync(input, ct);
-        if (!scope.IsWeddingWide && input.GroupId is { } destination && !scope.GroupIds.Contains(destination))
+        if (!scope.IsWeddingWide && !scope.GroupIds.Contains(input.Group))
             throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.NotFound, "GUEST_NOT_FOUND", "Guest is not available in this wedding.");
         var actorId = current.UserId ?? throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.Unauthenticated, "AUTHENTICATION_REQUIRED", "Sign in first.");
         var result = await store.UpdateAsync(weddingId, guestId, input, actorId, ct, scope.IsWeddingWide ? null : scope.GroupIds);

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using InviteMe.Application.Features.Guests.Planning;
+using InviteMe.Domain.Guests;
 using InviteMe.Application.Features.Billing;
 using InviteMe.Application.Features.Identity.Accounts;
 using InviteMe.Application.Features.Invitations.Messaging;
@@ -75,7 +76,7 @@ public sealed class InvitationMessagingApiTests
         using var importRequest = new HttpRequestMessage(HttpMethod.Post, guestsPath + "/imports")
         {
             Content = JsonContent.Create(new PlanningImport([
-                new PlanningRow(1, "Nguyễn Văn An", Phone: "0900123456", Email: "an@example.test", Group: new(NewName: "Nhà gái", Confirmed: true))]))
+                new PlanningRow(1, "Nguyễn Văn An", Phone: "0900123456", Email: "an@example.test", Group: PlanningGroupKind.RELATIVES)]))
         };
         importRequest.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
         var imported = await owner.SendAsync(importRequest);
@@ -83,7 +84,7 @@ public sealed class InvitationMessagingApiTests
             $"Guest import failed ({(int)imported.StatusCode}): {await imported.Content.ReadAsStringAsync()}");
         var importResult = (await imported.Content.ReadFromJsonAsync<PlanningImportResult>())!;
         var guestId = importResult.Items.Single().GuestId;
-        var groupId = importResult.CreatedGroups.Single().Id;
+        var groupId = PlanningGroupKind.RELATIVES;
         var path = $"/api/weddings/{wedding.Id}/invitation-messages";
 
         var generated = await owner.PostAsJsonAsync(path + "/draft/generate", new GenerateInvitationDraft());
@@ -208,7 +209,7 @@ public sealed class InvitationMessagingApiTests
         foreach (var extraGuest in extraRecipients)
         {
             extraGuest.Email = $"invitation-{extraGuest.Id:N}@example.test";
-            extraGuest.GroupId = groupId;
+            extraGuest.Group = groupId;
             extraGuest.InvitationToken = Convert.ToHexString(global::System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
         }
         await db.SaveChangesAsync();
