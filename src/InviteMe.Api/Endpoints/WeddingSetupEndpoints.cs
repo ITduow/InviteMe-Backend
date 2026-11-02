@@ -18,6 +18,12 @@ internal static class WeddingSetupEndpoints
     public static IEndpointRouteBuilder MapWeddingSetup(this IEndpointRouteBuilder endpoints, IConfiguration configuration)
     {
         var group = endpoints.MapGroup("/api/weddings").RequireAuthorization().WithTags("Wedding Setup");
+        group.MapDelete("/{weddingId:guid}", async (Guid weddingId, [FromBody] DeleteWeddingRequest input,
+            WeddingDeletionHandler handler, CancellationToken ct) =>
+                Results.Accepted($"/api/weddings/{weddingId}", await handler.DeleteAsync(weddingId, input, ct)))
+            .WithName("DeleteWedding").WithSummary("Permanently delete a wedding after owner confirmation. Package benefits end immediately.")
+            .Produces<WeddingDeletionAccepted>(202).ProducesValidationProblem().ProducesProblem(401)
+            .ProducesProblem(403).ProducesProblem(404).ProducesProblem(409);
         group.MapPost("", async (CreateWeddingInput input, WeddingSetupHandler handler, CancellationToken ct) =>
         {
             var wedding = await handler.CreateAsync(input, ct);

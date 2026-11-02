@@ -312,6 +312,7 @@ public sealed class InvitationMessagingApiTests
     {
         public List<InvitationOutboundMessage> Messages { get; } = [];
         public bool IsAvailable(string channel) => channel is "EMAIL" or "SMS";
+        public string ProviderNameFor(string channel) => channel == "SMS" ? "TEST_SMS" : "SMTP";
         public Task<InvitationDeliveryReceipt> SendAsync(InvitationOutboundMessage message, CancellationToken ct)
         {
             Messages.Add(message);

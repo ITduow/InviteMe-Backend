@@ -197,6 +197,15 @@ public sealed class ThankYouSendJob
         Status = Pending; NextAttemptAt = now; ErrorCode = null; AttemptCount = 0; ProviderMessageId = null;
         ProviderAcceptedAt = null; ProviderStatusUpdatedAt = null; DeliveredAt = null; SentAt = null; return true;
     }
+
+    public void CancelForWeddingDeletion()
+    {
+        if (Status != Pending) return;
+        Status = Failed;
+        ErrorCode = "WEDDING_DELETION_PENDING";
+        LeaseId = null;
+        LeaseExpiresAt = null;
+    }
 }
 
 public static class ThankYouMessageContent

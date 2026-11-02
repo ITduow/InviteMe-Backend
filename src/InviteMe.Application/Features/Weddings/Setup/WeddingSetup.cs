@@ -26,6 +26,7 @@ public interface IWeddingMediaStorage
     Task<StoredWeddingImage> SaveAsync(Guid weddingId, Stream content, string extension, CancellationToken ct);
     Task<Stream?> OpenReadAsync(Guid weddingId, string fileName, CancellationToken ct);
     Task DeleteAsync(Guid weddingId, string fileName, CancellationToken ct);
+    Task DeleteWeddingAsync(Guid weddingId, CancellationToken ct);
     bool TryGetOwnedFileName(Guid weddingId, string? reference, out string fileName);
 }
 
@@ -208,8 +209,12 @@ public sealed class WeddingSetupHandler(IWeddingSetupStore store, IWeddingMediaS
         return update.Version;
     }
 
-    public Task<Stream?> OpenCoverImageAsync(Guid weddingId, string fileName, CancellationToken ct) =>
-        mediaStorage.OpenReadAsync(weddingId, fileName, ct);
+    public async Task<Stream?> OpenCoverImageAsync(Guid weddingId, string fileName, CancellationToken ct)
+    {
+        var wedding = await store.GetAsync(weddingId, ct);
+        if (wedding is null || wedding.Status == "ARCHIVED") return null;
+        return await mediaStorage.OpenReadAsync(weddingId, fileName, ct);
+    }
 
     private async Task<Guid> RequireOwner(Guid weddingId, CancellationToken ct)
     {

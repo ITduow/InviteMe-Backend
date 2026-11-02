@@ -3,6 +3,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Xml.Linq;
 using InviteMe.Application.Features.Weddings.Setup;
 
 namespace InviteMe.Infrastructure.Media;
@@ -47,13 +48,38 @@ internal sealed class S3ObjectClient(HttpClient httpClient, WeddingMediaOptions 
             response.EnsureSuccessStatusCode();
     }
 
-    private async Task<HttpRequestMessage> CreateSignedRequestAsync(HttpMethod method, string objectKey, string payloadHash, CancellationToken ct)
+    public async Task DeletePrefixAsync(string prefix, CancellationToken ct)
+    {
+        string? continuationToken = null;
+        do
+        {
+            var parameters = new SortedDictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["list-type"] = "2",
+                ["prefix"] = prefix
+            };
+            if (!string.IsNullOrEmpty(continuationToken)) parameters["continuation-token"] = continuationToken;
+            var canonicalQuery = string.Join("&", parameters.Select(pair => $"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(pair.Value)}"));
+            using var request = await CreateSignedRequestAsync(HttpMethod.Get, "", EmptyBodySha256, ct, canonicalQuery);
+            using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            response.EnsureSuccessStatusCode();
+            var xml = XDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            XNamespace ns = "http://s3.amazonaws.com/doc/2006-03-01/";
+            foreach (var key in xml.Descendants(ns + "Contents").Select(item => item.Element(ns + "Key")?.Value)
+                         .Where(value => !string.IsNullOrWhiteSpace(value)))
+                await DeleteAsync(key!, ct);
+            continuationToken = xml.Root?.Element(ns + "NextContinuationToken")?.Value;
+        } while (!string.IsNullOrEmpty(continuationToken));
+    }
+
+    private async Task<HttpRequestMessage> CreateSignedRequestAsync(HttpMethod method, string objectKey, string payloadHash,
+        CancellationToken ct, string canonicalQuery = "")
     {
         var creds = await ResolveCredentialsAsync(ct);
         var region = string.IsNullOrWhiteSpace(options.S3Region) ? "ap-southeast-1" : options.S3Region.Trim();
         var bucket = options.S3BucketName.Trim();
         var host = $"{bucket}.s3.{region}.amazonaws.com";
-        var canonicalUri = "/" + objectKey.TrimStart('/');
+        var canonicalUri = string.IsNullOrEmpty(objectKey) ? "/" : "/" + objectKey.TrimStart('/');
         var now = DateTimeOffset.UtcNow;
         var amzDate = now.ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture);
         var dateStamp = now.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
@@ -69,7 +95,7 @@ internal sealed class S3ObjectClient(HttpClient httpClient, WeddingMediaOptions 
         if (!string.IsNullOrEmpty(creds.SessionToken))
             canonicalHeaders.Append("x-amz-security-token:").Append(creds.SessionToken).Append('\n');
 
-        var canonicalRequest = $"{method.Method}\n{canonicalUri}\n\n{canonicalHeaders}\n{signedHeaders}\n{payloadHash}";
+        var canonicalRequest = $"{method.Method}\n{canonicalUri}\n{canonicalQuery}\n{canonicalHeaders}\n{signedHeaders}\n{payloadHash}";
         var credentialScope = $"{dateStamp}/{region}/s3/aws4_request";
         var stringToSign = $"AWS4-HMAC-SHA256\n{amzDate}\n{credentialScope}\n{Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonicalRequest)))}";
 
@@ -77,7 +103,8 @@ internal sealed class S3ObjectClient(HttpClient httpClient, WeddingMediaOptions 
         var signature = Convert.ToHexStringLower(HMACSHA256.HashData(signingKey, Encoding.UTF8.GetBytes(stringToSign)));
         var authorization = $"AWS4-HMAC-SHA256 Credential={creds.AccessKeyId}/{credentialScope}, SignedHeaders={signedHeaders}, Signature={signature}";
 
-        var request = new HttpRequestMessage(method, $"https://{host}{canonicalUri}");
+        var requestUri = string.IsNullOrEmpty(canonicalQuery) ? $"https://{host}{canonicalUri}" : $"https://{host}{canonicalUri}?{canonicalQuery}";
+        var request = new HttpRequestMessage(method, requestUri);
         request.Headers.Host = host;
         request.Headers.TryAddWithoutValidation("x-amz-date", amzDate);
         request.Headers.TryAddWithoutValidation("x-amz-content-sha256", payloadHash);

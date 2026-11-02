@@ -320,6 +320,7 @@ public sealed class RsvpReminderApiTests
         public bool FailNext { get; set; }
         public bool Available { get; set; } = true;
         public bool IsAvailable(string channel) => Available;
+        public string ProviderNameFor(string channel) => channel == "SMS" ? "TEST_SMS" : "SMTP";
         public Task<InvitationDeliveryReceipt> SendAsync(InvitationOutboundMessage message, CancellationToken ct)
         {
             if (FailNext) { FailNext = false; throw new InvalidOperationException("mail server down"); }

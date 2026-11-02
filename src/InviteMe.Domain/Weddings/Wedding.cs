@@ -32,4 +32,11 @@ public sealed class Wedding
         CoverImageUrl = coverImageUrl;
         Version++;
     }
+
+    public void ArchiveForDeletion()
+    {
+        if (Status == "ARCHIVED") return;
+        Status = "ARCHIVED";
+        Version++;
+    }
 }

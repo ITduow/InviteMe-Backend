@@ -94,6 +94,7 @@ public sealed class WeddingCoverUploadHandlerTests
         }
         public Task<Stream?> OpenReadAsync(Guid weddingId, string fileName, CancellationToken ct) => Task.FromResult<Stream?>(null);
         public Task DeleteAsync(Guid weddingId, string fileName, CancellationToken ct) { DeletedKey = fileName; return Task.CompletedTask; }
+        public Task DeleteWeddingAsync(Guid weddingId, CancellationToken ct) => Task.CompletedTask;
         public bool TryGetOwnedFileName(Guid weddingId, string? reference, out string fileName) { fileName = ""; return false; }
     }
 }

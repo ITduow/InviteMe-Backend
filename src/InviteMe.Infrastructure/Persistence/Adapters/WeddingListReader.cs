@@ -1,6 +1,7 @@
 using InviteMe.Application.Common.Errors;
 using InviteMe.Application.Common.Models;
 using InviteMe.Application.Features.Weddings.Setup;
+using InviteMe.Domain.Billing;
 using InviteMe.Domain.Guests;
 using InviteMe.Domain.Weddings;
 using Microsoft.EntityFrameworkCore;
@@ -11,7 +12,7 @@ public sealed class WeddingListReader(InviteMeDbContext db) : IWeddingListReader
 {
     public async Task<PagedResult<WeddingSummaryDto>> ListAsync(Guid userId, WeddingListQuery query, CancellationToken ct)
     {
-        var accessible = db.Weddings.AsNoTracking().Where(w =>
+        var accessible = db.Weddings.AsNoTracking().Where(w => w.Status != "ARCHIVED" &&
             db.Users.Any(u => u.Id == userId && u.Status == "ACTIVE") &&
             // Same rule as WeddingAccess: an active co-host always sees the wedding (WEDDING_VIEW comes with the membership).
             (w.OwnerUserId == userId || db.WeddingMembers.Any(member =>
@@ -34,6 +35,11 @@ public sealed class WeddingListReader(InviteMeDbContext db) : IWeddingListReader
                        Wedding = wedding,
                        EventStart = settings == null ? (DateTimeOffset?)null : settings.MainEventAt,
                        TimeZone = settings == null ? "Asia/Ho_Chi_Minh" : settings.Timezone,
+                       ActivePlanName = wedding.OwnerUserId != userId ? null :
+                           (from subscription in db.Set<Subscription>().AsNoTracking()
+                            join plan in db.Set<Plan>().AsNoTracking() on subscription.PlanId equals plan.Id
+                            where subscription.WeddingId == wedding.Id && subscription.Status == Subscription.Active
+                            select plan.Name).FirstOrDefault(),
                        // Confirmed people of active Guest Planning v2 invitations (walk-ins included), the same count RSVP uses for capacity.
                        ParticipantCount = db.Set<PlanningParticipant>().LongCount(participant => participant.AttendanceStatus == "ATTENDING" &&
                            db.Set<PlanningGuest>().Any(guest => guest.Id == participant.GuestId && guest.WeddingId == wedding.Id && guest.ArchivedAt == null))
@@ -50,7 +56,8 @@ public sealed class WeddingListReader(InviteMeDbContext db) : IWeddingListReader
         var page = await ordered.Skip((query.Page - 1) * query.PageSize).Take(query.PageSize).ToListAsync(ct);
         var items = page.Select(x => new WeddingSummaryDto(x.Wedding.Id, x.Wedding.Title,
             ToLocalDate(x.EventStart, x.TimeZone), x.ParticipantCount, x.Wedding.MaxCapacity ?? 0,
-            x.Wedding.Version, x.Wedding.CoverImageUrl)).ToArray();
+            x.Wedding.Version, x.Wedding.CoverImageUrl, x.Wedding.Slug,
+            x.Wedding.OwnerUserId == userId, x.ActivePlanName)).ToArray();
         return new PagedResult<WeddingSummaryDto>(items, query.Page, query.PageSize, total);
     }
 
