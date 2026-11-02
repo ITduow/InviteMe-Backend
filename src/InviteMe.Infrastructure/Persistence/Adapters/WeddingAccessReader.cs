@@ -68,7 +68,7 @@ public sealed class WeddingAccessReader(InviteMeDbContext db) : IWeddingAccessRe
     {
         return from wedding in db.Weddings.AsNoTracking()
                from actor in db.Users.AsNoTracking().Where(x => x.Id == userId && x.Status == "ACTIVE")
-               where wedding.Id == weddingId
+               where wedding.Id == weddingId && wedding.Status != "ARCHIVED"
                from member in db.WeddingMembers.AsNoTracking()
                    .Where(x => x.WeddingId == wedding.Id && x.UserId == actor.Id && x.Status == "ACTIVE").DefaultIfEmpty()
                from grant in db.WeddingMemberPermissions.AsNoTracking()

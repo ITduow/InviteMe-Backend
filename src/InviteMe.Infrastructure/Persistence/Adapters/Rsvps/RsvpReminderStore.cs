@@ -63,6 +63,14 @@ public sealed class RsvpReminderStore(InviteMeDbContext db) : IRsvpReminderStore
 
     public async Task<IReadOnlyList<Guid>> EnqueueAsync(Guid weddingId, IReadOnlyList<RsvpReminderEnqueue> items, DateTimeOffset now, CancellationToken ct)
     {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var wedding = await db.Weddings.FromSqlInterpolated($"SELECT * FROM inviteme.weddings WHERE id = {weddingId} FOR UPDATE")
+            .SingleOrDefaultAsync(ct);
+        if (wedding is null || !wedding.CanEdit)
+        {
+            await tx.RollbackAsync(ct);
+            return [];
+        }
         var queued = new List<Guid>();
         foreach (var item in items)
         {
@@ -77,6 +85,7 @@ public sealed class RsvpReminderStore(InviteMeDbContext db) : IRsvpReminderStore
                 """, ct);
             if (inserted == 1) queued.Add(item.GuestId);
         }
+        await tx.CommitAsync(ct);
         return queued;
     }
 
@@ -85,14 +94,18 @@ public sealed class RsvpReminderStore(InviteMeDbContext db) : IRsvpReminderStore
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var rows = weddingId is { } w
             ? await db.Set<PlanningRsvpReminder>().FromSqlInterpolated($"""
-                SELECT * FROM inviteme.planning_rsvp_reminders
-                WHERE wedding_id = {w} AND ((status = 'PENDING' AND next_attempt_at <= {now}) OR (status = 'SENDING' AND lease_until < {now}))
-                ORDER BY next_attempt_at, id LIMIT {limit} FOR UPDATE SKIP LOCKED
+                SELECT reminder.* FROM inviteme.planning_rsvp_reminders reminder
+                JOIN inviteme.weddings wedding ON wedding.id = reminder.wedding_id
+                WHERE wedding.status <> 'ARCHIVED' AND reminder.wedding_id = {w}
+                  AND ((reminder.status = 'PENDING' AND reminder.next_attempt_at <= {now}) OR (reminder.status = 'SENDING' AND reminder.lease_until < {now}))
+                ORDER BY reminder.next_attempt_at, reminder.id LIMIT {limit} FOR UPDATE OF reminder SKIP LOCKED
                 """).ToListAsync(ct)
             : await db.Set<PlanningRsvpReminder>().FromSqlInterpolated($"""
-                SELECT * FROM inviteme.planning_rsvp_reminders
-                WHERE (status = 'PENDING' AND next_attempt_at <= {now}) OR (status = 'SENDING' AND lease_until < {now})
-                ORDER BY next_attempt_at, id LIMIT {limit} FOR UPDATE SKIP LOCKED
+                SELECT reminder.* FROM inviteme.planning_rsvp_reminders reminder
+                JOIN inviteme.weddings wedding ON wedding.id = reminder.wedding_id
+                WHERE wedding.status <> 'ARCHIVED'
+                  AND ((reminder.status = 'PENDING' AND reminder.next_attempt_at <= {now}) OR (reminder.status = 'SENDING' AND reminder.lease_until < {now}))
+                ORDER BY reminder.next_attempt_at, reminder.id LIMIT {limit} FOR UPDATE OF reminder SKIP LOCKED
                 """).ToListAsync(ct);
         var claimed = new List<PlanningRsvpReminder>();
         foreach (var row in rows)

@@ -62,6 +62,9 @@ RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 BEGIN
+    IF TG_OP = 'DELETE' AND current_setting('inviteme.allow_wedding_purge', true) = 'on' THEN
+        RETURN OLD;
+    END IF;
     RAISE EXCEPTION 'rsvp_history is append-only: % is not allowed', TG_OP
         USING ERRCODE = 'restrict_violation',
               HINT = 'Record a new RSVP change instead of editing history.';

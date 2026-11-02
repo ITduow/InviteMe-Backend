@@ -82,6 +82,8 @@ public static class DependencyInjection
             InviteMe.Infrastructure.Notifications.TextbeeWebhookSignatureVerifier>();
         if (configuration.GetValue("ThankYouMessages:WorkerEnabled", true))
             services.AddHostedService<InviteMe.Infrastructure.Notifications.ThankYouDeliveryWorker>();
+        if (configuration.GetValue("WeddingDeletion:WorkerEnabled", true))
+            services.AddHostedService<InviteMe.Infrastructure.Weddings.WeddingDeletionWorker>();
         services.AddOptions<InviteMe.Infrastructure.Authentication.GoogleAuthOptions>().BindConfiguration("Authentication:Google");
         services.AddScoped<InviteMe.Application.Ports.Authentication.IGoogleTokenValidator, InviteMe.Infrastructure.Authentication.GoogleTokenValidator>();
 
@@ -92,6 +94,7 @@ public static class DependencyInjection
         services.AddScoped<InviteMe.Application.Features.Weddings.CoHosts.ICoHostInvitationStore, CoHostInvitationStore>();
         services.AddScoped<InviteMe.Application.Features.Weddings.CoHosts.ICoHostInvitationEmailSender, SmtpCoHostInvitationEmailSender>();
         services.AddScoped<InviteMe.Application.Features.Weddings.Setup.IWeddingSetupStore, WeddingSetupStore>();
+        services.AddScoped<InviteMe.Application.Features.Weddings.Setup.IWeddingDeletionStore, WeddingDeletionStore>();
         services.AddScoped<InviteMe.Application.Features.Billing.IWeddingEntitlements, WeddingEntitlements>();
         services.AddScoped<InviteMe.Application.Features.Billing.IPlanOrderStore, PlanOrderStore>();
         services.AddSingleton(new InviteMe.Application.Features.Billing.BillingAccountOptions(configuration["Billing:BankBin"],

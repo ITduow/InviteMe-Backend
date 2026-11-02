@@ -96,9 +96,12 @@ public sealed class PlanOrderStore(InviteMeDbContext db, TimeProvider clock, Bil
         if (await Replay(payload.Id, ct) is { } replay) return replay;
         var now = clock.GetUtcNow();
         var accountNumber = account.Owns(payload.SubAccount) ? payload.SubAccount! : payload.AccountNumber ?? "";
+        var candidate = await db.Set<PlanOrder>().AsNoTracking().Where(x => x.Code == code)
+            .Select(x => new { x.Id, x.WeddingId }).SingleOrDefaultAsync(ct);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        var order = await db.Set<PlanOrder>().FromSqlInterpolated($"SELECT * FROM inviteme.plan_orders WHERE code = {code} FOR UPDATE")
-            .SingleOrDefaultAsync(ct);
+        if (candidate?.WeddingId is { } weddingId)
+            await LockWedding(weddingId, ct, requireOpen: false);
+        var order = candidate is null ? null : await LockOrder(candidate.Id, ct);
         var status = PlanPayment.Review;
         string? reason;
         var activated = false;
@@ -249,7 +252,8 @@ public sealed class PlanOrderStore(InviteMeDbContext db, TimeProvider clock, Bil
     private async Task<bool> PriceStillValid(PlanOrder order, CancellationToken ct)
     {
         if (order.WeddingId is not { } weddingId) return false;
-        await LockWedding(weddingId, ct, requireOpen: false);
+        var wedding = await LockWedding(weddingId, ct, requireOpen: false);
+        if (wedding.Status == "ARCHIVED") return false;
         var target = await db.Set<Plan>().AsNoTracking().SingleAsync(x => x.Id == order.PlanId, ct);
         if (target.Status != Plan.Active) return false;
         var current = await db.Set<Subscription>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Status == Subscription.Active)

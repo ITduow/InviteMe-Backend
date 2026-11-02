@@ -45,6 +45,9 @@ public sealed class S3WeddingMediaStorage(HttpClient httpClient, IOptions<Weddin
         await _s3.DeleteAsync(ObjectKey(weddingId, fileName), ct);
     }
 
+    public Task DeleteWeddingAsync(Guid weddingId, CancellationToken ct) =>
+        weddingId == Guid.Empty ? Task.CompletedTask : _s3.DeletePrefixAsync(ObjectPrefix(weddingId), ct);
+
     public bool TryGetOwnedFileName(Guid weddingId, string? reference, out string fileName)
     {
         fileName = "";
@@ -64,6 +67,12 @@ public sealed class S3WeddingMediaStorage(HttpClient httpClient, IOptions<Weddin
     {
         var prefix = string.IsNullOrWhiteSpace(_options.S3KeyPrefix) ? "wedding-covers" : _options.S3KeyPrefix.Trim('/');
         return $"{prefix}/{weddingId:N}/{fileName}";
+    }
+
+    private string ObjectPrefix(Guid weddingId)
+    {
+        var prefix = string.IsNullOrWhiteSpace(_options.S3KeyPrefix) ? "wedding-covers" : _options.S3KeyPrefix.Trim('/');
+        return $"{prefix}/{weddingId:N}/";
     }
 
     private static string RelativeUrl(Guid weddingId, string fileName) => $"/media/wedding-covers/{weddingId:N}/{fileName}";

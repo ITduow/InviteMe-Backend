@@ -190,6 +190,7 @@ public sealed class WeddingWebsiteValidationTests
         public Task<StoredWeddingImage> SaveAsync(Guid id, Stream content, string extension, CancellationToken ct) => throw new NotSupportedException();
         public Task<Stream?> OpenReadAsync(Guid id, string fileName, CancellationToken ct) => Task.FromResult<Stream?>(new MemoryStream([1]));
         public Task DeleteAsync(Guid id, string fileName, CancellationToken ct) => Task.CompletedTask;
+        public Task DeleteWeddingAsync(Guid id, CancellationToken ct) => Task.CompletedTask;
         public bool TryGetOwnedFileName(Guid id, string? reference, out string fileName)
         {
             fileName = "known.png";

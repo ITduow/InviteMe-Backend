@@ -43,6 +43,19 @@ public sealed class LocalWeddingMediaStorage(IOptions<WeddingMediaOptions> optio
         return Task.CompletedTask;
     }
 
+    public Task DeleteWeddingAsync(Guid weddingId, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (weddingId == Guid.Empty) return Task.CompletedTask;
+        var configured = string.IsNullOrWhiteSpace(_options.LocalDirectory)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "InviteMe", "WeddingMedia")
+            : _options.LocalDirectory;
+        var root = Path.GetFullPath(configured);
+        var directory = SafePath(root, weddingId.ToString("N"));
+        if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        return Task.CompletedTask;
+    }
+
     public bool TryGetOwnedFileName(Guid weddingId, string? reference, out string fileName)
     {
         fileName = "";

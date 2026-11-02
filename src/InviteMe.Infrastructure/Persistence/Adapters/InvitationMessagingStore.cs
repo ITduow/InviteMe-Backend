@@ -260,16 +260,20 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var now = clock.GetUtcNow();
         await db.Database.ExecuteSqlInterpolatedAsync($"""
-            UPDATE inviteme.invitation_send_jobs
+            UPDATE inviteme.invitation_send_jobs AS job
             SET status = 'REVIEW_REQUIRED', last_error_code = 'SMS_SEND_OUTCOME_UNKNOWN', lease_id = NULL, lease_until = NULL
-            WHERE status = 'SENDING' AND channel = 'SMS' AND provider_name = 'TEXTBEE' AND lease_until <= {now}
+            FROM inviteme.weddings AS wedding
+            WHERE job.wedding_id = wedding.id AND wedding.status <> 'ARCHIVED'
+              AND job.status = 'SENDING' AND job.channel = 'SMS' AND job.provider_name = 'TEXTBEE' AND job.lease_until <= {now}
             """, ct);
         var jobs = await db.InvitationSendJobs.FromSqlInterpolated($"""
-            SELECT * FROM inviteme.invitation_send_jobs
-            WHERE ((status = 'PENDING' AND next_attempt_at <= {now}) OR
-                   (status = 'SENDING' AND lease_until <= {now} AND (channel = 'EMAIL' OR provider_name = 'MOCK')))
-              AND (channel = 'EMAIL' OR (channel = 'SMS' AND {smsEnabled}))
-            ORDER BY next_attempt_at, created_at, id
+            SELECT job.* FROM inviteme.invitation_send_jobs AS job
+            JOIN inviteme.weddings AS wedding ON wedding.id = job.wedding_id
+            WHERE wedding.status <> 'ARCHIVED'
+              AND ((job.status = 'PENDING' AND job.next_attempt_at <= {now}) OR
+                   (job.status = 'SENDING' AND job.lease_until <= {now} AND (job.channel = 'EMAIL' OR job.provider_name = 'MOCK')))
+              AND (job.channel = 'EMAIL' OR (job.channel = 'SMS' AND {smsEnabled}))
+            ORDER BY job.next_attempt_at, job.created_at, job.id
             LIMIT {limit} FOR UPDATE SKIP LOCKED
             """).ToListAsync(ct);
         foreach (var job in jobs)
@@ -387,6 +391,11 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
         return title;
     }
 
-    private async Task LockWedding(Guid weddingId, CancellationToken ct) =>
-        await db.Database.ExecuteSqlInterpolatedAsync($"SELECT id FROM inviteme.weddings WHERE id={weddingId} FOR UPDATE", ct);
+    private async Task LockWedding(Guid weddingId, CancellationToken ct)
+    {
+        var wedding = await db.Weddings.FromSqlInterpolated($"SELECT * FROM inviteme.weddings WHERE id={weddingId} FOR UPDATE")
+            .SingleOrDefaultAsync(ct);
+        if (wedding is null || !wedding.CanEdit)
+            throw new ApplicationProblemException(ProblemKind.BusinessRule, "WEDDING_CLOSED", "Wedding is closed.");
+    }
 }
