@@ -75,6 +75,25 @@ public sealed class CreateWeddingInputValidator : AbstractValidator<CreateWeddin
     internal static bool IsAllowedCoverUrl(string? value) => string.IsNullOrWhiteSpace(value) ||
         value.Length <= 2048 && Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri) &&
         uri.Scheme == Uri.UriSchemeHttps && string.IsNullOrEmpty(uri.UserInfo);
+
+    internal static bool IsGeneratedRelativeCoverPath(string? value)
+    {
+        const string prefix = "/media/wedding-covers/";
+        if (string.IsNullOrWhiteSpace(value) || !value.StartsWith(prefix, StringComparison.Ordinal))
+            return false;
+
+        var segments = value[prefix.Length..].Split('/');
+        if (segments.Length != 2 || !Guid.TryParseExact(segments[0], "N", out _))
+            return false;
+
+        var fileName = segments[1];
+        var extension = Path.GetExtension(fileName);
+        if (extension is not (".jpg" or ".png" or ".webp"))
+            return false;
+
+        var stem = fileName[..^extension.Length];
+        return stem.Length == 48 && stem.All(Uri.IsHexDigit);
+    }
 }
 
 public sealed class UpdateWeddingInputValidator : AbstractValidator<UpdateWeddingInput>
@@ -90,7 +109,10 @@ public sealed class UpdateWeddingInputValidator : AbstractValidator<UpdateWeddin
         RuleFor(x => x.RsvpDeadline).Must(x => x != default).WithMessage("RSVP deadline is required.");
         RuleFor(x => x.RsvpDeadline).Must((model, deadline) => deadline <= model.EventDateTime)
             .WithMessage("RSVP deadline must not be after the wedding date.");
-        RuleFor(x => x.CoverImageUrl).Must(CreateWeddingInputValidator.IsAllowedCoverUrl).WithMessage("Cover image must be an absolute HTTPS URL.");
+        RuleFor(x => x.CoverImageUrl)
+            .Must(value => CreateWeddingInputValidator.IsAllowedCoverUrl(value) ||
+                CreateWeddingInputValidator.IsGeneratedRelativeCoverPath(value))
+            .WithMessage("Cover image must be an absolute HTTPS URL or a generated wedding media path.");
         RuleFor(x => x.ExpectedVersion).GreaterThan(0);
     }
 }
@@ -127,6 +149,10 @@ public sealed class WeddingSetupHandler(IWeddingSetupStore store, IWeddingMediaS
         if (access is null || !access.IsOwner(ownerId))
             throw new ApplicationProblemException(ProblemKind.Forbidden, "WEDDING_ACCESS_DENIED", "Only the wedding owner can update setup.");
         await updateValidation.ValidateAsync(input, ct);
+        if (CreateWeddingInputValidator.IsGeneratedRelativeCoverPath(input.CoverImageUrl) &&
+            !mediaStorage.TryGetOwnedFileName(weddingId, input.CoverImageUrl, out _))
+            throw new ApplicationProblemException(ProblemKind.BadRequest, "WEDDING_COVER_INVALID",
+                "A relative cover image path must belong to this wedding.");
         var result = await store.UpdateAsync(weddingId, input, WeddingSlug.Normalize(input.Slug), ct);
         await changes.PublishAsync(weddingId, new("WeddingSetupChanged", weddingId, result.Version), ct);
         return result;
