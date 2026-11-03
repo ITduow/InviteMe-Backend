@@ -32,7 +32,7 @@ public sealed class ReceptionCheckInApiTests
                 new(3, "Trần Thị Bình", "Chị", "INDIVIDUAL", 1, "GROOM")]))
         };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        Assert.Equal(HttpStatusCode.Created, (await owner.SendAsync(import)).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await owner.SendCheckedImportAsync(import)).StatusCode);
         var guests = await db.Set<PlanningGuest>().AsNoTracking().ToListAsync();
         var duc = guests.Single(x => x.RecipientName == "Nguyễn Văn Đức");
         var binh = guests.Single(x => x.RecipientName == "Trần Thị Bình");

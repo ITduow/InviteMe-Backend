@@ -173,7 +173,7 @@ public sealed class ThankYouMessageApiTests
             ]))
         };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        var imported = await Read<PlanningImportResult>(await owner.SendAsync(import));
+        var imported = await Read<PlanningImportResult>(await owner.SendCheckedImportAsync(import));
         var ids = imported!.Items.Select(x => x.GuestId).ToArray();
         var guest = await db.Set<PlanningGuest>().AsNoTracking().SingleAsync(x => x.Id == ids[0]);
         await test(db, new Fixture(factory, owner, ids[0], ids[1], wedding.Id, wedding.OwnerUserId, guest.InvitationToken!, ai));

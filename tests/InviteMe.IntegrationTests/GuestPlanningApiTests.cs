@@ -207,7 +207,7 @@ public sealed class GuestPlanningApiTests
         {
             var request = new HttpRequestMessage(HttpMethod.Post, path + "/imports") { Content = JsonContent.Create(body) };
             request.Headers.Add("Idempotency-Key", key.ToString());
-            return await owner.SendAsync(request);
+            return await owner.SendCheckedImportAsync(request);
         }
         var group = PlanningGroupKind.RELATIVES;
         var good = new PlanningRow(2, "Nguyễn Văn An", "Bác", "FAMILY", 4, "BRIDE", group,

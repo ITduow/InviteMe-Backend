@@ -444,7 +444,7 @@ public sealed class GiftApiTests
         using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/weddings/{weddingId}/guest-planning/imports")
         { Content = JsonContent.Create(new PlanningImport(names.Select((n, i) => new PlanningRow(i + 2, n)).ToArray())) };
         request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        var ids = (await Read<PlanningImportResult>(await owner.SendAsync(request), HttpStatusCode.Created)).Items.Select(x => x.GuestId).ToList();
+        var ids = (await Read<PlanningImportResult>(await owner.SendCheckedImportAsync(request), HttpStatusCode.Created)).Items.Select(x => x.GuestId).ToList();
         return await db.Set<PlanningGuest>().AsNoTracking().Where(x => ids.Contains(x.Id))
             .ToDictionaryAsync(x => x.RecipientName, x => (x.Id, x.InvitationToken!));
     }

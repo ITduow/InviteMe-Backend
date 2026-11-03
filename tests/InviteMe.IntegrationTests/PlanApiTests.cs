@@ -168,7 +168,7 @@ public sealed class PlanApiTests
         rows[^1] = rows[^1] with { ExpectedPeople = people - rows.Count + 1 };
         using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/weddings/{weddingId}/guest-planning/imports") { Content = JsonContent.Create(new PlanningImport(rows)) };
         request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        return await owner.SendAsync(request);
+        return await owner.SendCheckedImportAsync(request);
     }
 
     private static async Task<HttpResponseMessage> AddGuest(HttpClient owner, Guid weddingId, int people)

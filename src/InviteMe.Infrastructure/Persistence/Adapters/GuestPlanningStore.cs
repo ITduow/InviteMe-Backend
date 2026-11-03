@@ -9,13 +9,62 @@ using InviteMe.Domain.Rsvps;
 using InviteMe.Domain.CheckIn;
 using InviteMe.Infrastructure.Authentication;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.DataProtection;
 using static InviteMe.Infrastructure.Persistence.Adapters.PlanningPersistence;
 
 namespace InviteMe.Infrastructure.Persistence.Adapters;
 
-public sealed class GuestPlanningStore(InviteMeDbContext db, InviteMe.Application.Features.Billing.IWeddingEntitlements entitlements)
+public sealed class GuestPlanningStore(InviteMeDbContext db, InviteMe.Application.Features.Billing.IWeddingEntitlements entitlements,
+    IDataProtectionProvider protection)
     : IGuestPlanningStore
 {
+    private sealed record ImportPreviewStamp(Guid WeddingId, string RowsHash, string SnapshotHash, DateTimeOffset ExpiresAt);
+    private IDataProtector PreviewProtector => protection.CreateProtector("InviteMe.GuestImportPreview.v1");
+
+    private Task<List<ImportGuestSnapshot>> ImportSnapshot(Guid weddingId, CancellationToken ct, bool lockRows = false) =>
+        (lockRows ? db.Set<PlanningGuest>().FromSqlInterpolated($"SELECT * FROM inviteme.planning_guests WHERE \"WeddingId\"={weddingId} AND \"ArchivedAt\" IS NULL FOR SHARE") :
+            db.Set<PlanningGuest>().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null)).AsNoTracking()
+            .Select(x => new ImportGuestSnapshot(x.Id, null, x.RecipientName, x.Honorific, x.InvitationKind,
+                x.ExpectedPeople, x.Side, x.Group ?? PlanningGroupKind.OTHER, x.Phone, x.Email, x.Note)).ToListAsync(ct);
+
+    public async Task<PlanningImportPreview> CheckImportAsync(Guid weddingId, PlanningImport input, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct);
+        var wedding = await db.Weddings.AsNoTracking().SingleOrDefaultAsync(x => x.Id == weddingId, ct) ?? throw Missing("WEDDING_NOT_FOUND");
+        if (!wedding.CanEdit) throw Rule("WEDDING_CLOSED", "Wedding is closed.");
+        var guests = await ImportSnapshot(weddingId, ct);
+        var plan = await entitlements.GetAsync(weddingId, ct);
+        int? remaining = plan.Limits.GuestPlaces.HasValue ? Math.Max(0, plan.Limits.GuestPlaces.Value - plan.Usage.GuestPlaces) : null;
+        var expires = DateTimeOffset.UtcNow.AddMinutes(15);
+        var token = PreviewProtector.Protect(JsonSerializer.Serialize(new ImportPreviewStamp(weddingId,
+            PlanningImportChecks.RowsHash(input), PlanningImportChecks.SnapshotHash(guests, remaining), expires)));
+        var result = new PlanningImportPreview(token, expires, PlanningImportChecks.Match(input.Rows!, guests), [], remaining,
+            input.Rows!.Sum(x => x!.ExpectedPeople ?? 1));
+        await tx.CommitAsync(ct);
+        return result;
+    }
+
+    private async Task<IReadOnlyList<PlanningImportRowCheck>> ValidateImportPreview(Guid weddingId, PlanningImport input, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(input.PreviewToken)) throw Rule("IMPORT_CHECK_REQUIRED", "Kiểm tra danh sách trước khi xác nhận import.");
+        ImportPreviewStamp stamp;
+        try { stamp = JsonSerializer.Deserialize<ImportPreviewStamp>(PreviewProtector.Unprotect(input.PreviewToken))!; }
+        catch (Exception error) when (error is CryptographicException or JsonException or ArgumentException)
+        { throw Conflict("PREVIEW_STALE"); }
+        if (stamp is null || stamp.WeddingId != weddingId || stamp.ExpiresAt <= DateTimeOffset.UtcNow || stamp.RowsHash != PlanningImportChecks.RowsHash(input))
+            throw Conflict("PREVIEW_STALE");
+        var guests = await ImportSnapshot(weddingId, ct, lockRows: true);
+        var plan = await entitlements.GetAsync(weddingId, ct);
+        int? remaining = plan.Limits.GuestPlaces.HasValue ? Math.Max(0, plan.Limits.GuestPlaces.Value - plan.Usage.GuestPlaces) : null;
+        if (stamp.SnapshotHash != PlanningImportChecks.SnapshotHash(guests, remaining)) throw Conflict("PREVIEW_STALE");
+        var checks = PlanningImportChecks.Match(input.Rows!, guests);
+        var rowNumbers = checks.Select(x => x.RowNumber).ToHashSet();
+        var decisions = input.Decisions;
+        if (decisions is null || decisions.Any(x => x is null) || decisions.Count != input.Rows!.Count || decisions.Select(x => x.RowNumber).Distinct().Count() != decisions.Count ||
+            decisions.Any(x => x.Action is not ("SKIP" or "CREATE_SEPARATE") || !rowNumbers.Contains(x.RowNumber)))
+            throw Rule("IMPORT_DECISION_REQUIRED", "Chọn tạo riêng hoặc bỏ qua cho từng dòng.");
+        return checks;
+    }
     public async Task<CreatePlanningGuestOutcome> CreateAsync(Guid weddingId, Guid key, CreatePlanningGuest input,
         Guid actorId, CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope = null)
     {
@@ -172,34 +221,32 @@ public sealed class GuestPlanningStore(InviteMeDbContext db, InviteMe.Applicatio
             if (prior.RequestHash != hash) throw Conflict("IDEMPOTENCY_KEY_REUSED");
             return new(JsonSerializer.Deserialize<PlanningImportResult>(prior.ResultJson)!, [], true);
         }
-        await entitlements.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.GuestPlaces, input.Rows!.Sum(x => x!.ExpectedPeople ?? 1), ct);
+        var checks = (await ValidateImportPreview(weddingId, input, ct)).ToDictionary(x => x.RowNumber);
+        var decisions = input.Decisions!.ToDictionary(x => x.RowNumber, x => x.Action);
+        var selected = input.Rows!.Where(x => decisions[x!.RowNumber] == "CREATE_SEPARATE").ToArray();
+        await entitlements.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.GuestPlaces, selected.Sum(x => x!.ExpectedPeople ?? 1), ct);
         var batch = new PlanningRequestReceipt { Id = Guid.NewGuid(), WeddingId = weddingId, Key = key, RequestHash = hash };
         db.Add(batch);
         var items = new List<PlanningImportedRow>();
         var warnings = new List<ImportIssue>();
-        var existing = await db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null)
-            .Select(x => new { x.RecipientName, x.Phone }).ToListAsync(ct);
-        var names = existing.Select(x => PlanningText.Key(x.RecipientName)).ToHashSet();
-        var phones = existing.Where(x => x.Phone != null).Select(x => PlanningText.PhoneKey(x.Phone)).ToHashSet();
-        foreach (var row in input.Rows!)
+        foreach (var row in selected)
         {
             var r = row!;
             var guest = AddGuest(weddingId, new CreatePlanningGuest(r.RecipientName!, r.Honorific,
                 string.IsNullOrEmpty(r.InvitationKind) ? "INDIVIDUAL" : r.InvitationKind,
                 r.ExpectedPeople ?? 1, string.IsNullOrEmpty(r.Side) ? "UNSPECIFIED" : r.Side,
                 r.Group ?? PlanningGroupKind.OTHER, r.Phone, r.Note, r.Email));
-            if (names.Contains(PlanningText.Key(guest.RecipientName)) ||
-                (guest.Phone is not null && phones.Contains(PlanningText.PhoneKey(guest.Phone))))
-                warnings.Add(new(r.RowNumber, "recipientName", "POSSIBLE_DUPLICATE", "Có khách trùng tên hoặc SĐT; đã giữ thành đầu mối riêng."));
-            names.Add(PlanningText.Key(guest.RecipientName));
-            if (guest.Phone is not null) phones.Add(PlanningText.PhoneKey(guest.Phone));
+            foreach (var reason in checks[r.RowNumber].Reasons)
+                warnings.Add(new(r.RowNumber, "recipientName", reason, "Đã tạo lời mời riêng theo lựa chọn của bạn."));
             items.Add(new(r.RowNumber, guest.Id, guest.ExpectedPeople));
         }
-        var result = new PlanningImportResult(batch.Id, items.Count, items.Sum(x => x.ExpectedPeople), items, warnings);
+        var skipped = input.Rows!.Where(x => decisions[x!.RowNumber] == "SKIP").Select(x => new PlanningSkippedRow(x!.RowNumber)).ToArray();
+        var result = new PlanningImportResult(batch.Id, items.Count, items.Sum(x => x.ExpectedPeople), items, warnings, skipped.Length, skipped);
         batch.ResultJson = JsonSerializer.Serialize(result);
         db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_request_receipts", batch.Id, "GUESTS_IMPORTED", actorId,
             metadata: JsonSerializer.Serialize(new { guestCount = items.Count, expectedPeople = result.CreatedPlaceCount,
-                warningCount = warnings.Count })));
+                warningCount = warnings.Count, skippedCount = skipped.Length,
+                rows = input.Decisions!.Select(x => new { x.RowNumber, x.Action }) })));
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
         return new(result, []);
     }

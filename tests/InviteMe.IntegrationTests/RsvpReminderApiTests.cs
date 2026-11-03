@@ -186,7 +186,7 @@ public sealed class RsvpReminderApiTests
         using var groupImport = new HttpRequestMessage(HttpMethod.Post, $"/api/weddings/{w}/guest-planning/imports")
         { Content = JsonContent.Create(new PlanningImport([new PlanningRow(9, "Nhóm khách", Group: PlanningGroupKind.RELATIVES)])) };
         groupImport.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        await Read<PlanningImportResult>(await owner.SendAsync(groupImport));
+        await Read<PlanningImportResult>(await owner.SendCheckedImportAsync(groupImport));
         var groupId = PlanningGroupKind.RELATIVES;
         using var scoped = await SignIn(factory, "reminder-scoped");
         var scopedMe = (await scoped.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
@@ -238,7 +238,7 @@ public sealed class RsvpReminderApiTests
         using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/weddings/{weddingId}/guest-planning/imports")
         { Content = JsonContent.Create(new PlanningImport(rows.Select((r, i) => new PlanningRow(i + 2, r.Name, Email: r.Email)).ToArray())) };
         request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        var result = await Read<PlanningImportResult>(await owner.SendAsync(request));
+        var result = await Read<PlanningImportResult>(await owner.SendCheckedImportAsync(request));
         var ids = result.Items.Select(x => x.GuestId).ToList();
         return await db.Set<PlanningGuest>().AsNoTracking().Where(x => ids.Contains(x.Id)).ToDictionaryAsync(x => x.RecipientName, x => x.Id);
     }

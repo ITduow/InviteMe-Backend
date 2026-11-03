@@ -79,7 +79,7 @@ public sealed class InvitationMessagingApiTests
                 new PlanningRow(1, "Nguyễn Văn An", Phone: "0900123456", Email: "an@example.test", Group: PlanningGroupKind.RELATIVES)]))
         };
         importRequest.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        var imported = await owner.SendAsync(importRequest);
+        var imported = await owner.SendCheckedImportAsync(importRequest);
         Assert.True(imported.StatusCode == HttpStatusCode.Created,
             $"Guest import failed ({(int)imported.StatusCode}): {await imported.Content.ReadAsStringAsync()}");
         var importResult = (await imported.Content.ReadFromJsonAsync<PlanningImportResult>())!;

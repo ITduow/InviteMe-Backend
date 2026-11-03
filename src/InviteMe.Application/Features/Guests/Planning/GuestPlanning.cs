@@ -10,11 +10,15 @@ namespace InviteMe.Application.Features.Guests.Planning;
 public sealed record PlanningRow(int RowNumber, string? RecipientName, string? Honorific = null,
     string? InvitationKind = null, int? ExpectedPeople = null, string? Side = null,
     PlanningGroupKind? Group = null, string? Phone = null, string? Note = null, string? Email = null);
-public sealed record PlanningImport(IReadOnlyList<PlanningRow?>? Rows);
+public sealed record PlanningImport(IReadOnlyList<PlanningRow?>? Rows, string? PreviewToken = null,
+    IReadOnlyList<PlanningImportDecision>? Decisions = null);
+public sealed record PlanningImportDecision(int RowNumber, string Action);
+public sealed record PlanningSkippedRow(int RowNumber, string Action = "SKIP");
 public sealed record ImportIssue(int RowNumber, string Field, string Code, string Message);
-public sealed record PlanningImportedRow(int RowNumber, Guid GuestId, int ExpectedPeople);
+public sealed record PlanningImportedRow(int RowNumber, Guid GuestId, int ExpectedPeople, string Action = "CREATE_SEPARATE");
 public sealed record PlanningImportResult(Guid ImportId, int CreatedGuestCount, int CreatedPlaceCount,
-    IReadOnlyList<PlanningImportedRow> Items, IReadOnlyList<ImportIssue> Warnings);
+    IReadOnlyList<PlanningImportedRow> Items, IReadOnlyList<ImportIssue> Warnings,
+    int SkippedCount = 0, IReadOnlyList<PlanningSkippedRow>? Skipped = null);
 public sealed record PlanningImportOutcome(PlanningImportResult? Result, IReadOnlyList<ImportIssue> Errors, bool Replayed = false);
 public sealed record PlanningPersonDto(Guid Id, string FullName, string Role, string AttendanceStatus);
 public sealed record PlanningPlaceDto(Guid Id, PlanningPersonDto? Person);
@@ -50,6 +54,7 @@ public sealed class UpdatePlanningGuestValidator : AbstractValidator<UpdatePlann
 public sealed record PlanningGuestPage(IReadOnlyList<PlanningGuestDto> Items, int Page, int PageSize, int TotalItems);
 public interface IGuestPlanningStore
 {
+    Task<PlanningImportPreview> CheckImportAsync(Guid weddingId, PlanningImport input, CancellationToken ct) => throw new NotSupportedException();
     Task<CreatePlanningGuestOutcome> CreateAsync(Guid weddingId, Guid key, CreatePlanningGuest input, Guid actorId,
         CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope = null);
     Task<ArchivePlanningGuestResult> ArchiveAsync(Guid weddingId, Guid guestId, int expectedVersion, Guid actorId,
@@ -77,6 +82,27 @@ public sealed class GuestPlanningHandler(IGuestPlanningStore store, IWeddingPerm
     RequestValidation<UpdatePlanningGuest> updates, RequestValidation<CreatePlanningGuest> creates,
     ICurrentUser current, IPlanningChangePublisher changes)
 {
+    public async Task<PlanningImportPreview> CheckImportAsync(Guid weddingId, PlanningImport input, CancellationToken ct)
+    {
+        var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
+        if (!scope.IsWeddingWide)
+            throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.Forbidden,
+                "GUEST_IMPORT_REQUIRES_WEDDING_SCOPE", "Guest import requires wedding-wide guest edit access.");
+        try { await imports.ValidateAsync(input, ct); }
+        catch (ValidationException error)
+        {
+            return new(null, null, [], PlanningImportValidator.Issues(input, error.Errors), null, 0);
+        }
+        var preview = await store.CheckImportAsync(weddingId, input, ct);
+        if (!await permissions.HasPermissionAsync(weddingId, WeddingPermission.GUEST_VIEW, ct))
+            return preview with { Rows = preview.Rows.Select(row => row with {
+                Matches = row.Matches.Select(match => match with {
+                    Differences = match.Differences.Select(diff => diff.Field is "phone" or "email"
+                        ? diff with { Existing = null } : diff).ToArray()
+                }).ToArray()
+            }).ToArray() };
+        return preview;
+    }
     public async Task<CreatePlanningGuestOutcome> CreateAsync(Guid weddingId, string? idempotencyKey,
         CreatePlanningGuest input, CancellationToken ct)
     {

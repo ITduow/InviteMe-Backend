@@ -27,7 +27,7 @@ public sealed class GuestAccessApiTests
         var import = new HttpRequestMessage(HttpMethod.Post, path + "/imports")
         { Content = JsonContent.Create(new PlanningImport([new(2, "Nguyễn Văn An", "Bác", "INDIVIDUAL", 4, "BRIDE", InviteMe.Domain.Guests.PlanningGroupKind.RELATIVES)])) };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        Assert.Equal(HttpStatusCode.Created, (await owner.SendAsync(import)).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await owner.SendCheckedImportAsync(import)).StatusCode);
         var guest = await db.Set<PlanningGuest>().AsNoTracking().SingleAsync();
         var token = guest.InvitationToken!;
         using var anonymous = factory.CreateHttpsClient();

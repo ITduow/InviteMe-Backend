@@ -54,7 +54,7 @@ public sealed class RsvpApiTests
         using var import = new HttpRequestMessage(HttpMethod.Post, $"/api/weddings/{w}/guest-planning/imports")
         { Content = JsonContent.Create(new PlanningImport(rows)) };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        var imported = await Read<PlanningImportResult>(await owner.SendAsync(import));
+        var imported = await Read<PlanningImportResult>(await owner.SendCheckedImportAsync(import));
         Assert.Equal((30, 70), (imported.CreatedGuestCount, imported.CreatedPlaceCount));
         Assert.Equal(30, (await owner.GetFromJsonAsync<PlanningGuestPage>($"/api/weddings/{w}/guest-planning/guests?pageSize=50"))!.TotalItems);
 
@@ -364,7 +364,7 @@ public sealed class RsvpApiTests
                 new PlanningRow(3, "Nhà gái 2", Group: PlanningGroupKind.RELATIVES)]))
         };
         request2.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        var imported = await Read<PlanningImportResult>(await owner.SendAsync(request2));
+        var imported = await Read<PlanningImportResult>(await owner.SendCheckedImportAsync(request2));
         var group = PlanningGroupKind.RELATIVES;
         var locked = await Read<LockRsvpsResult>(await owner.PutAsJsonAsync($"/api/weddings/{open}/rsvps/locks", new LockRsvps(true, Group: group)));
         Assert.Equal(2, locked.Affected);
@@ -579,7 +579,7 @@ public sealed class RsvpApiTests
                 new PlanningRow(6, "Cô Mai", Side: "BRIDE")]))
         };
         request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        var items = (await Read<PlanningImportResult>(await owner.SendAsync(request))).Items;
+        var items = (await Read<PlanningImportResult>(await owner.SendCheckedImportAsync(request))).Items;
         var (nam, lan, hoa, hung, mai) = (await Seed(db, items[0].GuestId), await Seed(db, items[1].GuestId), await Seed(db, items[2].GuestId),
             await Seed(db, items[3].GuestId), await Seed(db, items[4].GuestId));
         using var c = factory.CreateHttpsClient();
@@ -716,7 +716,7 @@ public sealed class RsvpApiTests
         var request = new HttpRequestMessage(HttpMethod.Post, $"/api/weddings/{weddingId}/guest-planning/imports")
         { Content = JsonContent.Create(new PlanningImport([new PlanningRow(2, name, ExpectedPeople: people)])) };
         request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        return await Seed(db, Assert.Single((await Read<PlanningImportResult>(await owner.SendAsync(request))).Items).GuestId);
+        return await Seed(db, Assert.Single((await Read<PlanningImportResult>(await owner.SendCheckedImportAsync(request))).Items).GuestId);
     }
 
     private static async Task<Seeded> Seed(InviteMeDbContext db, Guid guestId)

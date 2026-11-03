@@ -28,7 +28,7 @@ public sealed class SeatingSuggestionApiTests
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, root + "/imports") { Content = JsonContent.Create(new PlanningImport(rows)) };
             request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-            Assert.Equal(HttpStatusCode.Created, (await owner.SendAsync(request)).StatusCode);
+            Assert.Equal(HttpStatusCode.Created, (await owner.SendCheckedImportAsync(request)).StatusCode);
         }
         async Task<PlanningSeatingDto> Change(ChangePlanningSeating input)
         {

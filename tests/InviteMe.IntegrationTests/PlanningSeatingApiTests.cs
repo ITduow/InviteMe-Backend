@@ -35,7 +35,7 @@ public sealed class PlanningSeatingApiTests
         var root = $"/api/weddings/{wedding.Id}/guest-planning";
         using var import = new HttpRequestMessage(HttpMethod.Post, root + "/imports") { Content = JsonContent.Create(new PlanningImport([new(2, "Bác An", ExpectedPeople: 4), new(3, "Hoa", ExpectedPeople: 2)])) };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        Assert.Equal(HttpStatusCode.Created, (await a.SendAsync(import)).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await a.SendCheckedImportAsync(import)).StatusCode);
         var url = root + "/seating-plan";
         var plan = (await a.GetFromJsonAsync<PlanningSeatingDto>(url))!;
         Assert.Equal(0, plan.Version); Assert.Empty(plan.Assignments); Assert.Equal(6, plan.Places.Count);
