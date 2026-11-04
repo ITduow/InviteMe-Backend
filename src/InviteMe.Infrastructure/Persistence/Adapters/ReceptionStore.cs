@@ -157,7 +157,7 @@ public sealed class ReceptionStore(InviteMeDbContext db, TimeProvider clock) : I
             {
                 Id = Guid.NewGuid(), WeddingId = weddingId, RecipientName = PlanningText.Clean(input.RecipientName),
                 Honorific = string.IsNullOrWhiteSpace(input.Honorific) ? null : PlanningText.Clean(input.Honorific),
-                InvitationKind = input.People > 1 ? "GROUP" : "INDIVIDUAL", ExpectedPeople = input.People,
+                ExpectedPeople = input.People,
                 Side = string.IsNullOrEmpty(input.Side) ? "UNSPECIFIED" : input.Side, Note = "Khách vãng lai, thêm tại quầy lễ tân.",
                 InvitationToken = InvitationToken.Generate()
             };

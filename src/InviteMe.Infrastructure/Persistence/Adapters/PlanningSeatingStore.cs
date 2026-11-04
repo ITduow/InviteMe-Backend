@@ -152,7 +152,7 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         var guestQuery = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null);
         if (scopeIds is not null) guestQuery = guestQuery.Where(x => x.Group != null && scopeIds.Contains(x.Group.Value));
         var guests = await guestQuery.OrderBy(g => g.RecipientName).ThenBy(g => g.Id)
-            .Select(g => new PlanningGuestDto(g.Id, g.Version, g.RecipientName, g.Honorific, g.InvitationKind, g.ExpectedPeople, g.Side,
+            .Select(g => new PlanningGuestDto(g.Id, g.Version, g.RecipientName, g.Honorific, g.ExpectedPeople, g.Side,
                 g.Group ?? PlanningGroupKind.OTHER, g.Phone, g.Note, g.Email)).ToListAsync(ct);
         var places = await (from p in db.Set<PlanningPlace>().AsNoTracking()
             join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id where g.WeddingId == weddingId && g.ArchivedAt == null && (scopeIds == null || g.Group != null && scopeIds.Contains(g.Group.Value))

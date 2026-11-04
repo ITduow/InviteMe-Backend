@@ -7,20 +7,23 @@ namespace InviteMe.Application.Features.Guests.Planning;
 
 public sealed record PlanningImportPreview(string? PreviewToken, DateTimeOffset? ExpiresAt,
     IReadOnlyList<PlanningImportRowCheck> Rows, IReadOnlyList<ImportIssue> Errors,
-    int? QuotaRemaining, int ProposedPlaces);
+    int? QuotaRemaining, int ProposedPlaces, IReadOnlyList<PlanningImportUpdateCheck>? Updates = null);
+public sealed record PlanningImportUpdateCheck(int RowNumber, Guid GuestId, string[] Fields, bool NoChange,
+    int PlaceDelta, IReadOnlyList<ImportIssue> Errors, IReadOnlyList<ImportIssue> Warnings);
 public sealed record PlanningImportRowCheck(int RowNumber, string Status, string[] Reasons,
     IReadOnlyList<PlanningImportCandidate> Matches, int MatchCount);
 public sealed record PlanningImportCandidate(Guid? GuestId, int? SourceRowNumber, string RecipientName,
-    IReadOnlyList<PlanningImportDifference> Differences);
+    IReadOnlyList<PlanningImportDifference> Differences, ImportGuestSnapshot? Guest = null);
 public sealed record PlanningImportDifference(string Field, string? Existing, string? Incoming);
 public sealed record ImportGuestSnapshot(Guid? Id, int? RowNumber, string RecipientName, string? Honorific,
-    string InvitationKind, int ExpectedPeople, string Side, PlanningGroupKind Group, string? Phone, string? Email, string? Note);
+    int ExpectedPeople, string Side, PlanningGroupKind Group, string? Phone, string? Email, string? Note,
+    int Version = 1, bool Seated = false, bool InvitationSent = false, bool HasRsvp = false,
+    int ConfirmedPeople = 0, int ProtectedPlaces = 0, string RelatedHash = "");
 
 public static class PlanningImportChecks
 {
     public static ImportGuestSnapshot FromRow(PlanningRow row) => new(null, row.RowNumber,
         PlanningText.Clean(row.RecipientName), PlanningText.Clean(row.Honorific),
-        string.IsNullOrEmpty(row.InvitationKind) ? "INDIVIDUAL" : row.InvitationKind,
         row.ExpectedPeople ?? 1, string.IsNullOrEmpty(row.Side) ? "UNSPECIFIED" : row.Side,
         row.Group ?? PlanningGroupKind.OTHER, row.Phone, row.Email, PlanningText.Clean(row.Note));
 
@@ -75,32 +78,30 @@ public static class PlanningImportChecks
                     if (sameName) reasons.Add(old.Side != incoming.Side || old.Group != incoming.Group ? "SAME_NAME_OTHER_SIDE_GROUP" :
                         (phone.Length == 0 && email.Length == 0 || PlanningImportMatching.PhoneKey(old.Phone).Length == 0 && PlanningImportMatching.EmailKey(old.Email).Length == 0)
                             ? "SAME_NAME_NO_CONTACT" : "SAME_NAME_DIFFERENT_CONTACT");
-                    if (samePhone) reasons.Add("SHARED_PHONE");
-                    if (sameEmail) reasons.Add("SHARED_EMAIL");
                 }
-                matches.Add((rank, new(old.Id, old.RowNumber, old.RecipientName, differences)));
+                if (samePhone) reasons.Add("SHARED_PHONE");
+                if (sameEmail) reasons.Add("SHARED_EMAIL");
+                matches.Add((rank, new(old.Id, old.RowNumber, old.RecipientName, differences, old.Id.HasValue ? old : null)));
             }
-            var required = matches.Any(x => x.Rank < 2);
-            if (string.IsNullOrEmpty(row!.InvitationKind)) reasons.Add("DEFAULTED_KIND");
-            if (string.IsNullOrEmpty(row.Side)) reasons.Add("DEFAULTED_SIDE");
+            var required = matches.Count > 0;
+            if (string.IsNullOrEmpty(row!.Side)) reasons.Add("DEFAULTED_SIDE");
             if (row.Group is null) reasons.Add("DEFAULTED_GROUP");
             if (row.ExpectedPeople is null) reasons.Add("DEFAULTED_COUNT");
             results.Add(new(row.RowNumber, required ? "NEED_DECISION" : reasons.Count > 0 ? "WARNING" : "NEW",
                 reasons.Order().ToArray(), matches.OrderBy(x => x.Rank).ThenBy(x => x.Candidate.GuestId).ThenBy(x => x.Candidate.SourceRowNumber)
-                    .Take(10).Select(x => x.Candidate).ToArray(), matches.Count));
+                    .Select(x => x.Candidate).ToArray(), matches.Count));
             Index(incoming);
         }
         return results;
     }
 
-    private static IReadOnlyList<PlanningImportDifference> Diff(ImportGuestSnapshot old, ImportGuestSnapshot incoming)
+    public static IReadOnlyList<PlanningImportDifference> Diff(ImportGuestSnapshot old, ImportGuestSnapshot incoming)
     {
         var result = new List<PlanningImportDifference>();
         void Compare(string field, string? a, string? b, string? keyA = null, string? keyB = null)
         { if ((keyA ?? PlanningText.Clean(a)) != (keyB ?? PlanningText.Clean(b))) result.Add(new(field, a, b)); }
         Compare("recipientName", old.RecipientName, incoming.RecipientName, PlanningImportMatching.NameKey(old.RecipientName), PlanningImportMatching.NameKey(incoming.RecipientName));
         Compare("honorific", old.Honorific, incoming.Honorific);
-        Compare("invitationKind", old.InvitationKind, incoming.InvitationKind);
         Compare("expectedPeople", old.ExpectedPeople.ToString(), incoming.ExpectedPeople.ToString());
         Compare("side", old.Side, incoming.Side); Compare("group", old.Group.ToString(), incoming.Group.ToString());
         // Invalid old contact is never validated or rewritten; use its original text for the diff.

@@ -32,10 +32,10 @@ public sealed class RestoredSeatingContractTests
     }
 
     [Fact]
-    public void ImportRetainsTheOriginalInvitationKindColumn()
+    public void ImportValidatesExpectedPeople()
     {
-        var row = new PlanningRow(2, "Nguyễn Văn An", "Bác", "FAMILY", 4, "BRIDE");
+        var row = new PlanningRow(2, "Nguyễn Văn An", "Bác", 4, "BRIDE");
         Assert.True(new PlanningImportValidator().Validate(new PlanningImport([row])).IsValid);
-        Assert.False(new PlanningImportValidator().Validate(new PlanningImport([row with { InvitationKind = "UNKNOWN" }])).IsValid);
+        Assert.False(new PlanningImportValidator().Validate(new PlanningImport([row with { ExpectedPeople = 0 }])).IsValid);
     }
 }

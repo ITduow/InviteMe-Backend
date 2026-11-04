@@ -1,4 +1,5 @@
 using FluentValidation;
+using System.Text.Json.Serialization;
 using InviteMe.Application.Common.Behaviors;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Application.Ports.Authorization;
@@ -8,27 +9,34 @@ using InviteMe.Domain.Guests;
 namespace InviteMe.Application.Features.Guests.Planning;
 
 public sealed record PlanningRow(int RowNumber, string? RecipientName, string? Honorific = null,
-    string? InvitationKind = null, int? ExpectedPeople = null, string? Side = null,
+    int? ExpectedPeople = null, string? Side = null,
     PlanningGroupKind? Group = null, string? Phone = null, string? Note = null, string? Email = null);
 public sealed record PlanningImport(IReadOnlyList<PlanningRow?>? Rows, string? PreviewToken = null,
     IReadOnlyList<PlanningImportDecision>? Decisions = null);
-public sealed record PlanningImportDecision(int RowNumber, string Action);
+public sealed record PlanningImportDecision(int RowNumber, string Action, Guid? TargetGuestId = null,
+    int? ExpectedVersion = null, IReadOnlyList<string>? SelectedFields = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    PlanningRow? UpdateValues = null);
 public sealed record PlanningSkippedRow(int RowNumber, string Action = "SKIP");
 public sealed record ImportIssue(int RowNumber, string Field, string Code, string Message);
 public sealed record PlanningImportedRow(int RowNumber, Guid GuestId, int ExpectedPeople, string Action = "CREATE_SEPARATE");
 public sealed record PlanningImportResult(Guid ImportId, int CreatedGuestCount, int CreatedPlaceCount,
     IReadOnlyList<PlanningImportedRow> Items, IReadOnlyList<ImportIssue> Warnings,
-    int SkippedCount = 0, IReadOnlyList<PlanningSkippedRow>? Skipped = null);
+    int SkippedCount = 0, IReadOnlyList<PlanningSkippedRow>? Skipped = null,
+    int UpdatedGuestCount = 0, int NoChangeCount = 0, IReadOnlyList<PlanningImportedRow>? Updated = null,
+    IReadOnlyList<PlanningImportedRow>? NoChange = null, IReadOnlyList<PlanningImportTaskDto>? Tasks = null);
+public sealed record PlanningImportTaskDto(Guid Id, Guid GuestId, string RecipientName, string Kind,
+    string Reason, string Path, DateTimeOffset? ResolvedAt);
 public sealed record PlanningImportOutcome(PlanningImportResult? Result, IReadOnlyList<ImportIssue> Errors, bool Replayed = false);
 public sealed record PlanningPersonDto(Guid Id, string FullName, string Role, string AttendanceStatus);
 public sealed record PlanningPlaceDto(Guid Id, PlanningPersonDto? Person);
 public sealed record PlanningGuestDto(Guid Id, int Version, string RecipientName, string? Honorific,
-    string InvitationKind, int ExpectedPeople, string Side, PlanningGroupKind Group, string? Phone, string? Note, string? Email = null,
+    int ExpectedPeople, string Side, PlanningGroupKind Group, string? Phone, string? Note, string? Email = null,
     string? InvitationPath = null, DateTimeOffset? ArchivedAt = null, bool PossibleDuplicate = false);
 public sealed record PlanningGuestDetail(PlanningGuestDto Guest, IReadOnlyList<PlanningPlaceDto> Places);
 public sealed record UpdatePlanningGuest(int ExpectedVersion, string RecipientName, string? Honorific, string Side,
     PlanningGroupKind Group, string? Phone, string? Note, string? Email);
-public sealed record CreatePlanningGuest(string RecipientName, string? Honorific = null, string InvitationKind = "INDIVIDUAL",
+public sealed record CreatePlanningGuest(string RecipientName, string? Honorific = null, 
     int ExpectedPeople = 1, string Side = "UNSPECIFIED", PlanningGroupKind Group = PlanningGroupKind.OTHER, string? Phone = null,
     string? Note = null, string? Email = null);
 public sealed record CreatePlanningGuestOutcome(PlanningGuestDto Guest, bool Replayed = false);
@@ -54,6 +62,8 @@ public sealed class UpdatePlanningGuestValidator : AbstractValidator<UpdatePlann
 public sealed record PlanningGuestPage(IReadOnlyList<PlanningGuestDto> Items, int Page, int PageSize, int TotalItems);
 public interface IGuestPlanningStore
 {
+    Task<IReadOnlyList<PlanningImportTaskDto>> ImportTasksAsync(Guid weddingId, CancellationToken ct) => throw new NotSupportedException();
+    Task ResolveImportTaskAsync(Guid weddingId, Guid taskId, bool resolved, CancellationToken ct) => throw new NotSupportedException();
     Task<PlanningImportPreview> CheckImportAsync(Guid weddingId, PlanningImport input, CancellationToken ct) => throw new NotSupportedException();
     Task<CreatePlanningGuestOutcome> CreateAsync(Guid weddingId, Guid key, CreatePlanningGuest input, Guid actorId,
         CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope = null);
@@ -82,8 +92,22 @@ public sealed class GuestPlanningHandler(IGuestPlanningStore store, IWeddingPerm
     RequestValidation<UpdatePlanningGuest> updates, RequestValidation<CreatePlanningGuest> creates,
     ICurrentUser current, IPlanningChangePublisher changes)
 {
+    private async Task RequireImportAccess(Guid weddingId, CancellationToken ct)
+    {
+        var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
+        if (!scope.IsWeddingWide) throw new InviteMe.Application.Common.Errors.ApplicationProblemException(
+            InviteMe.Application.Common.Errors.ProblemKind.Forbidden, "GUEST_IMPORT_REQUIRES_WEDDING_SCOPE", "Requires wedding-wide guest edit access.");
+        var view = await permissions.RequireScopeAsync(weddingId, WeddingPermission.GUEST_VIEW, ct);
+        if (!view.IsWeddingWide) throw new InviteMe.Application.Common.Errors.ApplicationProblemException(
+            InviteMe.Application.Common.Errors.ProblemKind.Forbidden, "GUEST_IMPORT_REQUIRES_WEDDING_SCOPE", "Requires wedding-wide guest view access.");
+    }
+    public async Task<IReadOnlyList<PlanningImportTaskDto>> ImportTasksAsync(Guid weddingId, CancellationToken ct)
+    { await RequireImportAccess(weddingId, ct); return await store.ImportTasksAsync(weddingId, ct); }
+    public async Task ResolveImportTaskAsync(Guid weddingId, Guid taskId, bool resolved, CancellationToken ct)
+    { await RequireImportAccess(weddingId, ct); await store.ResolveImportTaskAsync(weddingId, taskId, resolved, ct); }
     public async Task<PlanningImportPreview> CheckImportAsync(Guid weddingId, PlanningImport input, CancellationToken ct)
     {
+        if (input.Decisions?.Any(x => x?.Action == "UPDATE") == true) await RequireImportAccess(weddingId, ct);
         var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
         if (!scope.IsWeddingWide)
             throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.Forbidden,
@@ -97,6 +121,7 @@ public sealed class GuestPlanningHandler(IGuestPlanningStore store, IWeddingPerm
         if (!await permissions.HasPermissionAsync(weddingId, WeddingPermission.GUEST_VIEW, ct))
             return preview with { Rows = preview.Rows.Select(row => row with {
                 Matches = row.Matches.Select(match => match with {
+                    Guest = match.Guest is null ? null : match.Guest with { Phone = null, Email = null },
                     Differences = match.Differences.Select(diff => diff.Field is "phone" or "email"
                         ? diff with { Existing = null } : diff).ToArray()
                 }).ToArray()
@@ -144,6 +169,7 @@ public sealed class GuestPlanningHandler(IGuestPlanningStore store, IWeddingPerm
 
     public async Task<PlanningImportOutcome> ImportAsync(Guid weddingId, string? idempotencyKey, PlanningImport input, CancellationToken ct)
     {
+        if (input.Decisions?.Any(x => x?.Action == "UPDATE") == true) await RequireImportAccess(weddingId, ct);
         var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
         if (!scope.IsWeddingWide)
             throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.Forbidden, "GUEST_IMPORT_REQUIRES_WEDDING_SCOPE", "Guest import requires wedding-wide guest edit access.");

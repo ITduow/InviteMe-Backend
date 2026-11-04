@@ -15,11 +15,11 @@ namespace InviteMe.IntegrationTests;
 public sealed class PlanningImportPreviewApiTests
 {
     private static PlanningRow[] Five() => [
-        new(2, "Nguyễn Văn An", "Bác", "FAMILY", 4, "BRIDE", PlanningGroupKind.RELATIVES, "0912345678", "Có trẻ nhỏ", "an@example.com"),
-        new(3, "Trần Thị Bình", "Chị", "FAMILY", 2, "GROOM", PlanningGroupKind.FRIENDS, "0902222222"),
-        new(4, "Lê Văn Cường", "Anh", "INDIVIDUAL", 1, "GROOM", PlanningGroupKind.COLLEAGUES),
-        new(5, "Phạm Thị Dung", "Cô", "FAMILY", 3, "BRIDE", PlanningGroupKind.NEIGHBORS),
-        new(6, "Hoàng Minh Đức", "Anh", "INDIVIDUAL", 1, "MUTUAL", PlanningGroupKind.OTHER)];
+        new(2, "Nguyễn Văn An", "Bác", 4, "BRIDE", PlanningGroupKind.RELATIVES, "0912345678", "Có trẻ nhỏ", "an@example.com"),
+        new(3, "Trần Thị Bình", "Chị", 2, "GROOM", PlanningGroupKind.FRIENDS, "0902222222"),
+        new(4, "Lê Văn Cường", "Anh", 1, "GROOM", PlanningGroupKind.COLLEAGUES),
+        new(5, "Phạm Thị Dung", "Cô", 3, "BRIDE", PlanningGroupKind.NEIGHBORS),
+        new(6, "Hoàng Minh Đức", "Anh", 1, "MUTUAL", PlanningGroupKind.OTHER)];
     private static PlanningImport Commit(PlanningImport input, PlanningImportPreview preview, params int[] skip) =>
         input with { PreviewToken = preview.PreviewToken, Decisions = input.Rows!.Select(x => new PlanningImportDecision(x!.RowNumber, skip.Contains(x.RowNumber) ? "SKIP" : "CREATE_SEPARATE")).ToArray() };
 

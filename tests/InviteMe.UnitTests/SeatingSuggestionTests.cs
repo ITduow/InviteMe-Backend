@@ -9,7 +9,7 @@ public sealed class SeatingSuggestionTests
     private static Guid Id(int n) => Guid.Parse($"00000000-0000-0000-0000-{n:000000000000}");
     private static PlanningSeatingDto Source(int[] capacities, params (int Count, string Side, int Group)[] rows)
     {
-        var guests = rows.Select((r, i) => new PlanningGuestDto(Id(i + 1), 1, $"Khách {i + 1}", "Bạn", "FAMILY", r.Count, r.Side,
+        var guests = rows.Select((r, i) => new PlanningGuestDto(Id(i + 1), 1, $"Khách {i + 1}", "Bạn", r.Count, r.Side,
             r.Group == 1 ? PlanningGroupKind.RELATIVES : r.Group == 2 ? PlanningGroupKind.FRIENDS : PlanningGroupKind.OTHER, null, "Ghi chú không phải ràng buộc")).ToArray();
         var places = guests.SelectMany((g, i) => Enumerable.Range(1, rows[i].Count).Select(n => new PlanningSeatingPlace(Id(1000 + i * 100 + n), g.Id, n, null))).ToArray();
         return new(Id(999), 0, capacities.Select((c, i) => new PlanningTableDto(Id(500 + i), $"Bàn {i + 1}", c)).ToArray(), guests, places, []);

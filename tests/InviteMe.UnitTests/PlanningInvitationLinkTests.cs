@@ -43,7 +43,7 @@ public sealed class PlanningInvitationLinkTests
 
     private sealed class Store : IGuestPlanningStore
     {
-        public PlanningGuestDto Guest { get; } = new(Guid.NewGuid(), 1, "An", null, "INDIVIDUAL", 1,
+        public PlanningGuestDto Guest { get; } = new(Guid.NewGuid(), 1, "An", null, 1,
             "BRIDE", PlanningGroupKind.OTHER, null, null, InvitationPath: "/invite/" + new string('a', 64));
         public Task<PlanningGuestPage> ListAsync(Guid id, int page, int size, string? search, string? side, PlanningGroupKind? group, CancellationToken ct) =>
             Task.FromResult(new PlanningGuestPage([Guest], page, size, 1));

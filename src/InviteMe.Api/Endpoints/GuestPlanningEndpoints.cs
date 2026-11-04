@@ -23,6 +23,9 @@ internal static class GuestPlanningEndpoints
             .ProducesValidationProblem().ProducesProblem(403).ProducesProblem(404).ProducesProblem(409);
         g.MapPost("/imports/check", (Guid weddingId, PlanningImport input, GuestPlanningHandler handler, CancellationToken ct) =>
             handler.CheckImportAsync(weddingId, input, ct)).Produces<PlanningImportPreview>();
+        g.MapGet("/imports/tasks", (Guid weddingId, GuestPlanningHandler handler, CancellationToken ct) => handler.ImportTasksAsync(weddingId, ct));
+        g.MapPut("/imports/tasks/{taskId:guid}", async (Guid weddingId, Guid taskId, bool resolved, GuestPlanningHandler handler, CancellationToken ct) =>
+        { await handler.ResolveImportTaskAsync(weddingId, taskId, resolved, ct); return Results.NoContent(); });
         g.MapPost("/imports", async (Guid weddingId, PlanningImport input, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
             GuestPlanningHandler handler, CancellationToken ct) =>
         {
@@ -43,7 +46,7 @@ internal static class GuestPlanningEndpoints
         {
             var detail = await handler.DetailAsync(weddingId, guestId, ct, includeArchived);
             var x = detail.Guest;
-            return Results.Ok(new { x.Id, x.Version, x.RecipientName, x.Honorific, x.InvitationKind,
+            return Results.Ok(new { x.Id, x.Version, x.RecipientName, x.Honorific,
                 x.ExpectedPeople, x.Side, x.Group, x.Phone, x.Note, x.Email, x.ArchivedAt, x.PossibleDuplicate, detail.Places });
         });
         g.MapPut("/guests/{guestId:guid}", async (Guid weddingId, Guid guestId, UpdatePlanningGuest input, GuestPlanningHandler handler, CancellationToken ct) =>

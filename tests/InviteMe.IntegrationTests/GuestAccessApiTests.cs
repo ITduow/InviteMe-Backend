@@ -25,7 +25,7 @@ public sealed class GuestAccessApiTests
         var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "guest-access");
         var path = $"/api/weddings/{wedding.Id}/guest-planning";
         var import = new HttpRequestMessage(HttpMethod.Post, path + "/imports")
-        { Content = JsonContent.Create(new PlanningImport([new(2, "Nguyễn Văn An", "Bác", "INDIVIDUAL", 4, "BRIDE", InviteMe.Domain.Guests.PlanningGroupKind.RELATIVES)])) };
+        { Content = JsonContent.Create(new PlanningImport([new(2, "Nguyễn Văn An", "Bác", 4, "BRIDE", InviteMe.Domain.Guests.PlanningGroupKind.RELATIVES)])) };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
         Assert.Equal(HttpStatusCode.Created, (await owner.SendCheckedImportAsync(import)).StatusCode);
         var guest = await db.Set<PlanningGuest>().AsNoTracking().SingleAsync();

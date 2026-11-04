@@ -5,7 +5,7 @@ namespace InviteMe.UnitTests;
 
 public sealed class PlanningImportChecksTests
 {
-    private static PlanningRow Row(int number = 2) => new(number, "Nguyễn Văn An", "Bác", "FAMILY", 4, "BRIDE", PlanningGroupKind.RELATIVES,
+    private static PlanningRow Row(int number = 2) => new(number, "Nguyễn Văn An", "Bác", 4, "BRIDE", PlanningGroupKind.RELATIVES,
         "0912 345 678", "Có trẻ nhỏ", "An@Example.com");
     private static ImportGuestSnapshot Existing(PlanningRow? row = null) => PlanningImportChecks.FromRow(row ?? Row()) with { Id = Guid.NewGuid(), RowNumber = null };
     private static PlanningImportRowCheck Check(PlanningRow row, params ImportGuestSnapshot[] existing) => Assert.Single(PlanningImportChecks.Match([row], existing));
@@ -39,13 +39,13 @@ public sealed class PlanningImportChecksTests
     public void D04_SameNameDifferentContactIsOnlyWarning()
     {
         var result = Check(Row() with { Phone = "0902222222", Email = "other@example.com" }, Existing());
-        Assert.Equal("WARNING", result.Status); Assert.Contains("SAME_NAME_DIFFERENT_CONTACT", result.Reasons);
+        Assert.Equal("NEED_DECISION", result.Status); Assert.Contains("SAME_NAME_DIFFERENT_CONTACT", result.Reasons);
     }
     [Fact]
     public void D05_SameNameWithoutContactWithDifferentDetailsIsOnlyWarning()
     {
         var result = Check(Row() with { Phone = null, Email = null, Note = "Khác" }, Existing(Row() with { Phone = null, Email = null }));
-        Assert.Equal("WARNING", result.Status); Assert.Contains("SAME_NAME_NO_CONTACT", result.Reasons);
+        Assert.Equal("NEED_DECISION", result.Status); Assert.Contains("SAME_NAME_NO_CONTACT", result.Reasons);
     }
     [Theory]
     [InlineData("phone", "SHARED_PHONE")]
@@ -54,13 +54,13 @@ public sealed class PlanningImportChecksTests
     {
         var row = Row() with { RecipientName = "Trần Thị Bình", Phone = field == "phone" ? "+84912345678" : null, Email = field == "email" ? "an@example.COM" : null };
         var result = Check(row, Existing());
-        Assert.Equal("WARNING", result.Status); Assert.Contains(reason, result.Reasons);
+        Assert.Equal("NEED_DECISION", result.Status); Assert.Contains(reason, result.Reasons);
     }
     [Fact]
     public void D09_SameNameDifferentSideGroupWithoutSharedContactIsWarning()
     {
         var result = Check(Row() with { Side = "GROOM", Group = PlanningGroupKind.FRIENDS, Phone = null, Email = null }, Existing());
-        Assert.Equal("WARNING", result.Status); Assert.Contains("SAME_NAME_OTHER_SIDE_GROUP", result.Reasons);
+        Assert.Equal("NEED_DECISION", result.Status); Assert.Contains("SAME_NAME_OTHER_SIDE_GROUP", result.Reasons);
     }
     [Fact]
     public void D11_AccentDifferencesAreNotAutomaticallyMatched()
@@ -80,8 +80,7 @@ public sealed class PlanningImportChecksTests
     {
         var row = new PlanningRow(17, "An", ExpectedPeople: 4);
         var result = Check(row);
-        Assert.Contains("DEFAULTED_KIND", result.Reasons); Assert.Contains("DEFAULTED_SIDE", result.Reasons); Assert.Contains("DEFAULTED_GROUP", result.Reasons);
-        Assert.Equal("INDIVIDUAL", PlanningImportChecks.FromRow(row).InvitationKind);
+        Assert.Contains("DEFAULTED_SIDE", result.Reasons); Assert.Contains("DEFAULTED_GROUP", result.Reasons);
     }
     [Fact]
     public void SnapshotIsOrderIndependentButDetectsChanges()

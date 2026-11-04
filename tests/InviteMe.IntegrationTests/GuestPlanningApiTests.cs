@@ -25,7 +25,7 @@ public sealed class GuestPlanningApiTests
         var groupScope = await owner.GetFromJsonAsync<PlanningGroupList>(path + "/groups");
         Assert.True(groupScope!.IsWeddingWide);
         var key = Guid.NewGuid();
-        var input = new CreatePlanningGuest("Nguyễn Thị Mai", "Cô", "FAMILY", 3, "BRIDE", PlanningGroupKind.OTHER,
+        var input = new CreatePlanningGuest("Nguyễn Thị Mai", "Cô", 3, "BRIDE", PlanningGroupKind.OTHER,
             "0900123456", "Dị ứng đậu phộng", "mai@example.test");
 
         async Task<HttpResponseMessage> Create(CreatePlanningGuest body)
@@ -210,7 +210,7 @@ public sealed class GuestPlanningApiTests
             return await owner.SendCheckedImportAsync(request);
         }
         var group = PlanningGroupKind.RELATIVES;
-        var good = new PlanningRow(2, "Nguyễn Văn An", "Bác", "FAMILY", 4, "BRIDE", group,
+        var good = new PlanningRow(2, "Nguyễn Văn An", "Bác", 4, "BRIDE", group,
             Phone: "0900123456", Email: " an@example.com ");
         var badContact = await Import(new([good, new(7, "Nam", Phone: "abc", Email: "invalid")]), Guid.NewGuid());
         Assert.Equal(HttpStatusCode.UnprocessableEntity, badContact.StatusCode);

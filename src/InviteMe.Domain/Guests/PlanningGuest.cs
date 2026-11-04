@@ -7,7 +7,6 @@ public sealed class PlanningGuest
     public Guid WeddingId { get; set; }
     public string RecipientName { get; set; } = "";
     public string? Honorific { get; set; }
-    public string InvitationKind { get; set; } = "INDIVIDUAL";
     public int ExpectedPeople { get; set; }
     public string Side { get; set; } = "UNSPECIFIED";
     public PlanningGroupKind? Group { get; set; } = PlanningGroupKind.OTHER;

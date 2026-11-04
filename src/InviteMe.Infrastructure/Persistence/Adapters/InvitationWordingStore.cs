@@ -33,7 +33,7 @@ public sealed class InvitationWordingStore(InviteMeDbContext db) : IInvitationWo
     }
     public Task<WordingRecipient?> FindGuestAsync(Guid weddingId, Guid guestId, CancellationToken ct) =>
         db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Id == guestId)
-            .Select(x => new WordingRecipient(x.Id, x.RecipientName, x.Honorific, x.InvitationKind)).SingleOrDefaultAsync(ct);
+            .Select(x => new WordingRecipient(x.Id, x.RecipientName, x.Honorific)).SingleOrDefaultAsync(ct);
 
     private static WordingSettingsDto Dto(InvitationWordingSettings settings) =>
         new(settings.WeddingId, settings.Version, JsonSerializer.Deserialize<WordingPreset[]>(settings.PresetsJson)!);

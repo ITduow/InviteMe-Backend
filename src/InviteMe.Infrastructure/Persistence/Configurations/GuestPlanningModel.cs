@@ -22,7 +22,6 @@ public sealed class GuestPlanningModel :
         guests.ToTable("planning_guests", t => {
             t.HasCheckConstraint("ck_planning_expected", "\"ExpectedPeople\" BETWEEN 1 AND 500");
             t.HasCheckConstraint("ck_planning_side", "\"Side\" IN ('BRIDE','GROOM','MUTUAL','UNSPECIFIED')");
-            t.HasCheckConstraint("ck_planning_kind", "\"InvitationKind\" IN ('INDIVIDUAL','FAMILY','GROUP')");
         }); guests.HasKey(x => x.Id);
         guests.Property(x => x.RecipientName).HasMaxLength(150); guests.Property(x => x.Honorific).HasMaxLength(50);
         guests.Property(x => x.Phone).HasMaxLength(30); guests.Property(x => x.Note).HasMaxLength(2000);
