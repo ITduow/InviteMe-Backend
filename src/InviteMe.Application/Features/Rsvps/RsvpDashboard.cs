@@ -13,7 +13,7 @@ namespace InviteMe.Application.Features.Rsvps;
 
 /// <summary>One person of an invitation: role (PRIMARY / COMPANION), RSVP attendance and the dietary note (kept on the recipient).</summary>
 public sealed record RsvpDashboardPerson(Guid GuestId, string Role, string AttendanceStatus, string? DietaryNote);
-public sealed record RsvpDashboardGuest(Guid Id, string RecipientName, int RowNumber, string Side, Guid? GroupId, string? GroupName,
+public sealed record RsvpDashboardGuest(Guid Id, string RecipientName, string Side, InviteMe.Domain.Guests.PlanningGroupKind? Group, string? GroupName,
     string? Phone, string? Email, string? RsvpStatus, int ConfirmedPartySize, int MaybePartySize, int MaxPeople, bool OverLimit, string? Note,
     DateTimeOffset? SubmittedAt, DateTimeOffset? UpdatedAt, bool Locked, bool PendingRequest, IReadOnlyList<RsvpDashboardPerson> People, int RemindersSent = 0, DateTimeOffset? LastRemindedAt = null, string? LastReminderStatus = null);
 public sealed record RsvpDashboardData(Guid WeddingId, int? Capacity, long Occupied, DateTimeOffset? RsvpDeadline, IReadOnlyList<RsvpDashboardGuest> Guests);
@@ -21,7 +21,7 @@ public sealed record RsvpDashboardData(Guid WeddingId, int? Capacity, long Occup
 // ---------- API contracts ----------
 
 /// <summary>Filters shared by the dashboard, the guest list and the export. Status: NOT_RESPONDED, ATTENDING, MAYBE, DECLINED, NEEDS_ACTION.</summary>
-public sealed record RsvpDashboardFilter(string? Side = null, Guid? GroupId = null, string? Status = null, string? Search = null);
+public sealed record RsvpDashboardFilter(string? Side = null, InviteMe.Domain.Guests.PlanningGroupKind? Group = null, string? Status = null, string? Search = null);
 
 /// <summary>
 /// Wedding-wide. Expected = people coming (ATTENDING answers + walk-ins). Nothing is ever refused because of the capacity:
@@ -51,7 +51,7 @@ public sealed record RsvpDashboardDto(Guid WeddingId, DateTimeOffset GeneratedAt
 /// and not marked as seen. Phone/Email are only filled for users who may view guests (GUEST_VIEW).
 /// Guest05: RemindersSent (of at most 3), when the last reminder went out and the status of the latest one.
 /// </summary>
-public sealed record RsvpGuestRowDto(Guid GuestId, string RecipientName, string Side, Guid? GroupId, string? GroupName, string? Phone, string? Email,
+public sealed record RsvpGuestRowDto(Guid GuestId, string RecipientName, string Side, InviteMe.Domain.Guests.PlanningGroupKind? Group, string? GroupName, string? Phone, string? Email,
     string RsvpStatus, int MaxPeople, int People, int MaybePeople, bool OverLimit, bool NeedsAction, bool PendingRequest, bool Locked,
     string? DietaryNote, string? Note, DateTimeOffset? RespondedAt, DateTimeOffset? UpdatedAt, int RemindersSent, DateTimeOffset? LastRemindedAt,
     string? LastReminderStatus);
@@ -82,7 +82,7 @@ public sealed class RsvpDashboardFilterValidator : AbstractValidator<RsvpDashboa
         RuleFor(x => x.Status).Must(x => x is null || RsvpGuestStatus.Filters.Contains(x))
             .WithMessage("Status must be NOT_RESPONDED, ATTENDING, MAYBE, DECLINED or NEEDS_ACTION.");
         RuleFor(x => x.Search).MaximumLength(100);
-        RuleFor(x => x.GroupId).Must(x => x is null || x != Guid.Empty);
+        RuleFor(x => x.Group).Must(x => x is null || Enum.IsDefined(x.Value));
     }
 }
 
@@ -119,7 +119,7 @@ public sealed class RsvpDashboardHandler(IRsvpStore store, IWeddingPermissionSer
     private static RsvpDashboardFilter ScopedFilter(RsvpDashboardFilter filter, WeddingPermissionScope scope)
     {
         if (scope.IsWeddingWide) return filter;
-        if (filter.GroupId is { } id && !scope.GroupIds.Contains(id)) return filter with { GroupId = Guid.Empty };
+        if (filter.Group is { } id && !scope.GroupIds.Contains(id)) return filter with { Group = (InviteMe.Domain.Guests.PlanningGroupKind)(-1) };
         return filter;
     }
 
@@ -139,10 +139,10 @@ public static class RsvpDashboardMath
         var search = filter.Search?.Trim();
         return data.Guests
             .Where(g => filter.Side is null || g.Side == filter.Side)
-            .Where(g => filter.GroupId is null || g.GroupId == filter.GroupId)
+            .Where(g => filter.Group is null || g.Group == filter.Group)
             .Where(g => string.IsNullOrEmpty(search) || g.RecipientName.Contains(search, StringComparison.OrdinalIgnoreCase))
             .Where(g => filter.Status is null || RsvpGuestStatus.Matches(g, filter.Status))
-            .OrderBy(g => g.RecipientName, StringComparer.CurrentCultureIgnoreCase).ThenBy(g => g.RowNumber).ThenBy(g => g.Id)
+            .OrderBy(g => g.RecipientName, StringComparer.CurrentCultureIgnoreCase).ThenBy(g => g.Id)
             .ToList();
     }
 
@@ -174,7 +174,7 @@ public static class RsvpDashboardMath
     }
 
     public static RsvpGuestRowDto Row(RsvpDashboardGuest g, bool contacts) =>
-        new(g.Id, g.RecipientName, g.Side, g.GroupId, g.GroupName, contacts ? g.Phone : null, contacts ? g.Email : null, RsvpGuestStatus.Of(g),
+        new(g.Id, g.RecipientName, g.Side, g.Group, g.GroupName, contacts ? g.Phone : null, contacts ? g.Email : null, RsvpGuestStatus.Of(g),
             g.MaxPeople, g.People.Count(p => p.AttendanceStatus == "ATTENDING"), g.MaybePartySize, g.OverLimit, RsvpGuestStatus.WaitsForCouple(g),
             g.PendingRequest, g.Locked, Dietary(g), g.Note, g.SubmittedAt, g.UpdatedAt, g.RemindersSent, g.LastRemindedAt, g.LastReminderStatus);
 

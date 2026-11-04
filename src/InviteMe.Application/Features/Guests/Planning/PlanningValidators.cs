@@ -45,13 +45,7 @@ public sealed class PlanningRowValidator : AbstractValidator<PlanningRow>
         RuleFor(x => x.Note).Must(x => PlanningText.Valid(x, 2000)).WithErrorCode("INVALID_TEXT");
         RuleFor(x => x.ExpectedPeople).Must(x => (x ?? 1) is >= 1 and <= 500).WithErrorCode("INVALID_EXPECTED_PEOPLE");
         RuleFor(x => x.Side).Must(PlanningText.ValidSide).WithErrorCode("INVALID_SIDE");
-        When(x => x.Group is not null, () =>
-        {
-            RuleFor(x => x.Group).Must(g => g!.ExistingId is { } id
-                ? id != Guid.Empty && g.NewName is null && !g.Confirmed
-                : PlanningText.Valid(g.NewName, 100, required: true)).WithErrorCode("INVALID_GROUP");
-            RuleFor(x => x.Group).Must(g => g!.ExistingId is not null || g.Confirmed).WithErrorCode("GROUP_CONFIRMATION_REQUIRED");
-        });
+        RuleFor(x => x.Group).Must(x => x is null || Enum.IsDefined(x.Value)).WithErrorCode("INVALID_GROUP");
     }
 }
 
@@ -59,6 +53,10 @@ public sealed class PlanningImportValidator : AbstractValidator<PlanningImport>
 {
     public PlanningImportValidator()
     {
+        When(x => x.Decisions is not null, () => {
+            RuleFor(x => x.Decisions).Must(x => x!.Count <= 500 && x.All(d => d is not null && d.Action is "SKIP" or "CREATE_SEPARATE" or "UPDATE"))
+                .WithErrorCode("INVALID_DECISIONS");
+        });
         RuleFor(x => x.Rows).Must(x => x is { Count: >= 1 and <= 500 }).WithErrorCode("INVALID_ROWS");
         When(x => x.Rows is { Count: >= 1 and <= 500 }, () =>
         {
@@ -95,6 +93,7 @@ public sealed class PlanningGuestQueryValidator : AbstractValidator<PlanningGues
         RuleFor(x => x.PageSize).InclusiveBetween(1, 100);
         RuleFor(x => x.Search).MaximumLength(200);
         RuleFor(x => x.Side).Must(PlanningText.ValidSide);
+        RuleFor(x => x.Group).Must(x => x is null || Enum.IsDefined(x.Value));
     }
 }
 
@@ -104,10 +103,9 @@ public sealed class CreatePlanningGuestValidator : AbstractValidator<CreatePlann
     {
         RuleFor(x => x.RecipientName).Must(x => PlanningText.Valid(x, 150, required: true)).WithErrorCode("INVALID_TEXT");
         RuleFor(x => x.Honorific).Must(x => PlanningText.Valid(x, 50)).WithErrorCode("INVALID_TEXT");
-        RuleFor(x => x.InvitationKind).Must(x => x is "INDIVIDUAL" or "FAMILY" or "GROUP").WithErrorCode("INVALID_KIND");
         RuleFor(x => x.ExpectedPeople).InclusiveBetween(1, 500).WithErrorCode("INVALID_EXPECTED_PEOPLE");
         RuleFor(x => x.Side).Must(PlanningText.ValidSide).WithErrorCode("INVALID_SIDE");
-        RuleFor(x => x.GroupId).Must(x => x is null || x != Guid.Empty).WithErrorCode("INVALID_GROUP");
+        RuleFor(x => x.Group).IsInEnum().WithErrorCode("INVALID_GROUP");
         RuleFor(x => x.Phone).Must(PlanningText.ValidPhone).WithErrorCode("INVALID_PHONE")
             .WithMessage("SĐT cần 7–15 chữ số, có thể có dấu + ở đầu, khoảng trắng, dấu chấm, gạch nối hoặc ngoặc.");
         RuleFor(x => x.Email).Cascade(CascadeMode.Stop)

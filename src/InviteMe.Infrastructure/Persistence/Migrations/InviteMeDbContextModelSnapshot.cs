@@ -1265,33 +1265,6 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         });
                 });
 
-            modelBuilder.Entity("InviteMe.Domain.Guests.PlanningGroup", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("NormalizedName")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<Guid>("WeddingId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("WeddingId", "NormalizedName")
-                        .IsUnique();
-
-                    b.ToTable("planning_groups", "inviteme");
-                });
-
             modelBuilder.Entity("InviteMe.Domain.Guests.PlanningGuest", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1308,19 +1281,14 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<int>("ExpectedPeople")
                         .HasColumnType("integer");
 
-                    b.Property<Guid?>("GroupId")
-                        .HasColumnType("uuid");
+                    b.Property<string>("Group")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
 
                     b.Property<string>("Honorific")
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
-
-                    b.Property<Guid>("ImportId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("InvitationKind")
-                        .IsRequired()
-                        .HasColumnType("text");
 
                     b.Property<string>("InvitationToken")
                         .HasMaxLength(64)
@@ -1338,9 +1306,6 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(150)
                         .HasColumnType("character varying(150)");
-
-                    b.Property<int>("RowNumber")
-                        .HasColumnType("integer");
 
                     b.Property<string>("Side")
                         .IsRequired()
@@ -1365,13 +1330,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("ck_planning_expected", "\"ExpectedPeople\" BETWEEN 1 AND 500");
 
-                            t.HasCheckConstraint("ck_planning_kind", "\"InvitationKind\" IN ('INDIVIDUAL','FAMILY','GROUP')");
-
                             t.HasCheckConstraint("ck_planning_side", "\"Side\" IN ('BRIDE','GROOM','MUTUAL','UNSPECIFIED')");
                         });
                 });
 
-            modelBuilder.Entity("InviteMe.Domain.Guests.PlanningImportBatch", b =>
+            modelBuilder.Entity("InviteMe.Domain.Guests.PlanningImportTask", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -1380,27 +1343,36 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<Guid>("Key")
+                    b.Property<Guid>("GuestId")
                         .HasColumnType("uuid");
 
-                    b.Property<string>("RequestHash")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
+                    b.Property<Guid>("ImportId")
+                        .HasColumnType("uuid");
 
-                    b.Property<string>("ResultJson")
+                    b.Property<string>("Kind")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTimeOffset?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid>("WeddingId")
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("WeddingId", "Key")
+                    b.HasIndex("WeddingId", "ResolvedAt");
+
+                    b.HasIndex("ImportId", "GuestId", "Kind")
                         .IsUnique();
 
-                    b.ToTable("planning_imports", "inviteme");
+                    b.ToTable("planning_import_tasks", "inviteme");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Guests.PlanningParticipant", b =>
@@ -1454,6 +1426,38 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("planning_places", "inviteme");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Guests.PlanningRequestReceipt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("Key")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ResultJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WeddingId", "Key")
+                        .IsUnique();
+
+                    b.ToTable("planning_request_receipts", "inviteme");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Identity.Permission", b =>
@@ -2486,12 +2490,6 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("PlaceId")
                         .HasColumnType("uuid");
 
-                    b.Property<int?>("PlannedSeatNumber")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid?>("PlannedTableId")
-                        .HasColumnType("uuid");
-
                     b.Property<int>("SeatNumber")
                         .HasColumnType("integer");
 
@@ -2514,55 +2512,6 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("WeddingId")
                         .HasColumnType("uuid");
 
-                    b.Property<int>("BrideColumns")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(3);
-
-                    b.Property<int>("BrideRows")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(6);
-
-                    b.Property<DateTimeOffset?>("EventStartedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("EventStartedBy")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("GroomColumns")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(3);
-
-                    b.Property<int>("GroomRows")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(6);
-
-                    b.Property<bool>("IsEventStarted")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false);
-
-                    b.Property<bool>("IsLocked")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false);
-
-                    b.Property<DateTimeOffset?>("LockedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("LockedBy")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Numbering")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)")
-                        .HasDefaultValue("BY_ROW");
-
                     b.Property<DateTimeOffset?>("PublishedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -2575,14 +2524,7 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.HasKey("WeddingId");
 
-                    b.ToTable("planning_seating_plans", "inviteme", t =>
-                        {
-                            t.HasCheckConstraint("ck_planning_layout_bride", "\"BrideRows\" BETWEEN 1 AND 20 AND \"BrideColumns\" BETWEEN 1 AND 6");
-
-                            t.HasCheckConstraint("ck_planning_layout_groom", "\"GroomRows\" BETWEEN 1 AND 20 AND \"GroomColumns\" BETWEEN 1 AND 6");
-
-                            t.HasCheckConstraint("ck_planning_layout_numbering", "\"Numbering\" IN ('BY_ROW', 'ODD_EVEN')");
-                        });
+                    b.ToTable("planning_seating_plans", "inviteme");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Seating.PlanningTable", b =>
@@ -2594,40 +2536,15 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<int>("Capacity")
                         .HasColumnType("integer");
 
-                    b.Property<int?>("Column")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("ExtraSeats")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
-                    b.Property<Guid?>("GroupId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Half")
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<bool>("IsVip")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false);
+                    b.Property<string>("Group")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
 
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
-
-                    b.Property<int>("Number")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("Row")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Side")
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
 
                     b.Property<Guid>("WeddingId")
                         .HasColumnType("uuid");
@@ -2636,26 +2553,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("WeddingId");
 
-                    b.HasIndex("WeddingId", "GroupId");
-
-                    b.HasIndex("WeddingId", "Number")
-                        .IsUnique();
-
-                    b.HasIndex("WeddingId", "Half", "Row", "Column")
-                        .IsUnique()
-                        .HasFilter("\"Row\" IS NOT NULL");
+                    b.HasIndex("WeddingId", "Group");
 
                     b.ToTable("planning_tables", "inviteme", t =>
                         {
                             t.HasCheckConstraint("ck_planning_table_capacity", "\"Capacity\" BETWEEN 1 AND 20");
-
-                            t.HasCheckConstraint("ck_planning_table_coordinates", "(\"Half\" IS NULL AND \"Row\" IS NULL AND \"Column\" IS NULL) OR (\"Half\" IS NOT NULL AND \"Row\" IS NOT NULL AND \"Column\" IS NOT NULL)");
-
-                            t.HasCheckConstraint("ck_planning_table_extra_seats", "\"ExtraSeats\" BETWEEN 0 AND 2");
-
-                            t.HasCheckConstraint("ck_planning_table_half", "\"Half\" IS NULL OR \"Half\" IN ('GROOM', 'BRIDE')");
-
-                            t.HasCheckConstraint("ck_planning_table_side", "\"Side\" IS NULL OR \"Side\" IN ('GROOM', 'BRIDE', 'MUTUAL')");
                         });
                 });
 
@@ -2728,8 +2630,9 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<Guid?>("GroupId")
-                        .HasColumnType("uuid");
+                    b.Property<string>("Group")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
 
                     b.Property<Guid>("InvitationId")
                         .HasColumnType("uuid");
@@ -2744,12 +2647,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("InvitationId", "PermissionId", "ScopeType", "GroupId")
+                    b.HasIndex("InvitationId", "PermissionId", "ScopeType", "Group")
                         .IsUnique();
 
                     b.ToTable("cohost_invitation_grants", "inviteme", t =>
                         {
-                            t.HasCheckConstraint("ck_cohost_invitation_grants_scope", "(\"ScopeType\" = 'WEDDING' AND \"GroupId\" IS NULL) OR (\"ScopeType\" = 'GUEST_GROUP' AND \"GroupId\" IS NOT NULL)");
+                            t.HasCheckConstraint("ck_cohost_invitation_grants_scope", "(\"ScopeType\" = 'WEDDING' AND \"Group\" IS NULL) OR (\"ScopeType\" = 'GUEST_GROUP' AND \"Group\" IS NOT NULL)");
                         });
                 });
 
@@ -2979,8 +2882,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("GrantedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<Guid>("GroupId")
-                        .HasColumnType("uuid");
+                    b.Property<string>("Group")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
 
                     b.Property<Guid>("MemberId")
                         .HasColumnType("uuid");
@@ -2993,10 +2898,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("MemberId", "PermissionId", "GroupId")
+                    b.HasIndex("MemberId", "PermissionId", "Group")
                         .IsUnique();
 
-                    b.HasIndex("WeddingId", "GroupId", "PermissionId");
+                    b.HasIndex("WeddingId", "Group", "PermissionId");
 
                     b.ToTable("wedding_member_group_permissions", "inviteme");
                 });
@@ -3915,28 +3820,8 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_planning_gift_transactions_wedding");
                 });
 
-            modelBuilder.Entity("InviteMe.Domain.Guests.PlanningGroup", b =>
-                {
-                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
-                        .WithMany()
-                        .HasForeignKey("WeddingId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
             modelBuilder.Entity("InviteMe.Domain.Guests.PlanningGuest", b =>
                 {
-                    b.HasOne("InviteMe.Domain.Guests.PlanningGroup", null)
-                        .WithMany()
-                        .HasForeignKey("GroupId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("InviteMe.Domain.Guests.PlanningImportBatch", null)
-                        .WithMany()
-                        .HasForeignKey("ImportId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
                     b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
                         .WithMany()
                         .HasForeignKey("WeddingId")
@@ -3944,11 +3829,17 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("InviteMe.Domain.Guests.PlanningImportBatch", b =>
+            modelBuilder.Entity("InviteMe.Domain.Guests.PlanningImportTask", b =>
                 {
-                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                    b.HasOne("InviteMe.Domain.Guests.PlanningGuest", null)
                         .WithMany()
-                        .HasForeignKey("WeddingId")
+                        .HasForeignKey("GuestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("InviteMe.Domain.Guests.PlanningRequestReceipt", null)
+                        .WithMany()
+                        .HasForeignKey("ImportId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
@@ -3974,6 +3865,15 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("ParticipantId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Guests.PlanningRequestReceipt", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Identity.RefreshToken", b =>
@@ -4217,11 +4117,6 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.HasOne("InviteMe.Domain.Seating.PlanningTable", null)
                         .WithMany()
-                        .HasForeignKey("PlannedTableId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("InviteMe.Domain.Seating.PlanningTable", null)
-                        .WithMany()
                         .HasForeignKey("TableId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
@@ -4238,11 +4133,6 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("InviteMe.Domain.Seating.PlanningTable", b =>
                 {
-                    b.HasOne("InviteMe.Domain.Guests.PlanningGroup", null)
-                        .WithMany()
-                        .HasForeignKey("GroupId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
                         .WithMany()
                         .HasForeignKey("WeddingId")
@@ -4272,11 +4162,6 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("InviteMe.Domain.Weddings.CoHostInvitationGrant", b =>
                 {
-                    b.HasOne("InviteMe.Domain.Guests.PlanningGroup", null)
-                        .WithMany()
-                        .HasForeignKey("GroupId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("InviteMe.Domain.Weddings.CoHostInvitation", null)
                         .WithMany()
                         .HasForeignKey("InvitationId")
@@ -4319,12 +4204,6 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("InviteMe.Domain.Weddings.WeddingMemberGroupPermission", b =>
                 {
-                    b.HasOne("InviteMe.Domain.Guests.PlanningGroup", null)
-                        .WithMany()
-                        .HasForeignKey("GroupId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
                     b.HasOne("InviteMe.Domain.Weddings.WeddingMember", null)
                         .WithMany()
                         .HasForeignKey("MemberId")

@@ -98,28 +98,28 @@ public sealed class CoHostStore(InviteMeDbContext db) : ICoHostStore
         var groupRows = await (from grant in db.WeddingMemberGroupPermissions.AsNoTracking()
             join permission in db.Permissions.AsNoTracking() on grant.PermissionId equals permission.Id
             where memberIds.Contains(grant.MemberId)
-            select new { grant.MemberId, permission.Code, grant.GroupId }).ToListAsync(ct);
+            select new { grant.MemberId, permission.Code, grant.Group }).ToListAsync(ct);
         var weddingRows = await (from grant in db.WeddingMemberPermissions.AsNoTracking()
             join permission in db.Permissions.AsNoTracking() on grant.PermissionId equals permission.Id
             where memberIds.Contains(grant.MemberId)
             select new { grant.MemberId, permission.Code }).ToListAsync(ct);
         return memberIds.ToDictionary(id => id, id => (IReadOnlyList<CoHostPermissionScopeDto>)
             groupRows.Where(x => x.MemberId == id).GroupBy(x => x.Code).Select(x => new CoHostPermissionScopeDto(x.Key, false,
-                x.Select(y => y.GroupId).Distinct().ToArray()))
+                x.Select(y => y.Group).Distinct().ToArray()))
             .Concat(weddingRows.Where(x => x.MemberId == id).Select(x => new CoHostPermissionScopeDto(x.Code, true, [])))
             .GroupBy(x => x.Permission).Select(x => new CoHostPermissionScopeDto(x.Key, x.Any(y => y.WeddingWide),
                 x.SelectMany(y => y.GroupIds).Distinct().ToArray())).OrderBy(x => x.Permission).ToList());
     }
 
     public async Task<CoHostDto> UpdateScopesAsync(Guid weddingId, Guid coHostUserId,
-        IReadOnlyList<(WeddingPermission Permission, bool WeddingWide, IReadOnlyList<Guid> GroupIds)> grants, Guid actorId, CancellationToken ct)
+        IReadOnlyList<(WeddingPermission Permission, bool WeddingWide, IReadOnlyList<InviteMe.Domain.Guests.PlanningGroupKind> GroupIds)> grants, Guid actorId, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var member = await FindMemberForUpdateAsync(weddingId, coHostUserId, ct)
             ?? throw new ApplicationProblemException(ProblemKind.NotFound, "COHOST_NOT_FOUND", "Co-host not found.");
         if (member.Status != "ACTIVE") throw new ApplicationProblemException(ProblemKind.Conflict, "COHOST_NOT_ACTIVE", "Cannot update permissions for an inactive co-host.");
         var groupIds = grants.Where(x => !x.WeddingWide).SelectMany(x => x.GroupIds).Distinct().ToArray();
-        if (groupIds.Length > 0 && await db.Set<PlanningGroup>().CountAsync(x => x.WeddingId == weddingId && groupIds.Contains(x.Id), ct) != groupIds.Length)
+        if (groupIds.Any(x => !Enum.IsDefined(x)))
             throw new ApplicationProblemException(ProblemKind.BadRequest, "COHOST_GROUP_NOT_FOUND", "One or more groups do not belong to this wedding.");
         var codes = grants.Select(x => x.Permission.ToString()).Distinct().ToArray();
         var permissionRows = await db.Permissions.Where(x => x.Scope == "WEDDING" && codes.Contains(x.Code)).ToDictionaryAsync(x => x.Code, ct);
@@ -138,8 +138,8 @@ public sealed class CoHostStore(InviteMeDbContext db) : ICoHostStore
                 if (!keptWeddingIds.Contains(permissionId))
                     db.Add(WeddingMemberPermission.Create(member.Id, permissionId));
             }
-            else foreach (var groupId in grant.GroupIds)
-                db.Add(new WeddingMemberGroupPermission { Id = Guid.NewGuid(), WeddingId = weddingId, MemberId = member.Id, PermissionId = permissionId, GroupId = groupId });
+            else foreach (var group in grant.GroupIds)
+                db.Add(new WeddingMemberGroupPermission { Id = Guid.NewGuid(), WeddingId = weddingId, MemberId = member.Id, PermissionId = permissionId, Group = group });
         }
         var afterPermissions = codes.Order(StringComparer.Ordinal).ToList();
         var metadata = JsonSerializer.Serialize(new

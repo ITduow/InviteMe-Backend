@@ -80,11 +80,11 @@ public sealed class InvitationDesignStore(InviteMeDbContext db) : IInvitationDes
             where guest.InvitationToken == token && owner.Status == "ACTIVE" &&
                 (wedding.Status == "DRAFT" || wedding.Status == "PUBLISHED") &&
                 settings.InvitationDesignStatus == InvitationPublicationStatus.PUBLISHED
-            select new { guest.Id, guest.RecipientName, guest.Honorific, guest.InvitationKind, settings.InvitationPublishedSnapshotJson }).SingleOrDefaultAsync(ct);
+            select new { guest.Id, guest.RecipientName, guest.Honorific, settings.InvitationPublishedSnapshotJson }).SingleOrDefaultAsync(ct);
         if (row?.InvitationPublishedSnapshotJson is null) return null;
         var snapshot = JsonSerializer.Deserialize<JsonElement>(row.InvitationPublishedSnapshotJson);
         var presets = snapshot.GetProperty("wording").Deserialize<WordingPreset[]>()!;
-        var wording = InvitationWording.Render(presets, new(row.Id, row.RecipientName, row.Honorific, row.InvitationKind));
+        var wording = InvitationWording.Render(presets, new(row.Id, row.RecipientName, row.Honorific));
         return new(snapshot.GetProperty("document").Clone(), wording.Content);
     }
 }

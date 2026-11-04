@@ -5,7 +5,7 @@ public sealed record WeddingAccess(
     bool IsActiveMember,
     IReadOnlySet<WeddingPermission> Permissions,
     IReadOnlySet<WeddingPermission>? WeddingWidePermissions = null,
-    IReadOnlyDictionary<WeddingPermission, IReadOnlySet<Guid>>? GroupPermissions = null)
+    IReadOnlyDictionary<WeddingPermission, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>>? GroupPermissions = null)
 {
     public bool IsOwner(Guid userId)
     {
@@ -45,6 +45,6 @@ public sealed record WeddingAccess(
         userId != Guid.Empty && (OwnerId == userId || (permission == WeddingPermission.WEDDING_VIEW && IsActiveMember)
                                  || (WeddingWidePermissions ?? Permissions).Contains(permission));
 
-    public IReadOnlySet<Guid> GroupsFor(WeddingPermission permission) =>
-        GroupPermissions?.GetValueOrDefault(permission) ?? new HashSet<Guid>();
+    public IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind> GroupsFor(WeddingPermission permission) =>
+        GroupPermissions?.GetValueOrDefault(permission) ?? new HashSet<InviteMe.Domain.Guests.PlanningGroupKind>();
 }

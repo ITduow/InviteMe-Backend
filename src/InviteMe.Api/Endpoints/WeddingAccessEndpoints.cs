@@ -27,7 +27,9 @@ internal static class WeddingAccessEndpoints
             // Cohost01: the co-host sees what each permission covers, the whole wedding or the named guest groups.
             var groupIds = allowed.Where(permission => !access.IsWeddingWide(userId.Value, permission))
                 .SelectMany(access.GroupsFor).Distinct().ToArray();
-            var names = groupIds.Length == 0 ? new Dictionary<Guid, string>() : await reader.FindGroupNamesAsync(id, groupIds, ct);
+            var names = groupIds.Length == 0
+                ? (IReadOnlyDictionary<InviteMe.Domain.Guests.PlanningGroupKind, string>)new Dictionary<InviteMe.Domain.Guests.PlanningGroupKind, string>()
+                : await reader.FindGroupNamesAsync(id, groupIds, ct);
             var scopes = allowed.Select(permission => access.IsWeddingWide(userId.Value, permission)
                 ? new AccessScopeDto(permission.ToString(), true, [])
                 : new AccessScopeDto(permission.ToString(), false, access.GroupsFor(permission)
@@ -42,4 +44,4 @@ internal static class WeddingAccessEndpoints
 }
 
 internal sealed record AccessScopeDto(string Permission, bool WeddingWide, IReadOnlyList<AccessGroupDto> Groups);
-internal sealed record AccessGroupDto(Guid Id, string Name);
+internal sealed record AccessGroupDto(InviteMe.Domain.Guests.PlanningGroupKind Group, string Name);

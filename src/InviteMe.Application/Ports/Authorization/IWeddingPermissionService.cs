@@ -17,10 +17,10 @@ public interface IWeddingPermissionService
     async Task<WeddingPermissionScope> RequireScopeAsync(Guid weddingId, WeddingPermission permission, CancellationToken cancellationToken)
     {
         await RequireAsync(weddingId, permission, cancellationToken);
-        return new(true, new HashSet<Guid>());
+        return new(true, new HashSet<InviteMe.Domain.Guests.PlanningGroupKind>());
     }
     async Task RequireGuestAsync(Guid weddingId, WeddingPermission permission, Guid guestId, CancellationToken cancellationToken) =>
         await RequireAsync(weddingId, permission, cancellationToken);
 }
 
-public sealed record WeddingPermissionScope(bool IsWeddingWide, IReadOnlySet<Guid> GroupIds);
+public sealed record WeddingPermissionScope(bool IsWeddingWide, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind> GroupIds);

@@ -23,5 +23,5 @@ public sealed class CoHostInvitationGrant
     public Guid InvitationId { get; set; }
     public Guid PermissionId { get; set; }
     public string ScopeType { get; set; } = "GUEST_GROUP";
-    public Guid? GroupId { get; set; }
+    public InviteMe.Domain.Guests.PlanningGroupKind? Group { get; set; }
 }

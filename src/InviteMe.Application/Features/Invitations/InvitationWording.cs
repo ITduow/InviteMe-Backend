@@ -13,7 +13,7 @@ public sealed record WordingPreset(Guid Id, string Name, string Content, string 
 public sealed record WordingSettingsDto(Guid WeddingId, int Version, IReadOnlyList<WordingPreset> Presets);
 public sealed record SaveWordingSettings(int ExpectedVersion, IReadOnlyList<WordingPreset?>? Presets);
 public sealed record PreviewWording(Guid GuestId, IReadOnlyList<WordingPreset?>? Presets = null);
-public sealed record WordingRecipient(Guid Id, string RecipientName, string? Honorific, string InvitationKind);
+public sealed record WordingRecipient(Guid Id, string RecipientName, string? Honorific);
 public sealed record WordingPreviewDto(Guid GuestId, Guid PresetId, string PresetName, bool UsedDefault,
     string RecipientName, string? Honorific, string RecipientLabel, string SenderPronoun, string Content);
 
@@ -93,9 +93,8 @@ public static class InvitationWording
         var honorific = string.IsNullOrWhiteSpace(guest.Honorific) ? "" : Clean(guest.Honorific);
         var matched = presets.FirstOrDefault(p => p.Honorifics.Any(h => HonorificKey(h) == HonorificKey(honorific)));
         var preset = matched ?? presets.Single(p => p.IsDefault);
-        var prefix = guest.InvitationKind switch { "FAMILY" => "gia đình ", "GROUP" => "nhóm ", _ => "" };
         var name = Clean(guest.RecipientName);
-        var label = prefix + (honorific.Length == 0 ? "" : honorific.ToLowerInvariant() + " ") + name;
+        var label = (honorific.Length == 0 ? "" : honorific.ToLowerInvariant() + " ") + name;
         // One replacement pass: guest-provided text is never interpreted as a template.
         var values = new Dictionary<string, string>
         {

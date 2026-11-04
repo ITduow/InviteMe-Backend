@@ -1,4 +1,5 @@
 using InviteMe.Application.Features.Weddings.CoHosts;
+using InviteMe.Domain.Guests;
 
 namespace InviteMe.UnitTests;
 
@@ -11,7 +12,7 @@ public sealed class CoHostInvitationValidationTests
     public void AcceptsGroupScopedPermissionGrant()
     {
         var input = new CreateCoHostInvitationInput("cohost@example.com", [
-            new("GUEST_VIEW", [Guid.NewGuid()]),
+            new("GUEST_VIEW", [PlanningGroupKind.RELATIVES]),
             new("CHECKIN_MANAGE", [], WeddingWide: true)
         ]);
 
@@ -22,7 +23,7 @@ public sealed class CoHostInvitationValidationTests
     public void RejectsUnsupportedPermissionAndEmptyGroupScope()
     {
         var input = new CreateCoHostInvitationInput("cohost@example.com", [
-            new("WEDDING_EDIT", [Guid.NewGuid()]),
+            new("WEDDING_EDIT", [PlanningGroupKind.RELATIVES]),
             new("GUEST_EDIT", [])
         ]);
 
@@ -33,8 +34,8 @@ public sealed class CoHostInvitationValidationTests
     public void RejectsDuplicatePermissionGrant()
     {
         var input = new CreateCoHostInvitationInput("cohost@example.com", [
-            new("GUEST_VIEW", [Guid.NewGuid()]),
-            new("GUEST_VIEW", [Guid.NewGuid()])
+            new("GUEST_VIEW", [PlanningGroupKind.RELATIVES]),
+            new("GUEST_VIEW", [PlanningGroupKind.FRIENDS])
         ]);
 
         Assert.False(validator.Validate(input).IsValid);
@@ -43,7 +44,7 @@ public sealed class CoHostInvitationValidationTests
     [Fact]
     public void CheckInPermissionMustBeWeddingWideOnInvitationAndScopeUpdate()
     {
-        var groupId = Guid.NewGuid();
+        var groupId = PlanningGroupKind.RELATIVES;
         var invitation = new CreateCoHostInvitationInput("cohost@example.com", [
             new("CHECKIN_MANAGE", [groupId])
         ]);
