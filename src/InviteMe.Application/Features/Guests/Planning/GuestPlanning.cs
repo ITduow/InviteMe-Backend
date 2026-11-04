@@ -32,7 +32,7 @@ public sealed record PlanningPersonDto(Guid Id, string FullName, string Role, st
 public sealed record PlanningPlaceDto(Guid Id, PlanningPersonDto? Person);
 public sealed record PlanningGuestDto(Guid Id, int Version, string RecipientName, string? Honorific,
     int ExpectedPeople, string Side, PlanningGroupKind Group, string? Phone, string? Note, string? Email = null,
-    string? InvitationPath = null, DateTimeOffset? ArchivedAt = null, bool PossibleDuplicate = false);
+    string? InvitationPath = null, DateTimeOffset? ArchivedAt = null, bool PossibleDuplicate = false, string? RsvpStatus = null);
 public sealed record PlanningGuestDetail(PlanningGuestDto Guest, IReadOnlyList<PlanningPlaceDto> Places);
 public sealed record UpdatePlanningGuest(int ExpectedVersion, string RecipientName, string? Honorific, string Side,
     PlanningGroupKind Group, string? Phone, string? Note, string? Email);

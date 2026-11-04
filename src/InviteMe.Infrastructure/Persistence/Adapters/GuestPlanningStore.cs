@@ -366,7 +366,9 @@ public sealed partial class GuestPlanningStore(InviteMeDbContext db, InviteMe.Ap
             join p in db.Set<PlanningParticipant>() on place.ParticipantId equals (Guid?)p.Id into people
             from p in people.DefaultIfEmpty() orderby place.Position
             select new PlanningPlaceDto(place.Id, p == null ? null : new PlanningPersonDto(p.Id, p.FullName, p.Role, p.AttendanceStatus))).ToListAsync(ct);
-        return new(guest, places);
+        var rsvpStatus = await db.Set<PlanningRsvp>().AsNoTracking().Where(x => x.GuestId == guestId)
+            .Select(x => x.Status).SingleOrDefaultAsync(ct);
+        return new(guest with { RsvpStatus = rsvpStatus }, places);
     }
 
     private async Task<bool> HasPossibleDuplicateAsync(Guid weddingId, string recipientName, string? phone,
