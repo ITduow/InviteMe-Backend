@@ -130,6 +130,12 @@ public sealed class PlanApiTests
             gift.Headers.Add("Idempotency-Key", "g1");
             await AssertLimit(await guest.SendAsync(gift), "giftQr", null, 0, 1, Plan.Basic);
         }
+        // Declaring a present on the invitation is part of the same online gift feature.
+        using (var item = new HttpRequestMessage(HttpMethod.Post, $"/api/gifts/{token}/items") { Content = JsonContent.Create(new { itemName = "Bộ chăn ga" }) })
+        {
+            item.Headers.Add("Idempotency-Key", "i1");
+            await AssertLimit(await guest.SendAsync(item), "giftQr", null, 0, 1, Plan.Basic);
+        }
         var usage = (await owner.GetFromJsonAsync<WeddingPlanDto>($"/api/weddings/{w}/plan"))!.Usage;
         Assert.Equal((3, 5, 0), (usage.GuestPlaces, usage.SeatingTables, usage.CoHosts));
 

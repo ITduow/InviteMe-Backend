@@ -53,6 +53,18 @@ internal static class GiftEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status413PayloadTooLarge).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
         guest.MapPost("/{giftId:guid}/claim", (string token, Guid giftId, GiftGuestHandler h, CancellationToken ct) => h.ClaimAsync(token, giftId, ct))
             .WithName("ClaimMyGiftTransferred").Produces<GuestGiftDto>().ProducesProblem(StatusCodes.Status404NotFound);
+        // A present the guest will give (sent ahead or brought to the wedding): the couple, or the desk, marks it received.
+        guest.MapPost("/items", async (string token, DeclareGuestItem input, [Microsoft.AspNetCore.Mvc.FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+                GiftGuestHandler h, CancellationToken ct) =>
+            {
+                var result = await h.DeclareItemAsync(token, idempotencyKey, input, ct);
+                return Results.Json(result.Gift, statusCode: result.Created ? StatusCodes.Status201Created : StatusCodes.Status200OK);
+            })
+            .WithName("DeclareMyGiftItem").Produces<GuestGiftDto>(StatusCodes.Status201Created).Produces<GuestGiftDto>().ProducesValidationProblem()
+            .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+        guest.MapPost("/{giftId:guid}/cancel", (string token, Guid giftId, GiftGuestHandler h, CancellationToken ct) => h.CancelItemAsync(token, giftId, ct))
+            .WithName("WithdrawMyGiftItem").Produces<GuestGiftDto>().ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         // Wedding owner (GIFT_VIEW / GIFT_EDIT, wedding-wide).
         var host = endpoints.MapGroup("/api/weddings/{weddingId:guid}/gifts").RequireAuthorization().WithTags("Gifts (Host)");
@@ -124,6 +136,10 @@ internal static class GiftEndpoints
                 h.ConfirmAsync(weddingId, giftId, input ?? new ConfirmGift(), ct))
             .WithName("ConfirmGift").Produces<GiftDto>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+        // Reception desk (owner or co-host with GIFT_RECORD): a present the guest declared on the invitation was handed over.
+        host.MapPost("/{giftId:guid}/receive", (Guid weddingId, Guid giftId, GiftHostHandler h, CancellationToken ct) => h.ReceiveAsync(weddingId, giftId, ct))
+            .WithName("ReceiveDeclaredGift").Produces<GiftDto>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
         host.MapPost("/{giftId:guid}/cancel", (Guid weddingId, Guid giftId, GiftHostHandler h, CancellationToken ct) => h.CancelAsync(weddingId, giftId, ct))
             .WithName("CancelGift").Produces<GiftDto>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);

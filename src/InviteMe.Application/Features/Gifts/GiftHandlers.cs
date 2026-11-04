@@ -20,7 +20,8 @@ public sealed record GiftWebhookOptions(string? ApiKey);
 
 /// <summary>Guest08: the guest chooses an amount and a wish, gets a VietQR code to their couple's account, and may say "đã chuyển".</summary>
 public sealed class GiftGuestHandler(IGiftStore store, RequestValidation<CreateGuestGift> validation, IPlanningChangePublisher changes,
-    IGiftProofStorage proofs, InviteMe.Application.Features.Weddings.Setup.ImageUploadLimit limit)
+    IGiftProofStorage proofs, InviteMe.Application.Features.Weddings.Setup.ImageUploadLimit limit,
+    RequestValidation<DeclareGuestItem> declareValidation)
 {
     public Task<GuestGiftPageDto> PageAsync(string token, CancellationToken ct) => store.GuestPageAsync(token, ct);
 
@@ -48,6 +49,24 @@ public sealed class GiftGuestHandler(IGiftStore store, RequestValidation<CreateG
     public async Task<GuestGiftDto> ClaimAsync(string token, Guid giftId, CancellationToken ct)
     {
         var result = await store.ClaimAsync(token, giftId, ct);
+        if (result.Created) await changes.PublishAsync(result.WeddingId, new(GiftRules.ChangedEvent, giftId), ct);
+        return result.Gift;
+    }
+
+    /// <summary>The guest says which present they will give (sent ahead or brought to the wedding); the couple confirms it.</summary>
+    public async Task<GuestGiftResult> DeclareItemAsync(string token, string? idempotencyKey, DeclareGuestItem input, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 100)
+            throw new ValidationException([new FluentValidation.Results.ValidationFailure("Idempotency-Key", "Idempotency-Key header (1-100 characters) is required.")]);
+        await declareValidation.ValidateAsync(input, ct);
+        var result = await store.DeclareItemAsync(token, idempotencyKey.Trim(), input, ct);
+        if (result.Created) await changes.PublishAsync(result.WeddingId, new(GiftRules.ChangedEvent, result.Gift.Id), ct);
+        return result;
+    }
+
+    public async Task<GuestGiftDto> CancelItemAsync(string token, Guid giftId, CancellationToken ct)
+    {
+        var result = await store.CancelDeclaredItemAsync(token, giftId, ct);
         if (result.Created) await changes.PublishAsync(result.WeddingId, new(GiftRules.ChangedEvent, giftId), ct);
         return result.Gift;
     }
@@ -152,15 +171,18 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
     }
 
     /// <summary>
-    /// The owner records any gift. A co-host with GIFT_RECORD records what is handed over at the wedding: cash, presents, and
-    /// transfers shown on a phone with a photo of the screen (ProofId); only the couple confirms that such money arrived.
+    /// The owner records any gift in the gift book. At the reception desk (a co-host with GIFT_RECORD, or the owner on the desk
+    /// screen) only what is handed over is written down: a sealed envelope that the couple counts later, or a present, both
+    /// without any amount or value. Transfers come through the invitation's gift code, so the desk records no money.
     /// </summary>
     public async Task<GiftDto> RecordAsync(Guid weddingId, RecordGift input, string? idempotencyKey, CancellationToken ct)
     {
         var owner = await RequireRecorder(weddingId, ct);
         await recordValidation.ValidateAsync(input, ct);
-        // At the desk nobody has checked the bank yet, the owner included: a transfer waits for confirmation, photo or not.
         var atReception = !owner || input.FromDesk;
+        if (atReception && (input.Method == PlanningGift.Transfer || input.Amount is not null || input.EstimatedValue is not null))
+            throw new ValidationException([new FluentValidation.Results.ValidationFailure("method",
+                "Tại quầy chỉ ghi phong bì hoặc quà hiện vật, không ghi số tiền.")]);
         if (idempotencyKey is { Length: > 100 })
             throw new ValidationException([new FluentValidation.Results.ValidationFailure("Idempotency-Key", "At most 100 characters.")]);
         return await Received(weddingId, await store.RecordAsync(weddingId, input, user.UserId!.Value, idempotencyKey?.Trim(), ct, atReception: atReception), ct);
@@ -199,6 +221,17 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
         var gift = await store.CancelAsync(weddingId, giftId, user.UserId!.Value, ct);
         await changes.PublishAsync(weddingId, new(GiftRules.ChangedEvent, gift.Id), ct);
         return gift;
+    }
+
+    /// <summary>
+    /// The reception desk (owner or co-host with GIFT_RECORD) got a present the guest declared on the invitation: received, no
+    /// further confirmation. A co-host gets the gift back without wish or payment details, like the reception list.
+    /// </summary>
+    public async Task<GiftDto> ReceiveAsync(Guid weddingId, Guid giftId, CancellationToken ct)
+    {
+        var owner = await RequireRecorder(weddingId, ct);
+        var gift = await Received(weddingId, await store.ReceiveDeclaredItemAsync(weddingId, giftId, user.UserId!.Value, ct), ct);
+        return owner ? gift : ForDesk(gift);
     }
 
     public async Task<IReadOnlyList<GiftTransactionDto>> TransactionsAsync(Guid weddingId, string? status, CancellationToken ct)
@@ -274,12 +307,16 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
     {
         var owner = await permissions.HasPermissionAsync(weddingId, WeddingPermission.GIFT_VIEW, ct);
         await Require(weddingId, owner ? WeddingPermission.GIFT_VIEW : WeddingPermission.GIFT_RECORD, ct);
-        // Only what is handed over at the desk: guests' online QR gifts (and their receipts) are not part of it.
+        // Only what is handed over at the desk: guests' online QR gifts (and their receipts) are not part of it. Presents guests
+        // declared on the invitation are there while they wait (the desk looks them up by guest) and once received.
         var gifts = (await store.GiftsAsync(weddingId, ct))
-            .Where(g => g.Method is PlanningGift.Cash or PlanningGift.Item
-                || (g.Method == PlanningGift.Transfer && (g.HasProof || g.ClaimedAt is not null)));
-        return (owner ? gifts : gifts.Select(g => g with { Message = null, Code = null, Confirmation = null, AccountId = null })).ToList();
+            .Where(g => g.DeclaredByGuest ? g.Status is PlanningGift.Pending or PlanningGift.Paid
+                : g.Method is PlanningGift.Cash or PlanningGift.Item
+                  || (g.Method == PlanningGift.Transfer && (g.HasProof || g.ClaimedAt is not null)));
+        return (owner ? gifts : gifts.Select(ForDesk)).ToList();
     }
+
+    private static GiftDto ForDesk(GiftDto g) => g with { Message = null, Code = null, Confirmation = null, AccountId = null };
 
     /// <summary>True for the owner (GIFT_EDIT); false for a co-host who may only record at the reception (GIFT_RECORD).</summary>
     private async Task<bool> RequireRecorder(Guid weddingId, CancellationToken ct)

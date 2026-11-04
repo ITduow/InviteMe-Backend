@@ -14,16 +14,17 @@ public static class NotificationTypes
 {
     public const string RsvpSubmitted = "RSVP_SUBMITTED", RsvpUpdated = "RSVP_UPDATED", RsvpOverLimit = "RSVP_OVER_LIMIT",
         RsvpChangeRequested = "RSVP_CHANGE_REQUESTED",
-        GiftClaimed = "GIFT_CLAIMED", GiftDeskPending = "GIFT_DESK_PENDING";
+        GiftClaimed = "GIFT_CLAIMED", GiftDeskPending = "GIFT_DESK_PENDING", GiftItemDeclared = "GIFT_ITEM_DECLARED";
 
-    public static readonly IReadOnlySet<string> Gifts = new HashSet<string> { GiftClaimed, GiftDeskPending };
+    public static readonly IReadOnlySet<string> Gifts = new HashSet<string> { GiftClaimed, GiftDeskPending, GiftItemDeclared };
 }
 
 /// <summary>RSVP notification data: who answered, the answer and how many people (MaxPeople = the invitation's threshold).</summary>
 public sealed record RsvpNotificationData(Guid GuestId, string GuestName, string Decision, int People, int MaxPeople);
 
-/// <summary>Gift notification data: the gift, who gave it, how and how much (null = not counted yet). The couple checks the money themselves.</summary>
-public sealed record GiftNotificationData(Guid GiftId, string? GiverName, string Method, long? Amount);
+/// <summary>Gift notification data: the gift, who gave it, how and how much (null = not counted yet), or the present a guest declared.
+/// The couple checks the money themselves.</summary>
+public sealed record GiftNotificationData(Guid GiftId, string? GiverName, string Method, long? Amount, string? ItemName = null);
 
 public sealed record NotificationDto(Guid Id, Guid WeddingId, string WeddingTitle, string Type, JsonElement Data,
     DateTimeOffset CreatedAt, DateTimeOffset? ReadAt);

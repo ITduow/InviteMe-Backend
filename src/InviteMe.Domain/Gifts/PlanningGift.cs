@@ -53,6 +53,8 @@ public sealed class PlanningGiftBankHub
 /// A TRANSFER shown at the reception desk is recorded by a co-host with a photo of the transfer: it stays CLAIMED until the
 /// couple sees the money in their account and confirms it. A sealed CASH envelope dropped in the gift box is recorded with
 /// its giver only: it stays CLAIMED until the couple opens it and enters the amount.
+/// A present the guest declares on the invitation (DeclaredByGuest) starts PENDING: the couple confirms it when it arrives, or
+/// the reception desk marks it received when the guest brings it.
 /// ParticipantId = the person of the invitation who gave (e.g. a companion), GuestId = their invitation.
 /// </summary>
 public sealed class PlanningGift
@@ -63,7 +65,9 @@ public sealed class PlanningGift
     public const string Qr = "QR", Cash = "CASH", Transfer = "TRANSFER", Item = "ITEM";
     public const string Auto = "AUTO", Manual = "MANUAL";
     public const long MinAmount = 10_000, MaxAmount = 100_000_000;
-    public const int MessageMaxLength = 500, GiverNameMaxLength = 150, ItemNameMaxLength = 150, MaxItemQuantity = 1000;
+    public const int MessageMaxLength = 500, GiverNameMaxLength = 150, ItemNameMaxLength = 150, MaxItemQuantity = 1000, NoteMaxLength = 200;
+    /// <summary>Presents one guest may have declared on the invitation and not handed over yet.</summary>
+    public const int MaxDeclaredPerGuest = 20;
     public static readonly TimeSpan CodeLifetime = TimeSpan.FromHours(24);
     public static readonly IReadOnlyList<string> Statuses = [Pending, Claimed, Paid, Cancelled];
 
@@ -95,6 +99,10 @@ public sealed class PlanningGift
     public long? ItemValue { get; private set; }
     /// <summary>Photo of the transfer taken at the reception desk (PlanningGiftProof).</summary>
     public Guid? ProofId { get; private set; }
+    /// <summary>A present the guest declared on the invitation: it waits (PENDING) until the couple or the desk receives it.</summary>
+    public bool DeclaredByGuest { get; private set; }
+    /// <summary>How the guest sends a declared present, e.g. "gửi Grab ngày 10/11".</summary>
+    public string? Note { get; private set; }
 
     public static PlanningGift ForQr(Guid weddingId, Guid guestId, string giverName, Guid accountId, string code, long amount,
         string? message, bool messagePublic, string idempotencyKey, DateTimeOffset now) => new()
@@ -167,6 +175,37 @@ public sealed class PlanningGift
             ItemQuantity = quantity, ItemValue = estimatedValue, Message = message, Status = Paid, Confirmation = Manual,
             RecordedBy = actor, CreatedAt = now, ExpiresAt = now, PaidAt = receivedAt, IdempotencyKey = idempotencyKey
         };
+    }
+
+    /// <summary>A present the guest declares on the invitation, not handed over yet; it has no amount and no value.</summary>
+    public static PlanningGift DeclaredItem(Guid weddingId, Guid guestId, string giverName, string itemName, int quantity, string? message,
+        bool messagePublic, string? note, string idempotencyKey, DateTimeOffset now)
+    {
+        if (string.IsNullOrWhiteSpace(itemName) || quantity is < 1 or > MaxItemQuantity) throw new ArgumentOutOfRangeException(nameof(itemName));
+        return new()
+        {
+            Id = Guid.NewGuid(), WeddingId = weddingId, GuestId = guestId, GiverName = giverName, Method = Item, ItemName = itemName,
+            ItemQuantity = quantity, Message = message, MessagePublic = messagePublic, Note = note, DeclaredByGuest = true, Status = Pending,
+            IdempotencyKey = idempotencyKey, CreatedAt = now, ExpiresAt = now
+        };
+    }
+
+    /// <summary>The couple or the reception desk got a declared present.</summary>
+    public void ReceiveItem(Guid actor, DateTimeOffset now)
+    {
+        if (Method != Item) throw new InvalidOperationException("Only presents are received this way.");
+        if (Status is Paid or Cancelled) throw new InvalidOperationException("Gift is already closed.");
+        Status = Paid; Confirmation = Manual; RecordedBy = actor; PaidAt = now;
+    }
+
+    /// <summary>The guest takes back a present they declared and have not handed over; false when it was already withdrawn.</summary>
+    public bool CancelByGuest()
+    {
+        if (!DeclaredByGuest || Status is not (Pending or Cancelled))
+            throw new InvalidOperationException("Only a waiting declared present can be withdrawn.");
+        if (Status == Cancelled) return false;
+        Status = Cancelled;
+        return true;
     }
 
     public static long CheckAmount(long amount) =>

@@ -907,6 +907,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<bool>("DeclaredByGuest")
+                        .HasColumnType("boolean")
+                        .HasColumnName("declared_by_guest");
+
                     b.Property<DateTimeOffset>("ExpiresAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("expires_at");
@@ -953,6 +957,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)")
                         .HasColumnName("method");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("note");
 
                     b.Property<DateTimeOffset?>("PaidAt")
                         .HasColumnType("timestamp with time zone")
@@ -1004,7 +1013,9 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_planning_gifts_confirmation", "confirmation IS NULL OR confirmation IN ('AUTO','MANUAL')");
 
-                            t.HasCheckConstraint("ck_planning_gifts_item", "(method = 'ITEM') = (item_name IS NOT NULL) AND (method <> 'ITEM' OR (status = 'PAID' AND amount_expected IS NULL AND amount_received IS NULL AND item_quantity BETWEEN 1 AND 1000 AND (item_value IS NULL OR item_value >= 0)))");
+                            t.HasCheckConstraint("ck_planning_gifts_declared", "NOT declared_by_guest OR (method = 'ITEM' AND item_value IS NULL)");
+
+                            t.HasCheckConstraint("ck_planning_gifts_item", "(method = 'ITEM') = (item_name IS NOT NULL) AND (method <> 'ITEM' OR ((status = 'PAID' OR declared_by_guest) AND amount_expected IS NULL AND amount_received IS NULL AND item_quantity BETWEEN 1 AND 1000 AND (item_value IS NULL OR item_value >= 0)))");
 
                             t.HasCheckConstraint("ck_planning_gifts_method", "method IN ('QR','CASH','TRANSFER','ITEM')");
 
