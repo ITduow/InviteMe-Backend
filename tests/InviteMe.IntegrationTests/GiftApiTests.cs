@@ -118,11 +118,11 @@ public sealed class GiftApiTests
         var gift = await Read<GuestGiftDto>(await Send(guest, an, new CreateGuestGift(500_000), "bh1"), HttpStatusCode.Created);
 
         using var sepay = Client(factory);
-        // The code of this couple's gift, paid into an account that is not theirs (another couple's Bank Hub account): not received.
+        // The code of this couple's gift, paid into an account that is not theirs (another couple's Bank Hub account): not received,
+        // and that account's movements are not kept.
         Assert.Equal(HttpStatusCode.OK, (await BankHub(sepay, "40999", $"{gift.Code} mung cuoi", 500_000, account: "9999999999")).StatusCode);
         Assert.Equal(PlanningGift.Pending, (await guest.GetFromJsonAsync<GuestGiftDto>($"{an}/{gift.Id}"))!.Status);
-        Assert.Equal(PlanningGiftTransaction.Ignored, (await db.Set<PlanningGiftTransaction>().AsNoTracking()
-            .SingleAsync(x => x.Provider == PlanningGiftTransaction.SePayBankHub && x.ProviderTransactionId == 40999)).Status);
+        Assert.False(await db.Set<PlanningGiftTransaction>().AnyAsync(x => x.Provider == PlanningGiftTransaction.SePayBankHub && x.ProviderTransactionId == 40999));
         Assert.Equal(HttpStatusCode.Unauthorized, (await BankHub(sepay, "40532", $"{gift.Code} mung cuoi", 500_000, key: "Apikey wrong")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await BankHub(sepay, "40532", $"{gift.Code} mung cuoi", 500_000, key: null)).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await BankHub(sepay, "", $"{gift.Code} mung cuoi", 500_000)).StatusCode);
@@ -135,16 +135,16 @@ public sealed class GiftApiTests
         Assert.Equal(HttpStatusCode.OK, (await BankHub(sepay, "40532", $"{gift.Code} mung cuoi", 500_000, key: BankHubKey)).StatusCode); // retry, bare key
         Assert.Equal(1, await db.Set<PlanningGiftTransaction>().CountAsync(x => x.Provider == PlanningGiftTransaction.SePayBankHub && x.ProviderTransactionId == 40532));
 
-        // A UUID id, money going out, and the development helper.
-        await BankHub(sepay, "b1293181-f086-11f0-b16e-52c7e9b4f41b", "chuyen tien", 300_000);
-        await BankHub(sepay, "c0000000-0000-0000-0000-000000000001", "rut tien", 100_000, transferType: "debit");
+        // The couple's own account: money without a gift code (salary, a friend paying back) and money going out are not kept.
+        Assert.Equal(HttpStatusCode.OK, (await BankHub(sepay, "b1293181-f086-11f0-b16e-52c7e9b4f41b", "chuyen tien", 300_000)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await BankHub(sepay, "c0000000-0000-0000-0000-000000000001", "rut tien", 100_000, transferType: "debit")).StatusCode);
         var review = (await owner.GetFromJsonAsync<List<GiftTransactionDto>>(path + "/transactions"))!;
-        Assert.Equal(new[] { PlanningGiftTransaction.Unmatched, PlanningGiftTransaction.Unmatched }, review.Select(x => x.Status).ToArray()); // SePay's + Bank Hub's
+        Assert.Equal(new[] { PlanningGiftTransaction.Unmatched }, review.Select(x => x.Status).ToArray()); // only SePay's own webhook
         var gift2 = await Read<GuestGiftDto>(await Send(guest, an, new CreateGuestGift(200_000), "bh2"), HttpStatusCode.Created);
         var simulated = await Read<GiftWebhookResult>(await owner.PostAsJsonAsync(path + "/dev/simulate-bankhub",
             new SimulateSePayTransfer(200_000, gift2.Code + " mung cuoi")), HttpStatusCode.OK);
         Assert.Equal((PlanningGiftTransaction.Matched, true), (simulated.Status, simulated.Paid));
-        Assert.Equal(5, await db.Set<PlanningGiftTransaction>().CountAsync(x => x.Provider == PlanningGiftTransaction.SePayBankHub));
+        Assert.Equal(2, await db.Set<PlanningGiftTransaction>().CountAsync(x => x.Provider == PlanningGiftTransaction.SePayBankHub));
     });
 
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
@@ -253,44 +253,40 @@ public sealed class GiftApiTests
         Assert.Single((await owner.GetFromJsonAsync<PagedResult<GiftDto>>(path + "?search=nồi chiên"))!.Items);
         Assert.Contains("Nồi chiên không dầu", Encoding.UTF8.GetString((await (await owner.GetAsync(path + "/export")).Content.ReadAsByteArrayAsync())[3..]));
 
-        // A co-host with GIFT_RECORD (wedding-wide only) records cash and presents at the reception, sees no totals.
+        // A co-host with GIFT_RECORD (wedding-wide only) records sealed envelopes and presents at the reception, sees no totals.
         using var desk = await SignIn(factory, "gift-desk");
         var deskEmail = (await desk.GetFromJsonAsync<AccountDto>("/api/auth/me"))!.Email;
         var guests = await Import(db, owner, w, "Lan");
         Assert.Equal(HttpStatusCode.BadRequest, (await owner.PostAsJsonAsync($"/api/weddings/{w}/co-host-invitations",
             new CreateCoHostInvitationInput(deskEmail, [new("GIFT_RECORD", [PlanningGroupKind.RELATIVES], false)]))).StatusCode);
         await CoHostPermissionTests.AddCoHostAsync(owner, desk, w, "GIFT_RECORD");
-        var envelope = await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Cash, 500_000, guests["Lan"].Id), "desk-1"), HttpStatusCode.Created);
-        Assert.Equal(("Lan", PlanningGift.Paid), (envelope.GiverName, envelope.Status));
-        await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Item, GiverName: "Nhóm bạn đại học", ItemName: "Tranh cưới"), "desk-2"),
+        var deskPresent = await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Item, GiverName: "Nhóm bạn đại học", ItemName: "Tranh cưới"), "desk-2"),
             HttpStatusCode.Created);
-        // A transfer shown on the guest's phone waits for the couple to confirm the money; the photo helps but is not required.
-        var noPhoto = await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Transfer, 250_000, GiverName: "Anh Tín"), "desk-3a"),
-            HttpStatusCode.Created);
-        Assert.Equal((PlanningGift.Claimed, false, (long?)null), (noPhoto.Status, noPhoto.HasProof, noPhoto.AmountReceived));
-        Assert.Equal(HttpStatusCode.BadRequest, (await UploadProof(desk, path + "/proofs", Encoding.UTF8.GetBytes("not an image"))).StatusCode);
-        var proof = await Read<GiftProofDto>(await UploadProof(desk, path + "/proofs", Png), HttpStatusCode.Created);
-        var shown = await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Transfer, 300_000, GiverName: "Anh Tú", ProofId: proof.Id), "desk-3"),
-            HttpStatusCode.Created);
-        Assert.Equal((PlanningGift.Claimed, true, (long?)null), (shown.Status, shown.HasProof, shown.AmountReceived));
-        await AssertProblem(HttpStatusCode.NotFound, "GIFT_PROOF_NOT_FOUND", await Send(desk, path,
-            new RecordGift(PlanningGift.Transfer, 200_000, GiverName: "Lại ảnh cũ", ProofId: proof.Id), "desk-4")); // one photo, one gift
-        foreach (var viewer in new[] { desk, owner })
-        {
-            var photo = await viewer.GetAsync($"{path}/{shown.Id}/proof");
-            Assert.Equal((HttpStatusCode.OK, "image/png"), (photo.StatusCode, photo.Content.Headers.ContentType!.MediaType));
-        }
-        Assert.Equal(HttpStatusCode.Forbidden, (await desk.PostAsJsonAsync($"{path}/{shown.Id}/confirm", new ConfirmGift())).StatusCode);
-        var confirmed = await Read<GiftDto>(await owner.PostAsJsonAsync($"{path}/{shown.Id}/confirm", new ConfirmGift()), HttpStatusCode.OK);
-        Assert.Equal((PlanningGift.Paid, (long?)300_000), (confirmed.Status, confirmed.AmountReceived));
-        // The owner at the desk screen has not checked the bank either: the transfer waits, even without a photo.
-        var ownerShown = await Read<GiftDto>(await Send(owner, path, new RecordGift(PlanningGift.Transfer, 400_000, GiverName: "Chị Mai",
-            FromDesk: true), "owner-desk-1"), HttpStatusCode.Created);
-        Assert.Equal((PlanningGift.Claimed, false, (long?)null), (ownerShown.Status, ownerShown.HasProof, ownerShown.AmountReceived));
+        Assert.Equal(PlanningGift.Paid, deskPresent.Status);
+        // The desk writes down no money: no amount on an envelope, no value on a present, no transfers (they come through the
+        // invitation's gift code), the owner on the desk screen included.
+        foreach (var (who, money, key) in new[]
+                 {
+                     (desk, new RecordGift(PlanningGift.Cash, 500_000, guests["Lan"].Id), "desk-1"),
+                     (desk, new RecordGift(PlanningGift.Transfer, 250_000, GiverName: "Anh Tín"), "desk-3"),
+                     (owner, new RecordGift(PlanningGift.Transfer, 400_000, GiverName: "Chị Mai", FromDesk: true), "owner-desk-1"),
+                     (owner, new RecordGift(PlanningGift.Cash, 400_000, GiverName: "Chị Mai", FromDesk: true), "owner-desk-2"),
+                     (desk, new RecordGift(PlanningGift.Item, GiverName: "Anh Tín", ItemName: "Bộ ly", EstimatedValue: 800_000), "desk-4")
+                 })
+            Assert.Equal(HttpStatusCode.BadRequest, (await Send(who, path, money, key)).StatusCode);
         // Recorded in the gift book (not the desk), the owner's transfer is money already seen in the bank app.
         var seen = await Read<GiftDto>(await Send(owner, path, new RecordGift(PlanningGift.Transfer, 600_000, GiverName: "Anh Quang"), "owner-book-1"),
             HttpStatusCode.Created);
         Assert.Equal(PlanningGift.Paid, seen.Status);
+        // The gift book can keep a photo of the transfer screen with it; one photo, one gift.
+        Assert.Equal(HttpStatusCode.BadRequest, (await UploadProof(owner, path + "/proofs", Encoding.UTF8.GetBytes("not an image"))).StatusCode);
+        var proof = await Read<GiftProofDto>(await UploadProof(owner, path + "/proofs", Png), HttpStatusCode.Created);
+        var withPhoto = await Read<GiftDto>(await Send(owner, path, new RecordGift(PlanningGift.Transfer, 300_000, GiverName: "Anh Tú", ProofId: proof.Id),
+            "owner-book-2"), HttpStatusCode.Created);
+        Assert.Equal((PlanningGift.Paid, true), (withPhoto.Status, withPhoto.HasProof));
+        Assert.Equal("image/png", (await owner.GetAsync($"{path}/{withPhoto.Id}/proof")).Content.Headers.ContentType!.MediaType);
+        await AssertProblem(HttpStatusCode.NotFound, "GIFT_PROOF_NOT_FOUND", await Send(owner, path,
+            new RecordGift(PlanningGift.Transfer, 200_000, GiverName: "Lại ảnh cũ", ProofId: proof.Id), "owner-book-3"));
         // A sealed envelope in the gift box: only who gave it, here Lan's companion; the couple counts the money later.
         var hoa = new PlanningParticipant { Id = Guid.NewGuid(), GuestId = guests["Lan"].Id, FullName = "Chị Hoa", Role = "COMPANION" };
         db.Add(hoa); await db.SaveChangesAsync();
@@ -308,17 +304,16 @@ public sealed class GiftApiTests
         Assert.Equal((PlanningGift.Paid, (long?)700_000), (counted.Status, counted.AmountReceived));
 
         var reception = (await desk.GetFromJsonAsync<List<GiftDto>>(path + "/reception"))!;
-        Assert.Equal(8, reception.Count); // owner: present + envelope + desk transfer; desk: envelope + present + 2 shown transfers + sealed envelope
+        Assert.Equal(5, reception.Count); // owner: present + cash + transfer with a photo; desk: present + sealed envelope
         Assert.DoesNotContain(reception, g => g.Id == seen.Id); // the gift book's own transfers are not desk records
         Assert.All(reception, g => Assert.True(g.Method is PlanningGift.Cash or PlanningGift.Item || g.HasProof || g.ClaimedAt is not null));
         Assert.All(reception, g => Assert.Null(g.Message)); // wishes stay with the couple
-        Assert.Equal(300_000, reception.Single(g => g.Id == shown.Id).AmountReceived ?? reception.Single(g => g.Id == shown.Id).AmountExpected); // checked against the guest's phone
         Assert.Contains(reception, g => g.ItemName == "Nồi chiên không dầu");
         Assert.Contains(1_000_000L, (await owner.GetFromJsonAsync<List<GiftDto>>(path + "/reception"))!.Select(g => g.AmountReceived ?? 0));
         foreach (var hidden in new[] { path, path + "/summary", path + "/export", path + "/transactions" })
             Assert.Equal(HttpStatusCode.Forbidden, (await desk.GetAsync(hidden)).StatusCode);
         var deskId = (await desk.GetFromJsonAsync<AccountDto>("/api/auth/me"))!.Id;
-        Assert.Equal(deskId, (await db.Set<PlanningGift>().AsNoTracking().SingleAsync(x => x.Id == envelope.Id)).RecordedBy);
+        Assert.Equal(deskId, (await db.Set<PlanningGift>().AsNoTracking().SingleAsync(x => x.Id == deskPresent.Id)).RecordedBy);
 
         // Without GIFT_RECORD a co-host records nothing.
         using var helper = await SignIn(factory, "gift-helper");
@@ -352,19 +347,93 @@ public sealed class GiftApiTests
         await CoHostPermissionTests.AddCoHostAsync(owner, desk, w, "GIFT_RECORD");
         Assert.Empty((await desk.GetFromJsonAsync<List<GiftDto>>(path + "/reception"))!);
         Assert.Equal(HttpStatusCode.NotFound, (await desk.GetAsync($"{path}/{gift.Id}/proof")).StatusCode);
-        var deskPhoto = await Read<GiftProofDto>(await UploadProof(desk, path + "/proofs", Png), HttpStatusCode.Created);
-        var deskTransfer = await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Transfer, 200_000, GiverName: "Chị Mai",
-            ProofId: deskPhoto.Id), "d1"), HttpStatusCode.Created);
-        Assert.Equal(HttpStatusCode.OK, (await desk.GetAsync($"{path}/{deskTransfer.Id}/proof")).StatusCode);
+        var envelope = await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Cash, GiverName: "Chị Mai"), "d1"), HttpStatusCode.Created);
         using var otherDesk = await SignIn(factory, "receipt-desk-2");
         await CoHostPermissionTests.AddCoHostAsync(owner, otherDesk, w, "GIFT_RECORD");
-        Assert.Equal(HttpStatusCode.NotFound, (await otherDesk.GetAsync($"{path}/{deskTransfer.Id}/proof")).StatusCode); // only your own photos
-        Assert.Null(Assert.Single((await otherDesk.GetFromJsonAsync<List<GiftDto>>(path + "/reception"))!).Code);
+        Assert.Equal(envelope.Id, Assert.Single((await otherDesk.GetFromJsonAsync<List<GiftDto>>(path + "/reception"))!).Id);
         Assert.Equal(PlanningGift.Paid, (await Read<GiftDto>(await owner.PostAsJsonAsync($"{path}/{gift.Id}/confirm", new ConfirmGift()), HttpStatusCode.OK)).Status);
         await AssertProblem(HttpStatusCode.UnprocessableEntity, "GIFT_CLOSED", await UploadProof(guest, $"{an}/{gift.Id}/proof", Png)); // money confirmed
         var stored = await db.Set<PlanningGiftProof>().AsNoTracking().SingleAsync(x => x.GuestId == guests["An"].Id);
         Assert.Matches(@"^[0-9a-f]{48}\.png$", stored.StorageKey); // the database keeps the key, the image is in private storage
         Assert.Equal(Png.Length, stored.Size);
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task GuestDeclaresAPresentAndTheCoupleOrTheDeskReceivesIt() => WithApi(async (db, factory, owner, ownerId) =>
+    {
+        // No receiving account needed: a present does not go through the bank.
+        var w = await Wedding(db, ownerId, "gift-declared");
+        var path = $"/api/weddings/{w}/gifts";
+        var guests = await Import(db, owner, w, "An", "Bình");
+        using var guest = Client(factory);
+        var an = "/api/gifts/" + guests["An"].Token;
+
+        var blanket = await Read<GuestGiftDto>(await Send(guest, an + "/items",
+            new DeclareGuestItem(" Bộ chăn ga ", 2, "Chúc hai bạn hạnh phúc", true, "Gửi Grab ngày 10/11"), "i1"), HttpStatusCode.Created);
+        Assert.Equal((PlanningGift.Item, PlanningGift.Pending, "Bộ chăn ga", (int?)2, "Gửi Grab ngày 10/11", (long?)null, (string?)null, (string?)null),
+            (blanket.Method, blanket.Status, blanket.ItemName, blanket.ItemQuantity, blanket.Note, blanket.Amount, blanket.Code, blanket.QrImageUrl));
+        // Same key, same present: replayed; same key, another present: refused.
+        var replay = await Send(guest, an + "/items", new DeclareGuestItem("Bộ chăn ga", 2, "Chúc hai bạn hạnh phúc", true, "Gửi Grab ngày 10/11"), "i1");
+        Assert.Equal((HttpStatusCode.OK, blanket.Id), (replay.StatusCode, (await Read<GuestGiftDto>(replay, HttpStatusCode.OK)).Id));
+        await AssertProblem(HttpStatusCode.Conflict, "IDEMPOTENCY_KEY_REUSED", await Send(guest, an + "/items", new DeclareGuestItem("Nồi cơm"), "i1"));
+        foreach (var invalid in new[] { new DeclareGuestItem(" "), new DeclareGuestItem("Ly", 0), new DeclareGuestItem("Ly", Note: new string('x', 201)) })
+            Assert.Equal(HttpStatusCode.BadRequest, (await Send(guest, an + "/items", invalid, Guid.NewGuid().ToString())).StatusCode);
+        using (var noKey = new HttpRequestMessage(HttpMethod.Post, an + "/items") { Content = JsonContent.Create(new DeclareGuestItem("Ly")) })
+            Assert.Equal(HttpStatusCode.BadRequest, (await guest.SendAsync(noKey)).StatusCode);
+
+        // The couple hears about it; the guest sees it next to their transfer codes and cannot say "đã chuyển" for it.
+        var notice = await db.Notifications.AsNoTracking().SingleAsync(x => x.WeddingId == w && x.NotificationType == "GIFT_ITEM_DECLARED");
+        Assert.Equal(ownerId, notice.RecipientUserId);
+        Assert.Equal("Bộ chăn ga", JsonDocument.Parse(notice.Content).RootElement.GetProperty("itemName").GetString());
+        Assert.Equal(blanket.Id, Assert.Single((await guest.GetFromJsonAsync<GuestGiftPageDto>(an))!.MyGifts).Id);
+        await AssertProblem(HttpStatusCode.NotFound, "GIFT_NOT_FOUND", await guest.PostAsync($"{an}/{blanket.Id}/claim", null));
+
+        // In the gift book it waits for the couple, outside the received totals.
+        var listed = (await owner.GetFromJsonAsync<PagedResult<GiftDto>>(path))!.Items.Single();
+        Assert.Equal((PlanningGift.Pending, true, "Gửi Grab ngày 10/11"), (listed.Status, listed.DeclaredByGuest, listed.Note));
+        var summary = (await owner.GetFromJsonAsync<GiftSummaryDto>(path + "/summary"))!;
+        Assert.Equal((0, 0, 1), (summary.ReceivedCount, summary.ItemCount, summary.Waiting));
+
+        // The guest may withdraw a waiting present (twice is harmless); nobody else may.
+        var pot = await Read<GuestGiftDto>(await Send(guest, an + "/items", new DeclareGuestItem("Nồi cơm điện"), "i2"), HttpStatusCode.Created);
+        await AssertProblem(HttpStatusCode.NotFound, "GIFT_NOT_FOUND", await guest.PostAsync($"/api/gifts/{guests["Bình"].Token}/{pot.Id}/cancel", null));
+        Assert.Equal(PlanningGift.Cancelled, (await Read<GuestGiftDto>(await guest.PostAsync($"{an}/{pot.Id}/cancel", null), HttpStatusCode.OK)).Status);
+        Assert.Equal(PlanningGift.Cancelled, (await Read<GuestGiftDto>(await guest.PostAsync($"{an}/{pot.Id}/cancel", null), HttpStatusCode.OK)).Status);
+
+        // At the reception desk the waiting present shows up for An; a co-host marks it received, no confirmation needed.
+        using var desk = await SignIn(factory, "declared-desk");
+        await CoHostPermissionTests.AddCoHostAsync(owner, desk, w, "GIFT_RECORD");
+        var atDesk = Assert.Single((await desk.GetFromJsonAsync<List<GiftDto>>(path + "/reception"))!); // the withdrawn one is not there
+        Assert.Equal((blanket.Id, guests["An"].Id, PlanningGift.Pending, true, (string?)null),
+            (atDesk.Id, atDesk.GuestId!.Value, atDesk.Status, atDesk.DeclaredByGuest, atDesk.Message));
+        var received = await Read<GiftDto>(await desk.PostAsync($"{path}/{blanket.Id}/receive", null), HttpStatusCode.OK);
+        Assert.Equal((PlanningGift.Paid, (string?)null), (received.Status, received.Message));
+        await AssertProblem(HttpStatusCode.UnprocessableEntity, "GIFT_CLOSED", await desk.PostAsync($"{path}/{blanket.Id}/receive", null)); // second desk
+        await AssertProblem(HttpStatusCode.UnprocessableEntity, "GIFT_CLOSED", await guest.PostAsync($"{an}/{blanket.Id}/cancel", null));
+        var deskId = (await desk.GetFromJsonAsync<AccountDto>("/api/auth/me"))!.Id;
+        Assert.Equal(deskId, (await db.Set<PlanningGift>().AsNoTracking().SingleAsync(x => x.Id == blanket.Id)).RecordedBy);
+        Assert.Equal(PlanningGift.Paid, (await guest.GetFromJsonAsync<GuestGiftDto>($"{an}/{blanket.Id}"))!.Status);
+        summary = (await owner.GetFromJsonAsync<GiftSummaryDto>(path + "/summary"))!;
+        Assert.Equal((0L, 1, 2), (summary.TotalReceived, summary.ItemCount, summary.ItemQuantity));
+        // Only declared presents are received this way; a desk without GIFT_RECORD receives nothing.
+        var envelope = await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Cash, GiverName: "Chị Mai"), "d1"), HttpStatusCode.Created);
+        await AssertProblem(HttpStatusCode.NotFound, "GIFT_NOT_FOUND", await desk.PostAsync($"{path}/{envelope.Id}/receive", null));
+        using var helper = await SignIn(factory, "declared-helper");
+        await CoHostPermissionTests.AddCoHostAsync(owner, helper, w, "RSVP_VIEW");
+        var vase = await Read<GuestGiftDto>(await Send(guest, an + "/items", new DeclareGuestItem("Bình hoa"), "i3"), HttpStatusCode.Created);
+        Assert.Equal(HttpStatusCode.Forbidden, (await helper.PostAsync($"{path}/{vase.Id}/receive", null)).StatusCode);
+
+        // A present sent ahead: the couple confirms it in the gift book, without any amount.
+        await AssertProblem(HttpStatusCode.UnprocessableEntity, "GIFT_ITEM_NO_AMOUNT",
+            await owner.PostAsJsonAsync($"{path}/{vase.Id}/confirm", new ConfirmGift(500_000)));
+        var confirmed = await Read<GiftDto>(await owner.PostAsJsonAsync($"{path}/{vase.Id}/confirm", new ConfirmGift()), HttpStatusCode.OK);
+        Assert.Equal((PlanningGift.Paid, (long?)null), (confirmed.Status, confirmed.AmountReceived));
+
+        // At most 20 waiting presents per guest (seeded directly: the guest API is rate-limited).
+        for (var i = 0; i < PlanningGift.MaxDeclaredPerGuest; i++)
+            db.Add(PlanningGift.DeclaredItem(w, guests["An"].Id, "An", $"Món {i}", 1, null, false, null, $"G:seed-{i}", DateTimeOffset.UtcNow));
+        await db.SaveChangesAsync();
+        await AssertProblem(HttpStatusCode.UnprocessableEntity, "GIFT_ITEM_LIMIT", await Send(guest, an + "/items", new DeclareGuestItem("Thêm nữa"), "bulk-x"));
     });
 
     // ---------------- helpers ----------------

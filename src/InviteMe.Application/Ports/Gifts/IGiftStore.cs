@@ -14,6 +14,10 @@ public interface IGiftStore
     Task<GuestGiftDto> GuestGiftAsync(string token, Guid giftId, CancellationToken ct);
     /// <summary>Created = true when the gift changed to CLAIMED.</summary>
     Task<GuestGiftResult> ClaimAsync(string token, Guid giftId, CancellationToken ct);
+    /// <summary>A present the guest will give (PENDING, no amount); the couple is notified. Created = false on an idempotent replay.</summary>
+    Task<GuestGiftResult> DeclareItemAsync(string token, string idempotencyKey, DeclareGuestItem input, CancellationToken ct);
+    /// <summary>The guest withdraws a present they declared and have not handed over. Created = true when it changed.</summary>
+    Task<GuestGiftResult> CancelDeclaredItemAsync(string token, Guid giftId, CancellationToken ct);
 
     Task<IReadOnlyList<GiftBankAccountDto>> AccountsAsync(Guid weddingId, CancellationToken ct);
     /// <summary>The Bank Hub company of the wedding, or null before the first link.</summary>
@@ -30,7 +34,8 @@ public interface IGiftStore
     /// <summary>Every gift of the wedding, newest first (a wedding has a few hundred at most).</summary>
     Task<IReadOnlyList<GiftDto>> GiftsAsync(Guid weddingId, CancellationToken ct);
     Task<int> NeedsReviewAsync(Guid weddingId, CancellationToken ct);
-    /// <summary>atReception = recorded by a co-host: a TRANSFER is then a claim with a photo, confirmed later by the couple.</summary>
+    /// <summary>atReception = recorded at the desk. The handler only lets envelopes and presents through there; should a TRANSFER
+    /// ever arrive, it stays a claim the couple confirms, never money already received.</summary>
     Task<GiftDto> RecordAsync(Guid weddingId, RecordGift input, Guid actor, string? idempotencyKey, CancellationToken ct, bool atReception = false);
     Task<GiftProofDto> SaveProofAsync(Guid weddingId, string storageKey, string contentType, int size, Guid actor, CancellationToken ct);
     /// <summary>uploadedBy: only a photo this user uploaded (null = any photo of the gift).</summary>
@@ -39,6 +44,8 @@ public interface IGiftStore
     Task<GuestGiftResult> AttachGuestProofAsync(string token, Guid giftId, string storageKey, string contentType, int size, CancellationToken ct);
     Task<GiftDto> ConfirmAsync(Guid weddingId, Guid giftId, long? amount, Guid actor, CancellationToken ct);
     Task<GiftDto> CancelAsync(Guid weddingId, Guid giftId, Guid actor, CancellationToken ct);
+    /// <summary>The reception desk got a present the guest declared on the invitation: it is received.</summary>
+    Task<GiftDto> ReceiveDeclaredItemAsync(Guid weddingId, Guid giftId, Guid actor, CancellationToken ct);
 
     /// <summary>Status NEEDS_REVIEW = UNMATCHED + DUPLICATE; otherwise one transaction status.</summary>
     Task<IReadOnlyList<GiftTransactionDto>> TransactionsAsync(Guid weddingId, string status, CancellationToken ct);

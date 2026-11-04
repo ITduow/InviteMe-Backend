@@ -54,8 +54,10 @@ public sealed class PlanningGiftConfiguration : IEntityTypeConfiguration<Plannin
             t.HasCheckConstraint("ck_planning_gifts_paid",
                 "(status = 'PAID') = (paid_at IS NOT NULL AND (method = 'ITEM' OR amount_received IS NOT NULL))");
             t.HasCheckConstraint("ck_planning_gifts_item",
-                "(method = 'ITEM') = (item_name IS NOT NULL) AND (method <> 'ITEM' OR (status = 'PAID' AND amount_expected IS NULL AND amount_received IS NULL " +
-                "AND item_quantity BETWEEN 1 AND 1000 AND (item_value IS NULL OR item_value >= 0)))");
+                "(method = 'ITEM') = (item_name IS NOT NULL) AND (method <> 'ITEM' OR ((status = 'PAID' OR declared_by_guest) " +
+                "AND amount_expected IS NULL AND amount_received IS NULL AND item_quantity BETWEEN 1 AND 1000 AND (item_value IS NULL OR item_value >= 0)))");
+            // Only presents are declared on the invitation, without a value.
+            t.HasCheckConstraint("ck_planning_gifts_declared", "NOT declared_by_guest OR (method = 'ITEM' AND item_value IS NULL)");
         });
         b.HasKey(x => x.Id);
         b.Property(x => x.Id).HasColumnName("id");
@@ -82,6 +84,8 @@ public sealed class PlanningGiftConfiguration : IEntityTypeConfiguration<Plannin
         b.Property(x => x.ItemValue).HasColumnName("item_value");
         b.Property(x => x.ProofId).HasColumnName("proof_id");
         b.Property(x => x.ParticipantId).HasColumnName("participant_id");
+        b.Property(x => x.DeclaredByGuest).HasColumnName("declared_by_guest");
+        b.Property(x => x.Note).HasColumnName("note").HasMaxLength(PlanningGift.NoteMaxLength);
         b.HasOne<PlanningParticipant>().WithMany().HasForeignKey(x => x.ParticipantId).OnDelete(DeleteBehavior.SetNull).HasConstraintName("fk_planning_gifts_participant");
         b.HasOne<PlanningGiftProof>().WithMany().HasForeignKey(x => x.ProofId).OnDelete(DeleteBehavior.SetNull).HasConstraintName("fk_planning_gifts_proof");
         b.Ignore(x => x.AmountMismatch);

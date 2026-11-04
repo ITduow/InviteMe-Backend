@@ -218,7 +218,6 @@ public sealed class ThankYouMessageApiTests
 
     private sealed class TestSender : IInvitationChannelSender
     {
-        public string ProviderNameFor(string channel) => "TEST";
         public bool IsAvailable(string channel) => channel is "EMAIL" or "SMS";
         public string ProviderNameFor(string channel) => channel == "SMS" ? "TEST_SMS" : "SMTP";
         public Task<InvitationDeliveryReceipt> SendAsync(InvitationOutboundMessage message, CancellationToken ct) =>

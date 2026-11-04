@@ -36,7 +36,15 @@ public sealed record CreateGuestGift(long Amount, string? Message = null, Guid? 
 /// </summary>
 public sealed record GuestGiftDto(Guid Id, string? Code, long? Amount, string Status, string? Message, bool MessagePublic,
     GiftBankAccountDto? Account, string? QrImageUrl, string? TransferContent, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt,
-    DateTimeOffset? PaidAt, string? Notice);
+    DateTimeOffset? PaidAt, string? Notice, string Method = PlanningGift.Qr, string? ItemName = null, int? ItemQuantity = null,
+    string? Note = null);
+
+/// <summary>
+/// A present the guest will give (sent ahead or brought to the wedding): no amount, no value. Note = how it is sent.
+/// It waits for the couple to confirm it, or for the reception desk to mark it received.
+/// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record DeclareGuestItem(string ItemName, int Quantity = 1, string? Message = null, bool MessagePublic = false, string? Note = null);
 
 /// <summary>Store result for a guest create: Created = false when the same Idempotency-Key replays an earlier request.</summary>
 public sealed record GuestGiftResult(GuestGiftDto Gift, bool Created, Guid WeddingId);
@@ -92,7 +100,7 @@ public sealed record GiftLedgerFilter(string? Status = null, string? Method = nu
 public sealed record GiftDto(Guid Id, Guid? GuestId, string GiverName, string Method, string Status, string? Confirmation, string? Code,
     long? AmountExpected, long? AmountReceived, bool AmountMismatch, string? Message, bool MessagePublic, Guid? AccountId,
     DateTimeOffset CreatedAt, DateTimeOffset? ClaimedAt, DateTimeOffset? PaidAt, string? ItemName = null, int? ItemQuantity = null,
-    long? ItemValue = null, bool HasProof = false, Guid? ParticipantId = null);
+    long? ItemValue = null, bool HasProof = false, Guid? ParticipantId = null, bool DeclaredByGuest = false, string? Note = null);
 
 /// <summary>
 /// Gift book totals. Received = PAID gifts. Waiting = QR gifts not paid yet (PENDING/CLAIMED, not expired);
@@ -193,6 +201,17 @@ public sealed class CreateGuestGiftValidator : AbstractValidator<CreateGuestGift
             .WithMessage("Số tiền mừng từ 10.000đ đến 100.000.000đ.");
         RuleFor(x => x.Message).MaximumLength(PlanningGift.MessageMaxLength);
         RuleFor(x => x.AccountId).Must(x => x is null || x != Guid.Empty);
+    }
+}
+
+public sealed class DeclareGuestItemValidator : AbstractValidator<DeclareGuestItem>
+{
+    public DeclareGuestItemValidator()
+    {
+        RuleFor(x => x.ItemName).Must(x => !string.IsNullOrWhiteSpace(x)).WithMessage("Nhập tên món quà.").MaximumLength(PlanningGift.ItemNameMaxLength);
+        RuleFor(x => x.Quantity).InclusiveBetween(1, PlanningGift.MaxItemQuantity);
+        RuleFor(x => x.Message).MaximumLength(PlanningGift.MessageMaxLength);
+        RuleFor(x => x.Note).MaximumLength(PlanningGift.NoteMaxLength);
     }
 }
 
