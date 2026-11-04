@@ -129,7 +129,7 @@ public sealed class SeatingDragHubTests
         public Task RequireAsync(Guid wedding, WeddingPermission permission, CancellationToken ct) => Task.CompletedTask;
         public Task<bool> HasPermissionAsync(Guid wedding, WeddingPermission permission, CancellationToken ct) => Task.FromResult(true);
         public Task<WeddingPermissionScope> RequireScopeAsync(Guid wedding, WeddingPermission permission, CancellationToken ct) =>
-            Task.FromResult(new WeddingPermissionScope(false, new HashSet<Guid> { Guid.NewGuid() }));
+            Task.FromResult(new WeddingPermissionScope(false, new HashSet<InviteMe.Domain.Guests.PlanningGroupKind> { InviteMe.Domain.Guests.PlanningGroupKind.RELATIVES }));
     }
     private sealed class Plan : IPlanningSeatingStore
     {
@@ -137,7 +137,7 @@ public sealed class SeatingDragHubTests
         public Guid Wedding = Guid.NewGuid(); public Guid Place = Guid.NewGuid(); public Guid OtherPlace = Guid.NewGuid();
         public Task<PlanningSeatingDto> GetAsync(Guid wedding, CancellationToken ct) => GetScopedAsync(wedding, ct, null);
         // A group scope sees Place only; OtherPlace belongs to another group.
-        public Task<PlanningSeatingDto> GetScopedAsync(Guid wedding, CancellationToken ct, IReadOnlySet<Guid>? groupScope)
+        public Task<PlanningSeatingDto> GetScopedAsync(Guid wedding, CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope)
         {
             Reads++;
             IReadOnlyList<PlanningSeatingPlace> places = groupScope is null

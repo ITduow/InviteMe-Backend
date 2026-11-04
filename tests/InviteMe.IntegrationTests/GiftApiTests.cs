@@ -258,7 +258,7 @@ public sealed class GiftApiTests
         var deskEmail = (await desk.GetFromJsonAsync<AccountDto>("/api/auth/me"))!.Email;
         var guests = await Import(db, owner, w, "Lan");
         Assert.Equal(HttpStatusCode.BadRequest, (await owner.PostAsJsonAsync($"/api/weddings/{w}/co-host-invitations",
-            new CreateCoHostInvitationInput(deskEmail, [new("GIFT_RECORD", [Guid.NewGuid()], false)]))).StatusCode);
+            new CreateCoHostInvitationInput(deskEmail, [new("GIFT_RECORD", [PlanningGroupKind.RELATIVES], false)]))).StatusCode);
         await CoHostPermissionTests.AddCoHostAsync(owner, desk, w, "GIFT_RECORD");
         var deskPresent = await Read<GiftDto>(await Send(desk, path, new RecordGift(PlanningGift.Item, GiverName: "Nhóm bạn đại học", ItemName: "Tranh cưới"), "desk-2"),
             HttpStatusCode.Created);
@@ -513,7 +513,7 @@ public sealed class GiftApiTests
         using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/weddings/{weddingId}/guest-planning/imports")
         { Content = JsonContent.Create(new PlanningImport(names.Select((n, i) => new PlanningRow(i + 2, n)).ToArray())) };
         request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        var ids = (await Read<PlanningImportResult>(await owner.SendAsync(request), HttpStatusCode.Created)).Items.Select(x => x.GuestId).ToList();
+        var ids = (await Read<PlanningImportResult>(await owner.SendCheckedImportAsync(request), HttpStatusCode.Created)).Items.Select(x => x.GuestId).ToList();
         return await db.Set<PlanningGuest>().AsNoTracking().Where(x => ids.Contains(x.Id))
             .ToDictionaryAsync(x => x.RecipientName, x => (x.Id, x.InvitationToken!));
     }

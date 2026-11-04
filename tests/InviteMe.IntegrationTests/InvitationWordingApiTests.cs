@@ -40,7 +40,7 @@ public sealed class InvitationWordingApiTests(ApiFactory factory) : IClassFixtur
         Assert.Equal(HttpStatusCode.OK, draft.StatusCode);
         var rendered = (await draft.Content.ReadFromJsonAsync<WordingPreviewDto>())!;
         Assert.Equal("Lời mời bác", rendered.PresetName);
-        Assert.Contains("gia đình bác Nguyễn Văn An", rendered.Content);
+        Assert.Contains("bác Nguyễn Văn An", rendered.Content);
         Assert.Contains("gia đình chúng cháu", rendered.Content);
         Assert.Equal(0, (await client.GetFromJsonAsync<WordingSettingsDto>(path))!.Version);
         var saved = await client.PutAsJsonAsync(path, new SaveWordingSettings(0, presets));
@@ -99,6 +99,6 @@ public sealed class InvitationWordingApiTests(ApiFactory factory) : IClassFixtur
             return Task.FromResult(settings);
         }
         public Task<WordingRecipient?> FindGuestAsync(Guid wedding, Guid guest, CancellationToken ct) =>
-            Task.FromResult<WordingRecipient?>(wedding == weddingId && guest == guestId ? new(guestId, "Nguyễn Văn An", "Bác", "FAMILY") : null);
+            Task.FromResult<WordingRecipient?>(wedding == weddingId && guest == guestId ? new(guestId, "Nguyễn Văn An", "Bác") : null);
     }
 }

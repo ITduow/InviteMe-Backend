@@ -124,7 +124,7 @@ public sealed class WeddingDeletionStore(InviteMeDbContext db, TimeProvider cloc
         await db.Set<CoHostInvitationGrant>().Where(x => db.Set<CoHostInvitation>()
             .Any(invitation => invitation.WeddingId == weddingId && invitation.Id == x.InvitationId)).ExecuteDeleteAsync(ct);
         await db.Set<PlanningSeatAssignment>().Where(x => db.Set<PlanningTable>().Any(t => t.WeddingId == weddingId &&
-            (t.Id == x.TableId || t.Id == x.PlannedTableId))).ExecuteDeleteAsync(ct);
+            t.Id == x.TableId)).ExecuteDeleteAsync(ct);
         await db.Set<PlanningPlace>().Where(x => db.Set<PlanningGuest>().Any(g => g.WeddingId == weddingId && g.Id == x.GuestId)).ExecuteDeleteAsync(ct);
         await db.Set<PlanningDietaryNote>().Where(x => db.Set<PlanningParticipant>().Any(p =>
             db.Set<PlanningGuest>().Any(g => g.WeddingId == weddingId && g.Id == p.GuestId) && p.Id == x.ParticipantId)).ExecuteDeleteAsync(ct);
@@ -133,7 +133,6 @@ public sealed class WeddingDeletionStore(InviteMeDbContext db, TimeProvider cloc
         await db.Set<PlanningParticipant>().Where(x => db.Set<PlanningGuest>().Any(g => g.WeddingId == weddingId && g.Id == x.GuestId)).ExecuteDeleteAsync(ct);
         await db.Set<PlanningGuest>().Where(x => x.WeddingId == weddingId).ExecuteDeleteAsync(ct);
         await db.Set<PlanningTable>().Where(x => x.WeddingId == weddingId).ExecuteDeleteAsync(ct);
-        await db.Set<PlanningGroup>().Where(x => x.WeddingId == weddingId).ExecuteDeleteAsync(ct);
 
         db.AuditLogs.Add(AuditLog.ForPlatform(wedding.OwnerUserId, "weddings", weddingId, "WEDDING_DELETED"));
         await db.SaveChangesAsync(ct);

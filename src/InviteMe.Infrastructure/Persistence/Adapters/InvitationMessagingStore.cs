@@ -105,7 +105,7 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
             throw new ApplicationProblemException(ProblemKind.BadRequest, "INVALID_INVITATION_TEMPLATE", "The invitation template is invalid for the selected channel.");
         var storedContent = channels.Contains("EMAIL", StringComparer.Ordinal) ? emailContent : smsContent;
         var requestHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
-            { input.GuestIds, input.GroupId, Channels = channels, Subject = subject, EmailContent = emailContent,
+            { input.GuestIds, input.Group, Channels = channels, Subject = subject, EmailContent = emailContent,
                 SmsContent = smsContent, draft.Version }))));
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -120,11 +120,9 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
         }
 
         var guestsQuery = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null);
-        if (input.GroupId is { } groupId)
+        if (input.Group is { } group)
         {
-            var groupExists = await db.Set<PlanningGroup>().AnyAsync(x => x.Id == groupId && x.WeddingId == weddingId, ct);
-            if (!groupExists) throw new ApplicationProblemException(ProblemKind.NotFound, "GUEST_GROUP_NOT_FOUND", "Guest group is unavailable in this wedding.");
-            guestsQuery = guestsQuery.Where(x => x.GroupId == groupId);
+            guestsQuery = guestsQuery.Where(x => x.Group == group);
         }
         else
         {

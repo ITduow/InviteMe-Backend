@@ -30,7 +30,7 @@ public sealed class ReceptionWalkInApiTests
         var import = new HttpRequestMessage(HttpMethod.Post, path + "/imports")
         { Content = JsonContent.Create(new PlanningImport([new(1, "Lê Văn Cường", "Anh", 2, "GROOM")])) };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        Assert.Equal(HttpStatusCode.Created, (await owner.SendAsync(import)).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await owner.SendCheckedImportAsync(import)).StatusCode);
         var cuong = await db.Set<PlanningGuest>().AsNoTracking().SingleAsync();
         var main = await db.Set<PlanningParticipant>().AsNoTracking().SingleAsync(x => x.GuestId == cuong.Id);
         using var anonymous = factory.CreateHttpsClient();
@@ -109,7 +109,7 @@ public sealed class ReceptionWalkInApiTests
         var import = new HttpRequestMessage(HttpMethod.Post, path + "/imports")
         { Content = JsonContent.Create(new PlanningImport([new(1, "Hồ Văn Tâm", "Anh", 1, "GROOM")])) };
         import.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        Assert.Equal(HttpStatusCode.Created, (await owner.SendAsync(import)).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await owner.SendCheckedImportAsync(import)).StatusCode);
         var tam = await db.Set<PlanningGuest>().AsNoTracking().SingleAsync();
         var main = await db.Set<PlanningParticipant>().AsNoTracking().SingleAsync(x => x.GuestId == tam.Id);
         using var anonymous = factory.CreateHttpsClient();

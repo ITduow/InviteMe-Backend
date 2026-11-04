@@ -31,24 +31,24 @@ public sealed class CoHostInvitationConfiguration : IEntityTypeConfiguration<CoH
     public void Configure(EntityTypeBuilder<CoHostInvitationGrant> b)
     {
         b.ToTable("cohost_invitation_grants", t => t.HasCheckConstraint("ck_cohost_invitation_grants_scope",
-            "(\"ScopeType\" = 'WEDDING' AND \"GroupId\" IS NULL) OR (\"ScopeType\" = 'GUEST_GROUP' AND \"GroupId\" IS NOT NULL)"));
+            "(\"ScopeType\" = 'WEDDING' AND \"Group\" IS NULL) OR (\"ScopeType\" = 'GUEST_GROUP' AND \"Group\" IS NOT NULL)"));
         b.HasKey(x => x.Id);
         b.Property(x => x.ScopeType).HasMaxLength(20).IsRequired();
-        b.HasIndex(x => new { x.InvitationId, x.PermissionId, x.ScopeType, x.GroupId }).IsUnique();
+        b.HasIndex(x => new { x.InvitationId, x.PermissionId, x.ScopeType, x.Group }).IsUnique();
         b.HasOne<CoHostInvitation>().WithMany().HasForeignKey(x => x.InvitationId).OnDelete(DeleteBehavior.Cascade);
         b.HasOne<Permission>().WithMany().HasForeignKey(x => x.PermissionId).OnDelete(DeleteBehavior.Restrict);
-        b.HasOne<PlanningGroup>().WithMany().HasForeignKey(x => x.GroupId).OnDelete(DeleteBehavior.Restrict);
+        b.Property(x => x.Group).HasConversion<string>().HasMaxLength(16);
     }
 
     public void Configure(EntityTypeBuilder<WeddingMemberGroupPermission> b)
     {
         b.ToTable("wedding_member_group_permissions");
         b.HasKey(x => x.Id);
-        b.HasIndex(x => new { x.MemberId, x.PermissionId, x.GroupId }).IsUnique();
-        b.HasIndex(x => new { x.WeddingId, x.GroupId, x.PermissionId });
+        b.HasIndex(x => new { x.MemberId, x.PermissionId, x.Group }).IsUnique();
+        b.HasIndex(x => new { x.WeddingId, x.Group, x.PermissionId });
         b.HasOne<WeddingMember>().WithMany().HasForeignKey(x => x.MemberId).OnDelete(DeleteBehavior.Cascade);
         b.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade);
         b.HasOne<Permission>().WithMany().HasForeignKey(x => x.PermissionId).OnDelete(DeleteBehavior.Cascade);
-        b.HasOne<PlanningGroup>().WithMany().HasForeignKey(x => x.GroupId).OnDelete(DeleteBehavior.Cascade);
+        b.Property(x => x.Group).HasConversion<string>().HasMaxLength(16);
     }
 }

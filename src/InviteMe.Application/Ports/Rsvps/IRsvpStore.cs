@@ -24,5 +24,5 @@ public interface IRsvpStore
     /// Read model for the Couple06 dashboard: every planning guest with its RSVP and people. groupScope = the groups a
     /// group-limited co-host may see; null = the whole wedding.
     /// </summary>
-    Task<RsvpDashboardData> DashboardAsync(Guid weddingId, IReadOnlySet<Guid>? groupScope, CancellationToken ct);
+    Task<RsvpDashboardData> DashboardAsync(Guid weddingId, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope, CancellationToken ct);
 }

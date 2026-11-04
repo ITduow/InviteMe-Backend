@@ -3,6 +3,7 @@ using InviteMe.Application.Ports.Authorization;
 using InviteMe.Application.Common.Authorization;
 using InviteMe.Application.Common.Errors;
 using InviteMe.Domain.Weddings;
+using InviteMe.Domain.Guests;
 
 namespace InviteMe.UnitTests;
 
@@ -43,7 +44,7 @@ public sealed class AuthorizationTests
 
         // A group grant stays a group grant: seeing the wedding does not widen guest access.
         var groupGuests = new WeddingAccess(owner, true, new HashSet<WeddingPermission>(), new HashSet<WeddingPermission>(),
-            new Dictionary<WeddingPermission, IReadOnlySet<Guid>> { [WeddingPermission.GUEST_VIEW] = new HashSet<Guid> { Guid.NewGuid() } });
+            new Dictionary<WeddingPermission, IReadOnlySet<PlanningGroupKind>> { [WeddingPermission.GUEST_VIEW] = new HashSet<PlanningGroupKind> { PlanningGroupKind.RELATIVES } });
         Assert.True(groupGuests.Allows(cohost, WeddingPermission.WEDDING_VIEW));
         Assert.True(groupGuests.Allows(cohost, WeddingPermission.GUEST_VIEW));
         Assert.False(groupGuests.IsWeddingWide(cohost, WeddingPermission.GUEST_VIEW));
@@ -58,8 +59,8 @@ public sealed class AuthorizationTests
         var groupOnly = new WeddingAccess(owner, true,
             new HashSet<WeddingPermission> { WeddingPermission.CHECKIN_MANAGE },
             new HashSet<WeddingPermission>(),
-            new Dictionary<WeddingPermission, IReadOnlySet<Guid>>
-            { [WeddingPermission.CHECKIN_MANAGE] = new HashSet<Guid> { Guid.NewGuid() } });
+            new Dictionary<WeddingPermission, IReadOnlySet<PlanningGroupKind>>
+            { [WeddingPermission.CHECKIN_MANAGE] = new HashSet<PlanningGroupKind> { PlanningGroupKind.RELATIVES } });
 
         Assert.False(groupOnly.Allows(cohost, WeddingPermission.CHECKIN_MANAGE));
         Assert.True((groupOnly with
@@ -109,11 +110,11 @@ public sealed class AuthorizationTests
     {
         var user = Guid.NewGuid();
         var wedding = Guid.NewGuid();
-        var allowedGroup = Guid.NewGuid();
-        var guestGroup = Guid.NewGuid();
+        var allowedGroup = PlanningGroupKind.RELATIVES;
+        var guestGroup = PlanningGroupKind.FRIENDS;
         var access = new WeddingAccess(Guid.NewGuid(), true, new HashSet<WeddingPermission> { WeddingPermission.GUEST_VIEW },
-            new HashSet<WeddingPermission>(), new Dictionary<WeddingPermission, IReadOnlySet<Guid>>
-            { [WeddingPermission.GUEST_VIEW] = new HashSet<Guid> { allowedGroup } });
+            new HashSet<WeddingPermission>(), new Dictionary<WeddingPermission, IReadOnlySet<PlanningGroupKind>>
+            { [WeddingPermission.GUEST_VIEW] = new HashSet<PlanningGroupKind> { allowedGroup } });
         var reader = new AccessReader(access, guestGroup);
         var service = new WeddingPermissionService(new CurrentUser(user), reader);
 
@@ -129,15 +130,15 @@ public sealed class AuthorizationTests
     }
 
     private sealed record CurrentUser(Guid? UserId) : ICurrentUser;
-    private sealed class AccessReader(WeddingAccess? result = null, Guid? guestGroup = null) : IWeddingAccessReader
+    private sealed class AccessReader(WeddingAccess? result = null, PlanningGroupKind? guestGroup = null) : IWeddingAccessReader
     {
         public (Guid WeddingId, Guid UserId)? LastRequest { get; private set; }
-        public Guid? GuestGroup { get; set; } = guestGroup;
+        public PlanningGroupKind? GuestGroup { get; set; } = guestGroup;
         public Task<WeddingAccess?> FindAsync(Guid weddingId, Guid userId, CancellationToken cancellationToken)
         {
             LastRequest = (weddingId, userId);
             return Task.FromResult(result);
         }
-        public Task<Guid?> FindGuestGroupIdAsync(Guid weddingId, Guid guestId, CancellationToken cancellationToken) => Task.FromResult(GuestGroup);
+        public Task<PlanningGroupKind?> FindGuestGroupIdAsync(Guid weddingId, Guid guestId, CancellationToken cancellationToken) => Task.FromResult(GuestGroup);
     }
 }

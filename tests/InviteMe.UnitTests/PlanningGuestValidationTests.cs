@@ -1,4 +1,5 @@
 using InviteMe.Application.Features.Guests.Planning;
+using InviteMe.Domain.Guests;
 
 namespace InviteMe.UnitTests;
 
@@ -13,7 +14,7 @@ public sealed class PlanningGuestValidationTests
     public void ManualCreateAndUpdateRejectTheSameInvalidPhoneFormats(string phone)
     {
         var create = new CreatePlanningGuest("Khách", Phone: phone);
-        var update = new UpdatePlanningGuest(1, "Khách", null, "UNSPECIFIED", null, phone, null, null);
+        var update = new UpdatePlanningGuest(1, "Khách", null, "UNSPECIFIED", PlanningGroupKind.OTHER, phone, null, null);
 
         Assert.Contains(new CreatePlanningGuestValidator().Validate(create).Errors,
             error => error.PropertyName == nameof(create.Phone) && error.ErrorCode == "INVALID_PHONE");
@@ -29,7 +30,7 @@ public sealed class PlanningGuestValidationTests
     public void ManualCreateAndUpdateAcceptTheSameValidOptionalPhoneFormats(string? phone)
     {
         var create = new CreatePlanningGuest("Khách", Phone: phone);
-        var update = new UpdatePlanningGuest(1, "Khách", null, "UNSPECIFIED", null, phone, null, null);
+        var update = new UpdatePlanningGuest(1, "Khách", null, "UNSPECIFIED", PlanningGroupKind.OTHER, phone, null, null);
 
         Assert.DoesNotContain(new CreatePlanningGuestValidator().Validate(create).Errors,
             error => error.PropertyName == nameof(create.Phone));

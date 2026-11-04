@@ -6,20 +6,12 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 namespace InviteMe.Infrastructure.Persistence.Configurations;
 
 public sealed class GuestPlanningModel :
-    IEntityTypeConfiguration<PlanningGroup>, IEntityTypeConfiguration<PlanningImportBatch>,
+    IEntityTypeConfiguration<PlanningRequestReceipt>,
     IEntityTypeConfiguration<PlanningGuest>, IEntityTypeConfiguration<PlanningParticipant>, IEntityTypeConfiguration<PlanningPlace>
 {
-    public void Configure(EntityTypeBuilder<PlanningGroup> groups)
+    public void Configure(EntityTypeBuilder<PlanningRequestReceipt> imports)
     {
-        groups.ToTable("planning_groups"); groups.HasKey(x => x.Id);
-        groups.Property(x => x.Name).HasMaxLength(100); groups.Property(x => x.NormalizedName).HasMaxLength(200);
-        groups.HasIndex(x => new { x.WeddingId, x.NormalizedName }).IsUnique();
-        groups.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade);
-    }
-
-    public void Configure(EntityTypeBuilder<PlanningImportBatch> imports)
-    {
-        imports.ToTable("planning_imports"); imports.HasKey(x => x.Id);
+        imports.ToTable("planning_request_receipts"); imports.HasKey(x => x.Id);
         imports.HasIndex(x => new { x.WeddingId, x.Key }).IsUnique();
         imports.Property(x => x.RequestHash).HasMaxLength(64);
         imports.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade);
@@ -30,7 +22,6 @@ public sealed class GuestPlanningModel :
         guests.ToTable("planning_guests", t => {
             t.HasCheckConstraint("ck_planning_expected", "\"ExpectedPeople\" BETWEEN 1 AND 500");
             t.HasCheckConstraint("ck_planning_side", "\"Side\" IN ('BRIDE','GROOM','MUTUAL','UNSPECIFIED')");
-            t.HasCheckConstraint("ck_planning_kind", "\"InvitationKind\" IN ('INDIVIDUAL','FAMILY','GROUP')");
         }); guests.HasKey(x => x.Id);
         guests.Property(x => x.RecipientName).HasMaxLength(150); guests.Property(x => x.Honorific).HasMaxLength(50);
         guests.Property(x => x.Phone).HasMaxLength(30); guests.Property(x => x.Note).HasMaxLength(2000);
@@ -40,8 +31,7 @@ public sealed class GuestPlanningModel :
         guests.Property(x => x.Version).IsConcurrencyToken();
         guests.HasIndex(x => new { x.WeddingId, x.RecipientName });
         guests.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade);
-        guests.HasOne<PlanningImportBatch>().WithMany().HasForeignKey(x => x.ImportId).OnDelete(DeleteBehavior.Cascade);
-        guests.HasOne<PlanningGroup>().WithMany().HasForeignKey(x => x.GroupId).OnDelete(DeleteBehavior.Restrict);
+        guests.Property(x => x.Group).HasConversion<string>().HasMaxLength(16).IsRequired();
     }
 
     public void Configure(EntityTypeBuilder<PlanningParticipant> people)

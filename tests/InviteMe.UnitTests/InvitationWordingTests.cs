@@ -20,10 +20,10 @@ public sealed class InvitationWordingTests
     [InlineData("Bạn", "chúng mình")]
     public void ManyHonorificsResolveToSamePresetWithCaseAndSpacingIgnored(string honorific, string pronoun)
     {
-        var result = InvitationWording.Render(InvitationWording.Defaults(), new(Guid.NewGuid(), "Nguyễn Văn An", honorific, "FAMILY"));
+        var result = InvitationWording.Render(InvitationWording.Defaults(), new(Guid.NewGuid(), "Nguyễn Văn An", honorific));
         Assert.False(result.UsedDefault);
         Assert.Equal(pronoun, result.SenderPronoun);
-        Assert.Contains("gia đình", result.RecipientLabel);
+        Assert.EndsWith("Nguyễn Văn An", result.RecipientLabel);
         Assert.Contains("Nguyễn Văn An", result.Content);
         Assert.DoesNotContain("{{", result.Content);
     }
@@ -34,7 +34,7 @@ public sealed class InvitationWordingTests
     [InlineData("Ngài")]
     public void UnknownAndEmptyHonorificsUseNeutralDefault(string? honorific)
     {
-        var result = InvitationWording.Render(InvitationWording.Defaults(), new(Guid.NewGuid(), "An", honorific, "INDIVIDUAL"));
+        var result = InvitationWording.Render(InvitationWording.Defaults(), new(Guid.NewGuid(), "An", honorific));
         Assert.True(result.UsedDefault);
         Assert.Equal("Trung tính", result.PresetName);
         Assert.DoesNotContain("chúng cháu", result.Content);
@@ -44,8 +44,8 @@ public sealed class InvitationWordingTests
     [Fact]
     public void RecipientValuesAreNotInterpretedAsNestedPlaceholders()
     {
-        var result = InvitationWording.Render(InvitationWording.Defaults(), new(Guid.NewGuid(), "{{senderPronoun}}", "Bác", "GROUP"));
-        Assert.Contains("nhóm bác {{senderPronoun}}", result.Content);
+        var result = InvitationWording.Render(InvitationWording.Defaults(), new(Guid.NewGuid(), "{{senderPronoun}}", "Bác"));
+        Assert.Contains("bác {{senderPronoun}}", result.Content);
         Assert.Contains("cùng chúng cháu", result.Content);
     }
 
@@ -55,7 +55,7 @@ public sealed class InvitationWordingTests
         var presets = InvitationWording.Defaults().ToArray();
         presets[1] = presets[1] with { Honorifics = presets[1].Honorifics.Where(x => x != "Bác").ToArray() };
         presets[2] = presets[2] with { Honorifics = [..presets[2].Honorifics, "Bác"] };
-        var guest = new WordingRecipient(Guid.NewGuid(), "An", "Bác", "FAMILY");
+        var guest = new WordingRecipient(Guid.NewGuid(), "An", "Bác");
         var result = InvitationWording.Render(presets, guest);
         Assert.Equal(guest.Id, result.GuestId);
         Assert.Equal(presets[2].Id, result.PresetId);

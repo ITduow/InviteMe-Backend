@@ -184,9 +184,10 @@ public sealed class RsvpReminderApiTests
 
         // A co-host limited to one guest group (Couple04 scope) may not remind the whole wedding.
         using var groupImport = new HttpRequestMessage(HttpMethod.Post, $"/api/weddings/{w}/guest-planning/imports")
-        { Content = JsonContent.Create(new PlanningImport([new PlanningRow(9, "Nhóm khách", Group: new(NewName: "Nhà gái", Confirmed: true))])) };
+        { Content = JsonContent.Create(new PlanningImport([new PlanningRow(9, "Nhóm khách", Group: PlanningGroupKind.RELATIVES)])) };
         groupImport.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        var groupId = (await Read<PlanningImportResult>(await owner.SendAsync(groupImport))).CreatedGroups.Single().Id;
+        await Read<PlanningImportResult>(await owner.SendCheckedImportAsync(groupImport));
+        var groupId = PlanningGroupKind.RELATIVES;
         using var scoped = await SignIn(factory, "reminder-scoped");
         var scopedMe = (await scoped.GetFromJsonAsync<AccountDto>("/api/auth/me"))!;
         await CoHostPermissionTests.AddCoHostAsync(owner, scoped, w, "RSVP_VIEW");
@@ -237,7 +238,7 @@ public sealed class RsvpReminderApiTests
         using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/weddings/{weddingId}/guest-planning/imports")
         { Content = JsonContent.Create(new PlanningImport(rows.Select((r, i) => new PlanningRow(i + 2, r.Name, Email: r.Email)).ToArray())) };
         request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        var result = await Read<PlanningImportResult>(await owner.SendAsync(request));
+        var result = await Read<PlanningImportResult>(await owner.SendCheckedImportAsync(request));
         var ids = result.Items.Select(x => x.GuestId).ToList();
         return await db.Set<PlanningGuest>().AsNoTracking().Where(x => ids.Contains(x.Id)).ToDictionaryAsync(x => x.RecipientName, x => x.Id);
     }
@@ -319,6 +320,7 @@ public sealed class RsvpReminderApiTests
         public ConcurrentQueue<InvitationOutboundMessage> Messages { get; } = new();
         public bool FailNext { get; set; }
         public bool Available { get; set; } = true;
+        public string ProviderNameFor(string channel) => "TEST";
         public bool IsAvailable(string channel) => Available;
         public string ProviderNameFor(string channel) => channel == "SMS" ? "TEST_SMS" : "SMTP";
         public Task<InvitationDeliveryReceipt> SendAsync(InvitationOutboundMessage message, CancellationToken ct)

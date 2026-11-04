@@ -18,7 +18,7 @@ public sealed record CoHostDto(
     DateTimeOffset CreatedAt,
     IReadOnlyList<CoHostPermissionScopeDto>? Scopes = null);
 
-public sealed record CoHostPermissionScopeDto(string Permission, bool WeddingWide, IReadOnlyList<Guid> GroupIds);
+public sealed record CoHostPermissionScopeDto(string Permission, bool WeddingWide, IReadOnlyList<InviteMe.Domain.Guests.PlanningGroupKind> GroupIds);
 
 public sealed record UpdateCoHostScopesInput(IReadOnlyList<CoHostPermissionScopeInput> Grants);
 
@@ -51,7 +51,7 @@ public sealed class UpdateCoHostScopesInputValidator : AbstractValidator<UpdateC
         RuleForEach(x => x.Grants).ChildRules(g =>
         {
             g.RuleFor(x => x.Permission).Must(CoHostPermissionCodes.IsAssignable);
-            g.RuleFor(x => x.GroupIds).NotNull().Must(x => x is not null && x.Distinct().Count() == x.Count && x.All(id => id != Guid.Empty));
+            g.RuleFor(x => x.GroupIds).NotNull().Must(x => x is not null && x.Distinct().Count() == x.Count && x.All(Enum.IsDefined));
             g.RuleFor(x => x).Must(x => x.WeddingWide ? x.GroupIds.Count == 0 : x.GroupIds.Count > 0);
             g.RuleFor(x => x).Must(x => x.Permission is not (nameof(WeddingPermission.CHECKIN_MANAGE) or nameof(WeddingPermission.GIFT_RECORD)) ||
                                         (x.WeddingWide && x.GroupIds.Count == 0))

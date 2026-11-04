@@ -19,14 +19,14 @@ public sealed class CoHostInvitationStore(InviteMeDbContext db) : ICoHostInvitat
         .Where(x => x.Id == weddingId).Select(x => x.Title).SingleOrDefaultAsync(ct);
 
     public async Task<Guid> CreateAsync(Guid weddingId, string email, string tokenHash, Guid actorId, DateTimeOffset expiresAt,
-        IReadOnlyList<(WeddingPermission Permission, bool WeddingWide, IReadOnlyList<Guid> GroupIds)> grants, CancellationToken ct)
+        IReadOnlyList<(WeddingPermission Permission, bool WeddingWide, IReadOnlyList<InviteMe.Domain.Guests.PlanningGroupKind> GroupIds)> grants, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var wedding = await db.Weddings.SingleOrDefaultAsync(x => x.Id == weddingId, ct)
             ?? throw new ApplicationProblemException(ProblemKind.NotFound, "WEDDING_NOT_FOUND", "Wedding not found.");
         if (wedding.OwnerUserId != actorId) throw new ApplicationProblemException(ProblemKind.Forbidden, "OWNER_ONLY", "Only the wedding owner can manage co-host invitations.");
         var groupIds = grants.Where(x => !x.WeddingWide).SelectMany(x => x.GroupIds).Distinct().ToArray();
-        if (groupIds.Length > 0 && await db.Set<PlanningGroup>().CountAsync(x => x.WeddingId == weddingId && groupIds.Contains(x.Id), ct) != groupIds.Length)
+        if (groupIds.Any(x => !Enum.IsDefined(x)))
             throw new ApplicationProblemException(ProblemKind.BadRequest, "COHOST_GROUP_NOT_FOUND", "One or more groups do not belong to this wedding.");
         var normalized = email.Trim().ToUpperInvariant();
         var existingUser = await db.Users.AsNoTracking().SingleOrDefaultAsync(x => x.NormalizedEmail == normalized && x.Status == "ACTIVE", ct);
@@ -46,8 +46,8 @@ public sealed class CoHostInvitationStore(InviteMeDbContext db) : ICoHostInvitat
         {
             var permissionId = permissions[grant.Permission.ToString()].Id;
             if (grant.WeddingWide) db.Add(new CoHostInvitationGrant { Id = Guid.NewGuid(), InvitationId = invitation.Id, PermissionId = permissionId, ScopeType = "WEDDING" });
-            else foreach (var groupId in grant.GroupIds)
-                db.Add(new CoHostInvitationGrant { Id = Guid.NewGuid(), InvitationId = invitation.Id, PermissionId = permissionId, ScopeType = "GUEST_GROUP", GroupId = groupId });
+            else foreach (var group in grant.GroupIds)
+                db.Add(new CoHostInvitationGrant { Id = Guid.NewGuid(), InvitationId = invitation.Id, PermissionId = permissionId, ScopeType = "GUEST_GROUP", Group = group });
         }
         db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "cohost_invitations", invitation.Id, "COHOST_INVITATION_CREATED", actorId,
             metadata: JsonSerializer.Serialize(new { grants = grants.Select(x => new { permission = x.Permission.ToString(), x.WeddingWide, groupIds = x.GroupIds }) }, Json)));
@@ -94,9 +94,9 @@ public sealed class CoHostInvitationStore(InviteMeDbContext db) : ICoHostInvitat
         var permissionIds = invitationGrants.Select(x => x.PermissionId).Distinct().ToArray();
         foreach (var grant in invitationGrants.Where(x => x.ScopeType == "WEDDING"))
             db.Add(WeddingMemberPermission.Create(member.Id, grant.PermissionId));
-        foreach (var grant in invitationGrants.Where(x => x.ScopeType == "GUEST_GROUP" && x.GroupId.HasValue))
+        foreach (var grant in invitationGrants.Where(x => x.ScopeType == "GUEST_GROUP" && x.Group.HasValue))
             db.Add(new WeddingMemberGroupPermission { Id = Guid.NewGuid(), WeddingId = invite.WeddingId, MemberId = member.Id,
-                PermissionId = grant.PermissionId, GroupId = grant.GroupId!.Value });
+                PermissionId = grant.PermissionId, Group = grant.Group!.Value });
         invite.Status = "ACCEPTED"; invite.AcceptedAt = DateTimeOffset.UtcNow; invite.AcceptedUserId = userId;
         db.AuditLogs.Add(AuditLog.ForEntity(invite.WeddingId, "wedding_members", member.Id, "COHOST_INVITATION_ACCEPTED", userId,
             metadata: JsonSerializer.Serialize(new { invitationId = invite.Id, permissionIds }, Json)));
@@ -131,9 +131,9 @@ public sealed class CoHostInvitationStore(InviteMeDbContext db) : ICoHostInvitat
         var rows = await (from grant in db.Set<CoHostInvitationGrant>().AsNoTracking()
             join permission in db.Permissions.AsNoTracking() on grant.PermissionId equals permission.Id
             where grant.InvitationId == invite.Id
-            select new { permission.Code, grant.ScopeType, grant.GroupId }).ToListAsync(ct);
+            select new { permission.Code, grant.ScopeType, grant.Group }).ToListAsync(ct);
         var grants = rows.GroupBy(x => x.Code).Select(g => new CoHostInvitationGrantDto(g.Key,
-            g.Any(x => x.ScopeType == "WEDDING"), g.Where(x => x.GroupId.HasValue).Select(x => x.GroupId!.Value).Distinct().ToArray())).ToArray();
+            g.Any(x => x.ScopeType == "WEDDING"), g.Where(x => x.Group.HasValue).Select(x => x.Group!.Value).Distinct().ToArray())).ToArray();
         return new(invite.Id, invite.WeddingId, invite.Email, invite.Status, invite.ExpiresAt, title, grants);
     }
 }

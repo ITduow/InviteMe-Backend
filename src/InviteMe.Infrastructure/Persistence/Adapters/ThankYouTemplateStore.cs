@@ -35,11 +35,8 @@ public sealed class ThankYouGuestReader(InviteMeDbContext db) : IThankYouGuestRe
     {
         var guests = await db.Set<PlanningGuest>().AsNoTracking()
             .Where(x => x.WeddingId == weddingId && x.ArchivedAt == null && guestIds.Contains(x.Id))
-            .Select(x => new { x.Id, x.GroupId, x.Side }).ToListAsync(ct);
+            .Select(x => new { x.Id, x.Group, x.Side }).ToListAsync(ct);
         if (guests.Count != guestIds.Count) return null;
-        var groupIds = guests.Where(x => x.GroupId != null).Select(x => x.GroupId!.Value).Distinct().ToArray();
-        var groupNames = await db.Set<PlanningGroup>().AsNoTracking().Where(x => groupIds.Contains(x.Id))
-            .ToDictionaryAsync(x => x.Id, x => x.Name, ct);
         var rsvps = await db.Set<PlanningRsvp>().AsNoTracking().Where(x => x.WeddingId == weddingId && guestIds.Contains(x.GuestId))
             .ToDictionaryAsync(x => x.GuestId, x => x.Status, ct);
         var wishes = await db.Set<PlanningGift>().AsNoTracking()
@@ -47,7 +44,7 @@ public sealed class ThankYouGuestReader(InviteMeDbContext db) : IThankYouGuestRe
             .Select(x => x.GuestId!.Value).Distinct().CountAsync(ct);
         var attendance = guests.GroupBy(x => rsvps.GetValueOrDefault(x.Id) ?? "PENDING")
             .ToDictionary(x => x.Key, x => x.Count());
-        var groups = guests.GroupBy(x => x.GroupId is { } id && groupNames.TryGetValue(id, out var name) ? name : x.Side)
+        var groups = guests.GroupBy(x => x.Group?.Vietnamese() ?? x.Side)
             .ToDictionary(x => x.Key, x => x.Count());
         return new ThankYouAudienceSummary(guests.Count, wishes, attendance, groups);
     }
