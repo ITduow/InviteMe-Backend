@@ -320,7 +320,6 @@ public sealed class RsvpReminderApiTests
         public ConcurrentQueue<InvitationOutboundMessage> Messages { get; } = new();
         public bool FailNext { get; set; }
         public bool Available { get; set; } = true;
-        public string ProviderNameFor(string channel) => "TEST";
         public bool IsAvailable(string channel) => Available;
         public string ProviderNameFor(string channel) => channel == "SMS" ? "TEST_SMS" : "SMTP";
         public Task<InvitationDeliveryReceipt> SendAsync(InvitationOutboundMessage message, CancellationToken ct)
