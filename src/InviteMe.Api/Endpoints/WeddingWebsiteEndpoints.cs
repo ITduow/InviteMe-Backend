@@ -40,6 +40,8 @@ internal static class WeddingWebsiteEndpoints
             .AllowAnonymous().WithTags("Wedding Story Templates");
         endpoints.MapGet("/api/story-template-meta/variants", () => Results.Ok(StoryTemplateContract.AllowedVariants))
             .AllowAnonymous().WithTags("Wedding Story Templates");
+        endpoints.MapGet("/api/story-template-meta/fonts", () => Results.Ok(StoryTemplateContract.AllowedFonts))
+            .AllowAnonymous().WithTags("Wedding Story Templates");
         var group = endpoints.MapGroup("/api/weddings/{weddingId:guid}/website").RequireAuthorization().WithTags("Wedding Website");
         group.MapGet("", (Guid weddingId, WeddingWebsiteHandler handler, CancellationToken ct) => handler.GetAsync(weddingId, ct));
         group.MapPut("", (Guid weddingId, SaveWebsite input, WeddingWebsiteHandler handler, CancellationToken ct) => handler.SaveAsync(weddingId, input, ct));

@@ -36,6 +36,7 @@ public static class StoryTemplateContract
         ["Georgia", "Playfair Display", "Nunito", "Lora", "Cormorant Garamond", "Montserrat"];
 
     public static IReadOnlyDictionary<string, string[]> AllowedVariants => Variants;
+    public static IReadOnlyList<string> AllowedFonts => Fonts.Order(StringComparer.Ordinal).ToArray();
 
     public static void Validate(StoryTemplateConfig? config, string expectedKey)
     {

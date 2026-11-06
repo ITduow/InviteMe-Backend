@@ -16,7 +16,7 @@ public static class StoryBuilderV4Contract
 {
     private static readonly Regex Slug = new("^[a-z0-9]+(?:-[a-z0-9]+)*$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly HashSet<string> ReservedSlugs = ["admin", "api", "assets", "_next"];
-    private static readonly HashSet<string> RootFields = ["kind", "schemaVersion", "builderVersion", "templateKey", "templateVersion", "templateSnapshot", "navigationMode", "content", "appearance", "pages", "publishedAt"];
+    private static readonly HashSet<string> RootFields = ["kind", "schemaVersion", "builderVersion", "templateKey", "templateVersion", "templateSnapshot", "navigationMode", "content", "appearance", "pages", "publishedAt", "seo"];
     private static readonly HashSet<string> ContentFields = ["groom", "bride", "events", "mainEventId", "gallery", "loveStory", "gift", "heroImageUrl", "heroSlides", "countdownTitle", "eventsEnabled", "galleryEnabled", "wishesEnabled"];
     private static readonly HashSet<string> AppearanceFields = ["paletteId", "fontHeading", "fontBody", "motion"];
     private static readonly Dictionary<string, string[]> Variants = new(StringComparer.Ordinal)
@@ -41,7 +41,8 @@ public static class StoryBuilderV4Contract
             !Text(doc, "navigationMode", 20, true) || GetText(doc, "navigationMode") is not ("one-page" or "multi-page" or "hybrid") ||
             !Field(doc, "content", out var content) || content.ValueKind != JsonValueKind.Object || !ValidSharedContent(content) ||
             !Field(doc, "appearance", out var appearance) || appearance.ValueKind != JsonValueKind.Object || !ValidAppearance(appearance, template) ||
-            !Field(doc, "pages", out var pages) || pages.ValueKind != JsonValueKind.Array || pages.GetArrayLength() is < 1 or > 8)
+            !Field(doc, "pages", out var pages) || pages.ValueKind != JsonValueKind.Array || pages.GetArrayLength() is < 1 or > 8 ||
+            (Field(doc, "seo", out var seo) && !ValidSeo(seo)))
             return false;
 
         if (Field(doc, "templateVersion", out var templateVersion) && (templateVersion.ValueKind != JsonValueKind.Number || !templateVersion.TryGetInt32(out var v) || v < 1)) return false;
@@ -107,6 +108,8 @@ public static class StoryBuilderV4Contract
             if (Field(obj, property, out var value) && value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(value.GetString()))
                 refs.Add((id, value.GetString()!));
         }
+        if (Field(doc, "seo", out var seo) && seo.ValueKind == JsonValueKind.Object)
+            Add(seo, "imageUrl", "seo-share-image");
         if (Field(doc, "content", out var shared) && shared.ValueKind == JsonValueKind.Object)
         {
             Add(shared, "heroImageUrl", "shared-hero");
@@ -290,6 +293,9 @@ public static class StoryBuilderV4Contract
         (!Field(style, "background", out var bg) || bg.ValueKind == JsonValueKind.String && bg.GetString() is "default" or "soft" or "accent") &&
         (!Field(style, "spacing", out var spacing) || spacing.ValueKind == JsonValueKind.String && spacing.GetString() is "compact" or "normal" or "spacious") &&
         (!Field(style, "animation", out var animation) || animation.ValueKind == JsonValueKind.String && animation.GetString() is "none" or "fade");
+
+    private static bool ValidSeo(JsonElement seo) => seo.ValueKind == JsonValueKind.Object && OnlyFields(seo, ["title", "description", "imageUrl"]) &&
+        OptionalText(seo, "title", 70) && OptionalText(seo, "description", 200) && OptionalImage(seo, "imageUrl");
 
     private static bool ValidBindings(JsonElement bindings, string type)
     {
