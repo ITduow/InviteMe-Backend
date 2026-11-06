@@ -5,6 +5,17 @@ namespace InviteMe.Application.Features.Weddings.Website;
 
 public static class StoryTemplateSnapshot
 {
+    public static string BuildV4(string draftJson, PublicStoryTemplateDto template, WebsiteBindingData setup,
+        DateTimeOffset? now = null)
+    {
+        var draft = JsonNode.Parse(draftJson)!.AsObject();
+        draft["templateVersion"] = template.Version;
+        draft["templateSnapshot"] = JsonSerializer.SerializeToNode(template.Config, StoryTemplateContract.Json);
+        draft["publishedAt"] = JsonSerializer.SerializeToNode(now ?? DateTimeOffset.UtcNow);
+        StoryBuilderV4Contract.ResolveBindings(draft, setup, "static");
+        return draft.ToJsonString();
+    }
+
     public static string BuildV3(string draftJson, PublicStoryTemplateDto template, DateTimeOffset? now = null)
     {
         var draft = JsonNode.Parse(draftJson)!.AsObject();

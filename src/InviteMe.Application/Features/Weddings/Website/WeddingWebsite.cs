@@ -45,6 +45,7 @@ public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAc
     public async Task<WebsiteDto> SaveAsync(Guid id, SaveWebsite input, CancellationToken ct)
     {
         await Owner(id, ct);
+        await RequireTemplateEntitlement(id, input.Document, ct);
         if (input.ExpectedVersion < 0 || !await ValidForSave(input.Document, ct))
             throw new ApplicationProblemException(ProblemKind.BadRequest, "WEBSITE_DOCUMENT_INVALID", "Website content is invalid.");
         await ValidateMedia(id, input.Document, ct);
@@ -60,6 +61,7 @@ public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAc
         var draft = await store.GetAsync(id, ct);
         if (draft.Document is { } doc)
         {
+            await RequireTemplateEntitlement(id, doc, ct);
             if (!await ValidForSave(doc, ct)) throw new ApplicationProblemException(ProblemKind.BadRequest, "WEBSITE_DRAFT_INVALID", "Save valid website content before publishing.");
             await ValidateMedia(id, doc, ct);
         }
@@ -89,14 +91,15 @@ public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAc
 
     private async Task ValidateMedia(Guid id, JsonElement document, CancellationToken ct)
     {
+        var v4 = StoryBuilderV4Contract.IsDocument(document);
         var v3 = StoryV3Contract.IsDraft(document);
-        var references = v3 ? StoryV3Contract.MediaReferences(document) : WeddingStoryDocumentValidator.IsStory(document)
+        var references = v4 ? StoryBuilderV4Contract.MediaReferences(document) : v3 ? StoryV3Contract.MediaReferences(document) : WeddingStoryDocumentValidator.IsStory(document)
             ? WeddingStoryDocumentValidator.MediaReferences(document)
             : InvitationDocumentValidator.MediaReferences(document);
         foreach (var reference in references.DistinctBy(x => x.Source))
         {
             var source = reference.Source;
-            if ((v3 || WeddingStoryDocumentValidator.IsStory(document)) && WeddingStoryDocumentValidator.IsSharedAsset(source))
+            if ((v3 || v4 || WeddingStoryDocumentValidator.IsStory(document)) && WeddingStoryDocumentValidator.IsSharedAsset(source))
                 continue;
             var path = source.Split('?', '#')[0];
             var location = $"Node '{reference.NodeId[..Math.Min(reference.NodeId.Length, 100)]}', image '{path[..Math.Min(path.Length, 200)]}'.";
@@ -115,6 +118,12 @@ public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAc
 
     private async Task<bool> ValidForSave(JsonElement doc, CancellationToken ct)
     {
+        if (StoryBuilderV4Contract.IsDocument(doc))
+        {
+            if (!doc.TryGetProperty("templateKey", out var v4Key) || v4Key.ValueKind != JsonValueKind.String) return false;
+            var v4Template = await templates.GetPublishedForStoryAsync(v4Key.GetString()!, ct);
+            return v4Template is not null && StoryBuilderV4Contract.ValidDraft(doc, v4Template.Config);
+        }
         if (StoryV3Contract.IsDraft(doc))
         {
             if (!doc.TryGetProperty("templateKey", out var v3Key) || v3Key.ValueKind != JsonValueKind.String) return false;
@@ -126,5 +135,14 @@ public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAc
         if (key.GetString() == "story-classic") return WeddingStoryDocumentValidator.Valid(doc);
         var template = await templates.GetPublishedForStoryAsync(key.GetString()!, ct);
         return template is not null && WeddingStoryDocumentValidator.Valid(doc, template.Config);
+    }
+
+    private async Task RequireTemplateEntitlement(Guid weddingId, JsonElement document, CancellationToken ct)
+    {
+        if (!StoryBuilderV4Contract.IsDocument(document) ||
+            !document.TryGetProperty("templateKey", out var key) || key.ValueKind != JsonValueKind.String) return;
+        var template = await templates.GetPublishedForStoryAsync(key.GetString()!, ct);
+        if (template?.Config.AccessTier == "PREMIUM")
+            await entitlements.RequireFeatureAsync(weddingId, InviteMe.Application.Features.Billing.PlanFeature.PremiumTemplates, ct);
     }
 }

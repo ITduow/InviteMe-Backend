@@ -2,6 +2,8 @@ using InviteMe.Api.Authorization;
 using InviteMe.Application.Features.Weddings.Website;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Application.Common.Errors;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace InviteMe.Api.Endpoints;
 
@@ -45,8 +47,14 @@ internal static class WeddingWebsiteEndpoints
         group.MapPost("/unpublish", (Guid weddingId, WebsiteVersion input, WeddingWebsiteHandler handler, CancellationToken ct) => handler.UnpublishAsync(weddingId, input.ExpectedVersion, ct));
         endpoints.MapGet("/api/public/weddings/{slug}", async (string slug, WeddingWebsiteHandler handler, HttpContext http, CancellationToken ct) =>
         {
-            http.Response.Headers.CacheControl = "no-store";
-            return await handler.PublicAsync(slug, ct);
+            var website = await handler.PublicAsync(slug, ct);
+            var etagBytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{website.Slug}\n{website.Document.GetRawText()}\n{website.BrandingBadge}"));
+            var etag = $"\"{Convert.ToHexString(etagBytes).ToLowerInvariant()}\"";
+            http.Response.Headers.ETag = etag;
+            http.Response.Headers.CacheControl = "public, no-cache";
+            if (http.Request.Headers.IfNoneMatch.Any(value => value == etag || value == "*"))
+                return Results.StatusCode(StatusCodes.Status304NotModified);
+            return Results.Json(website);
         }).AllowAnonymous().RequireRateLimiting("guest-invitation").WithTags("Wedding Website");
         endpoints.MapGet("/api/public/weddings/{slug}/wishes", (string slug, StoryWishHandler handler, CancellationToken ct) => handler.ListAsync(slug, ct))
             .AllowAnonymous().RequireRateLimiting("guest-invitation").WithTags("Wedding Website");
