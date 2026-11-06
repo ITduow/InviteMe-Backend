@@ -1,6 +1,7 @@
 using System.Text.Json;
 using InviteMe.Application.Common.Models;
 using InviteMe.Application.Features.Audit;
+using InviteMe.Application.Features.Billing;
 
 namespace InviteMe.Application.Features.Admin;
 
@@ -9,12 +10,15 @@ public sealed record AdminDashboardDto(
     long DraftWeddings, long PublishedWeddings, long ClosedWeddings, long ActiveGuests, long InvitationsSent);
 
 public sealed record AdminUserDto(Guid Id, string Email, string FullName, string Role, string Status, DateTimeOffset CreatedAt);
+public sealed record AdminUserDetailDto(AdminUserDto Account, long WeddingCount, IReadOnlyList<AdminWeddingDto> RecentWeddings);
 public sealed record AdminUserQuery(int Page = 1, int PageSize = 25, string? Search = null, string? Status = null, string? Role = null);
 public sealed record AdminUserStatusInput(string Status);
 public sealed record AdminUserRoleInput(string Role);
 
 public sealed record AdminWeddingDto(Guid Id, Guid OwnerUserId, string OwnerEmail, string Title, string Slug,
     string Status, int? Capacity, DateTimeOffset CreatedAt);
+public sealed record AdminWeddingDetailDto(AdminWeddingDto Wedding, WeddingPlanDto Plan, string WebsiteStatus,
+    int ActiveGuests, int EmailInvitationsSent, int SmsInvitationsSent, int FailedInvitationJobs, int PendingInvitationJobs);
 public sealed record AdminWeddingQuery(int Page = 1, int PageSize = 25, string? Search = null, string? Status = null);
 
 public sealed record AdminTemplateDto(Guid Id, string Name, string Slug, string? Theme, string? PreviewUrl,
@@ -40,10 +44,13 @@ public sealed record AdminAuditLogDto(Guid Id, Guid? WeddingId, string? WeddingT
 public interface IAdminStore
 {
     Task<AdminDashboardDto> GetDashboardAsync(CancellationToken ct);
+    Task<IReadOnlyList<string>> GetAdminPermissionsAsync(CancellationToken ct);
     Task<PagedResult<AdminUserDto>> ListUsersAsync(AdminUserQuery query, CancellationToken ct);
+    Task<AdminUserDetailDto> GetUserDetailAsync(Guid userId, CancellationToken ct);
     Task<AdminUserDto> SetUserStatusAsync(Guid actorId, Guid userId, string status, CancellationToken ct);
     Task<AdminUserDto> SetUserRoleAsync(Guid actorId, Guid userId, string role, CancellationToken ct);
     Task<PagedResult<AdminWeddingDto>> ListWeddingsAsync(AdminWeddingQuery query, CancellationToken ct);
+    Task<AdminWeddingDetailDto> GetWeddingDetailAsync(Guid weddingId, CancellationToken ct);
     Task<PagedResult<AdminTemplateDto>> ListTemplatesAsync(AdminTemplateQuery query, CancellationToken ct);
     Task<AdminTemplateDto> GetTemplateAsync(Guid templateId, CancellationToken ct);
     Task<IReadOnlyList<AdminTemplateVisibilityDto>> ListTemplateVisibilityAsync(CancellationToken ct);

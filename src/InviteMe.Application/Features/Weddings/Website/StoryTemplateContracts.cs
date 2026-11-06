@@ -11,7 +11,8 @@ public sealed record StorySection(string Type, string Variant);
 public sealed record StoryTemplateConfig(
     string Key, string Name, IReadOnlyList<StorySection> Sections, StoryTheme Theme,
     IReadOnlyList<StoryPalette> Palettes, IReadOnlyList<string> AllowedFonts,
-    IReadOnlyDictionary<string, string>? Assets = null);
+    IReadOnlyDictionary<string, string>? Assets = null,
+    string AccessTier = "UNCLASSIFIED", string? Category = null, string? PreviewImageUrl = null);
 
 public sealed record StoryTemplateDto(Guid Id, string Key, string Name, int Version, int PublishedVersion,
     StoryTemplateConfig Draft, StoryTemplateConfig? Published, bool IsArchived,
@@ -26,10 +27,10 @@ public static class StoryTemplateContract
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static readonly Dictionary<string, string[]> Variants = new(StringComparer.Ordinal)
     {
-        ["hero"] = ["floral", "dark"], ["couple"] = ["alternating", "two-columns"],
-        ["countdown"] = ["classic", "banner"], ["loveStory"] = ["timeline", "editorial"],
-        ["events"] = ["cards"], ["gallery"] = ["grid"], ["rsvp"] = ["default"],
-        ["wishes"] = ["default"], ["gift"] = ["default"]
+        ["hero"] = ["floral", "dark", "split", "editorial", "ceremonial"], ["couple"] = ["alternating", "two-columns", "editorial"],
+        ["countdown"] = ["classic", "banner", "inline"], ["loveStory"] = ["timeline", "editorial"],
+        ["events"] = ["cards", "minimal"], ["gallery"] = ["grid", "masonry"], ["rsvp"] = ["default"],
+        ["wishes"] = ["default"], ["gift"] = ["default", "minimal"]
     };
     private static readonly HashSet<string> Fonts =
         ["Georgia", "Playfair Display", "Nunito", "Lora", "Cormorant Garamond", "Montserrat"];
@@ -51,7 +52,10 @@ public static class StoryTemplateContract
             config.Palettes.Any(p => p is null || string.IsNullOrWhiteSpace(p.Id) || p.Id.Length > 40 ||
                 string.IsNullOrWhiteSpace(p.Label) || p.Label.Length > 80 || !ValidColors(p.Colors)) ||
             config.Palettes.Select(p => p.Id).Distinct(StringComparer.Ordinal).Count() != config.Palettes.Count ||
-            !ValidColors(config.Theme.Colors) ||
+            !ValidColors(config.Theme.Colors) || config.AccessTier is not ("UNCLASSIFIED" or "FREE" or "PREMIUM") ||
+            (config.Category is { Length: > 80 } || config.Category?.Any(char.IsControl) == true) ||
+            (config.PreviewImageUrl is not null && (config.PreviewImageUrl.Length > 2048 ||
+                !config.PreviewImageUrl.StartsWith("/images/story-templates/", StringComparison.Ordinal))) ||
             config.Assets is { Count: > 20 } ||
             config.Assets?.Any(x => x.Key.Length > 80 || x.Value is null || x.Value.Length > 2048 ||
                 !x.Value.StartsWith("/images/story-templates/", StringComparison.Ordinal)) == true)

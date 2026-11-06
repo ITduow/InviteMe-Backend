@@ -42,27 +42,40 @@ public sealed class WeddingWebsiteStore(InviteMeDbContext db) : IWeddingWebsiteS
             throw Rule("WEBSITE_DRAFT_REQUIRED", "Save valid website content before publishing.");
         using var draft = JsonDocument.Parse(settings.WebsiteDraftJson);
         PublicStoryTemplateDto? storyTemplate = null;
+        var v4 = StoryBuilderV4Contract.IsDocument(draft.RootElement);
         var v3 = StoryV3Contract.IsDraft(draft.RootElement);
-        if (v3 || WeddingStoryDocumentValidator.IsStory(draft.RootElement))
+        if (v4 || v3 || WeddingStoryDocumentValidator.IsStory(draft.RootElement))
         {
-            var selectedKey = draft.RootElement.GetProperty(v3 ? "templateKey" : "templateId").GetString()!;
+            var selectedKey = draft.RootElement.GetProperty(v4 || v3 ? "templateKey" : "templateId").GetString()!;
             var row = await db.StoryTemplates.AsNoTracking().SingleOrDefaultAsync(
                 x => x.Key == (selectedKey == "story-classic" ? "romantic" : selectedKey) && x.PublishedConfigJson != null, ct);
             if (row is null) throw Rule("STORY_TEMPLATE_UNAVAILABLE", "Publish the selected story template first.");
             var config = JsonSerializer.Deserialize<StoryTemplateConfig>(row.PublishedConfigJson!, StoryTemplateContract.Json)!;
-            if (v3 ? !StoryV3Contract.ValidDraft(draft.RootElement, config) :
+            if (v4 ? !StoryBuilderV4Contract.ValidDraft(draft.RootElement, config) : v3 ? !StoryV3Contract.ValidDraft(draft.RootElement, config) :
                 !WeddingStoryDocumentValidator.Valid(draft.RootElement, selectedKey == "story-classic" ? null : config))
                 throw Rule("WEBSITE_DRAFT_REQUIRED", "Save valid website content before publishing.");
             storyTemplate = new(row.Key, row.Name, row.PublishedVersion, config);
         }
         else if (!WeddingWebsiteHandler.Valid(draft.RootElement))
             throw Rule("WEBSITE_DRAFT_REQUIRED", "Save valid website content before publishing.");
-        var templateVersionChanged = storyTemplate is not null && settings.WebsitePublishedJson is { } published &&
-            JsonDocument.Parse(published).RootElement.TryGetProperty(v3 ? "templateVersion" : "storyTemplate", out var prior) &&
-            (v3 ? prior.GetInt32() : prior.GetProperty("version").GetInt32()) != storyTemplate.Version;
+        var templateVersionChanged = false;
+        if (storyTemplate is not null && settings.WebsitePublishedJson is { } published)
+        {
+            using var priorDocument = JsonDocument.Parse(published);
+            if (v4 && priorDocument.RootElement.TryGetProperty("templateVersion", out var priorV4) && priorV4.TryGetInt32(out var priorV4Version))
+                templateVersionChanged = priorV4Version != storyTemplate.Version;
+            else if (priorDocument.RootElement.TryGetProperty(v3 ? "templateVersion" : "storyTemplate", out var prior))
+                templateVersionChanged = (v3 ? prior.GetInt32() : prior.GetProperty("version").GetInt32()) != storyTemplate.Version;
+        }
         if (settings.WebsiteStatus == WebsitePublicationStatus.PUBLISHED && !templateVersionChanged && !await PublicationJson.WebsiteChanged(db, id, ct))
         { await tx.CommitAsync(ct); return await GetAsync(id, ct); }
-        settings.PublishWebsite(storyTemplate is null ? null : v3
+        if (v4 && storyTemplate is not null)
+        {
+            var weddingCover = await db.Weddings.AsNoTracking().Where(x => x.Id == id).Select(x => x.CoverImageUrl).SingleAsync(ct);
+            var setup = new WebsiteBindingData(weddingCover, settings.MainEventAt, settings.Timezone, settings.VenueName, settings.VenueAddress);
+            settings.PublishWebsite(StoryTemplateSnapshot.BuildV4(settings.WebsiteDraftJson, storyTemplate, setup));
+        }
+        else settings.PublishWebsite(storyTemplate is null ? null : v3
             ? StoryTemplateSnapshot.BuildV3(settings.WebsiteDraftJson, storyTemplate)
             : StoryTemplateSnapshot.Build(settings.WebsiteDraftJson, storyTemplate));
         db.AuditLogs.Add(AuditLog.ForEntity(id, "wedding_website", id, "WEBSITE_PUBLISHED", actorId));
@@ -105,10 +118,17 @@ public sealed class WeddingWebsiteStore(InviteMeDbContext db) : IWeddingWebsiteS
             join owner in db.Users on wedding.OwnerUserId equals owner.Id
             where wedding.Slug == slug && owner.Status == "ACTIVE" && (wedding.Status == "DRAFT" || wedding.Status == "PUBLISHED") &&
                 settings.WebsiteStatus == WebsitePublicationStatus.PUBLISHED
-            select new { wedding.Slug, settings.WebsitePublishedJson }).SingleOrDefaultAsync(ct);
+            select new { wedding.Slug, wedding.CoverImageUrl, settings.MainEventAt, settings.Timezone, settings.VenueName,
+                settings.VenueAddress, settings.WebsitePublishedJson }).SingleOrDefaultAsync(ct);
         if (row?.WebsitePublishedJson is null) return null;
         var publicJson = JsonNode.Parse(row.WebsitePublishedJson)!.AsObject();
-        publicJson.Remove("sourceDraft");
+        if (publicJson["kind"]?.GetValue<string>() == "wedding-website" && publicJson["schemaVersion"]?.GetValue<int>() == 4)
+        {
+            StoryBuilderV4Contract.ResolveBindings(publicJson,
+                new WebsiteBindingData(row.CoverImageUrl, row.MainEventAt, row.Timezone, row.VenueName, row.VenueAddress), "dynamic");
+            publicJson = StoryBuilderV4Contract.PublicProjection(publicJson);
+        }
+        else publicJson.Remove("sourceDraft");
         return new(row.Slug, JsonDocument.Parse(publicJson.ToJsonString()).RootElement.Clone());
     }
 

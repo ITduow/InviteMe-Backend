@@ -26,6 +26,9 @@ internal static class AdminManagementEndpoints
 
         var group = endpoints.MapGroup("/api/admin").WithTags("Platform Administration")
             .RequireAuthorization("PlatformAdmin");
+        group.MapGet("/me/permissions", async (IAdminStore store, CancellationToken ct) =>
+            Results.Ok(await store.GetAdminPermissionsAsync(ct)))
+            .WithName("GetCurrentAdminPermissions");
         group.MapGet("/dashboard", async (IAdminStore store, CancellationToken ct) =>
             Results.Ok(await store.GetDashboardAsync(ct)))
             .RequireAuthorization(AdminPolicyNames.DashboardView).WithName("GetAdminDashboard");
@@ -34,6 +37,9 @@ internal static class AdminManagementEndpoints
                 string? search = null, string? status = null, string? role = null) =>
             Results.Ok(await store.ListUsersAsync(new(page, pageSize, search, status, role), ct)))
             .RequireAuthorization(AdminPolicyNames.UsersView).WithName("ListAdminUsers");
+        group.MapGet("/users/{userId:guid}", async (Guid userId, IAdminStore store, CancellationToken ct) =>
+            Results.Ok(await store.GetUserDetailAsync(userId, ct)))
+            .RequireAuthorization(AdminPolicyNames.UsersView).WithName("GetAdminUserDetail");
         group.MapPut("/users/{userId:guid}/status", async (Guid userId, AdminUserStatusInput input,
                 IAdminStore store, ICurrentUser current, CancellationToken ct) =>
             Results.Ok(await store.SetUserStatusAsync(RequireActor(current), userId, input.Status, ct)))
@@ -47,6 +53,9 @@ internal static class AdminManagementEndpoints
                 string? search = null, string? status = null) =>
             Results.Ok(await store.ListWeddingsAsync(new(page, pageSize, search, status), ct)))
             .RequireAuthorization(AdminPolicyNames.WeddingsView).WithName("ListAdminWeddings");
+        group.MapGet("/weddings/{weddingId:guid}", async (Guid weddingId, IAdminStore store, CancellationToken ct) =>
+            Results.Ok(await store.GetWeddingDetailAsync(weddingId, ct)))
+            .RequireAuthorization(AdminPolicyNames.WeddingsView).WithName("GetAdminWeddingDetail");
 
         group.MapGet("/templates", async (IAdminStore store, CancellationToken ct, int page = 1, int pageSize = 25,
                 string? search = null, string? status = null) =>
