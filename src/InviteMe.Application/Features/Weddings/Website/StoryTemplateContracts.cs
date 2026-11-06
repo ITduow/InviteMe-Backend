@@ -7,7 +7,7 @@ namespace InviteMe.Application.Features.Weddings.Website;
 public sealed record StoryThemeColors(string Primary, string Background, string Accent, string Text);
 public sealed record StoryTheme(StoryThemeColors Colors, string FontHeading, string FontBody);
 public sealed record StoryPalette(string Id, string Label, StoryThemeColors Colors);
-public sealed record StorySection(string Type, string Variant);
+public sealed record StorySection(string Type, string Variant, JsonElement? DefaultContent = null);
 public sealed record StoryTemplateConfig(
     string Key, string Name, IReadOnlyList<StorySection> Sections, StoryTheme Theme,
     IReadOnlyList<StoryPalette> Palettes, IReadOnlyList<string> AllowedFonts,
@@ -45,6 +45,7 @@ public static class StoryTemplateContract
             config.Sections.Any(s => s is null) ||
             config.Sections.GroupBy(s => s.Type, StringComparer.Ordinal).Any(g => g.Count() > 1) ||
             config.Sections.Any(s => !Variants.TryGetValue(s.Type, out var allowed) || !allowed.Contains(s.Variant, StringComparer.Ordinal)) ||
+            config.Sections.Any(s => !ValidDefaultContent(s)) ||
             !config.Sections.Any(s => s.Type == "rsvp") || config.Theme is null || config.Theme.Colors is null ||
             config.AllowedFonts is null || config.AllowedFonts.Count is < 1 or > 6 ||
             config.AllowedFonts.Any(f => !Fonts.Contains(f)) ||
@@ -62,6 +63,28 @@ public static class StoryTemplateContract
                 !x.Value.StartsWith("/images/story-templates/", StringComparison.Ordinal)) == true)
             throw new ApplicationProblemException(ProblemKind.BadRequest, "STORY_TEMPLATE_CONFIG_INVALID", "Story template configuration is invalid.");
     }
+
+    private static bool ValidDefaultContent(StorySection section)
+    {
+        if (section.DefaultContent is not { } content || content.ValueKind == JsonValueKind.Null) return true;
+        var fields = section.Type switch
+        {
+            "hero" => new[] { "title", "eyebrow", "subtitle" },
+            "rsvp" => new[] { "title", "intro", "submitLabel" },
+            "couple" or "countdown" or "loveStory" or "events" or "gallery" or "wishes" or "gift" => new[] { "title", "intro" },
+            _ => []
+        };
+        return OnlyFields(content, fields) && OptionalText(content, "title", 150) &&
+            OptionalText(content, "intro", section.Type == "couple" ? 1000 : 500) &&
+            OptionalText(content, "eyebrow", 120) && OptionalText(content, "subtitle", 500) &&
+            OptionalText(content, "submitLabel", 60);
+    }
+
+    private static bool OnlyFields(JsonElement obj, IEnumerable<string> fields) => obj.ValueKind == JsonValueKind.Object &&
+        obj.EnumerateObject().All(property => fields.Contains(property.Name, StringComparer.Ordinal));
+
+    private static bool OptionalText(JsonElement obj, string name, int max) => !obj.TryGetProperty(name, out var value) ||
+        value.ValueKind == JsonValueKind.String && value.GetString()!.Length <= max;
 
     private static bool ValidColors(StoryThemeColors? c) => c is not null &&
         new[] { c.Primary, c.Background, c.Accent, c.Text }.All(x =>
