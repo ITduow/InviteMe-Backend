@@ -6,6 +6,7 @@ using InviteMe.Application.Common.Errors;
 using InviteMe.Application.Common.Models;
 using InviteMe.Application.Features.Admin;
 using InviteMe.Application.Features.Audit;
+using InviteMe.Application.Features.Billing;
 using InviteMe.Application.Features.Invitations;
 using InviteMe.Domain.Audit;
 using InviteMe.Domain.Guests;
@@ -19,7 +20,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace InviteMe.Infrastructure.Persistence.Adapters;
 
-public sealed class AdminStore(InviteMeDbContext db, UserManager<ApplicationUser> users) : IAdminStore
+public sealed class AdminStore(InviteMeDbContext db, UserManager<ApplicationUser> users, IWeddingEntitlements entitlements) : IAdminStore
 {
     private static readonly string[] TemplateStatuses = ["ACTIVE", "INACTIVE", "DRAFT"];
     private static readonly HashSet<string> SensitiveMetadataKeys =
@@ -37,6 +38,23 @@ public sealed class AdminStore(InviteMeDbContext db, UserManager<ApplicationUser
         var guests = await db.Set<PlanningGuest>().AsNoTracking().LongCountAsync(x => x.ArchivedAt == null, ct);
         var sent = await db.InvitationSendJobs.AsNoTracking().LongCountAsync(x => x.Status == "SENT", ct);
         return new(totalAccounts, activeAccounts, suspendedAccounts, totalWeddings, drafts, published, closed, guests, sent);
+    }
+
+    public async Task<IReadOnlyList<string>> GetAdminPermissionsAsync(CancellationToken ct)
+    {
+        var roleId = await db.Roles.AsNoTracking().Where(x => x.Name == "ADMIN")
+            .Select(x => (Guid?)x.Id).SingleOrDefaultAsync(ct);
+        if (roleId is null) return [];
+        var configured = await (from grant in db.RolePermissions.AsNoTracking()
+                                join permission in db.Permissions.AsNoTracking() on grant.PermissionId equals permission.Id
+                                where grant.RoleId == roleId.Value && permission.Scope == "PLATFORM"
+                                select permission.Id).AnyAsync(ct);
+        if (!configured) return AdminPermissionCatalog.RequiredAdminPermissions;
+        return await (from grant in db.RolePermissions.AsNoTracking()
+                      join permission in db.Permissions.AsNoTracking() on grant.PermissionId equals permission.Id
+                      where grant.RoleId == roleId.Value && permission.Scope == "PLATFORM"
+                      orderby permission.Code
+                      select permission.Code).ToListAsync(ct);
     }
 
     public async Task<PagedResult<AdminUserDto>> ListUsersAsync(AdminUserQuery input, CancellationToken ct)
@@ -63,6 +81,21 @@ public sealed class AdminStore(InviteMeDbContext db, UserManager<ApplicationUser
                 db.UserRoles.Any(ur => ur.UserId == x.Id && db.Roles.Any(r => r.Id == ur.RoleId && r.Name == "ADMIN")) ? "ADMIN" : "USER",
                 x.Status, x.CreatedAt)).ToListAsync(ct);
         return new(rows, input.Page, input.PageSize, checked((int)total));
+    }
+
+    public async Task<AdminUserDetailDto> GetUserDetailAsync(Guid userId, CancellationToken ct)
+    {
+        var user = await users.FindByIdAsync(userId.ToString()) ?? throw NotFound("ACCOUNT_NOT_FOUND", "Account not found.");
+        var account = await GetUserAsync(user, ct);
+        var weddingQuery = from wedding in db.Weddings.AsNoTracking()
+                           join owner in db.Users.AsNoTracking() on wedding.OwnerUserId equals owner.Id
+                           where wedding.OwnerUserId == userId
+                           orderby wedding.CreatedAt descending, wedding.Id
+                           select new AdminWeddingDto(wedding.Id, wedding.OwnerUserId, owner.Email!, wedding.Title,
+                               wedding.Slug, wedding.Status, wedding.MaxCapacity, wedding.CreatedAt);
+        var total = await db.Weddings.AsNoTracking().LongCountAsync(x => x.OwnerUserId == userId, ct);
+        var recent = await weddingQuery.Take(10).ToListAsync(ct);
+        return new(account, total, recent);
     }
 
     public async Task<AdminUserDto> SetUserStatusAsync(Guid actorId, Guid userId, string status, CancellationToken ct)
@@ -146,6 +179,32 @@ public sealed class AdminStore(InviteMeDbContext db, UserManager<ApplicationUser
             .Select(x => new AdminWeddingDto(x.Wedding.Id, x.Wedding.OwnerUserId, x.Owner.Email!, x.Wedding.Title,
                 x.Wedding.Slug, x.Wedding.Status, x.Wedding.MaxCapacity, x.Wedding.CreatedAt)).ToListAsync(ct);
         return new(items, input.Page, input.PageSize, checked((int)total));
+    }
+
+    public async Task<AdminWeddingDetailDto> GetWeddingDetailAsync(Guid weddingId, CancellationToken ct)
+    {
+        var row = await (from wedding in db.Weddings.AsNoTracking()
+                         join owner in db.Users.AsNoTracking() on wedding.OwnerUserId equals owner.Id
+                         where wedding.Id == weddingId
+                         select new { Wedding = wedding, OwnerEmail = owner.Email! }).SingleOrDefaultAsync(ct)
+            ?? throw NotFound("WEDDING_NOT_FOUND", "Wedding not found.");
+        var weddingDto = new AdminWeddingDto(row.Wedding.Id, row.Wedding.OwnerUserId, row.OwnerEmail,
+            row.Wedding.Title, row.Wedding.Slug, row.Wedding.Status, row.Wedding.MaxCapacity, row.Wedding.CreatedAt);
+        var plan = await entitlements.GetAsync(weddingId, ct);
+        var settings = await db.WeddingSettings.AsNoTracking().SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
+        var activeGuests = await db.Set<PlanningGuest>().AsNoTracking()
+            .CountAsync(x => x.WeddingId == weddingId && x.ArchivedAt == null, ct);
+        var jobs = await db.InvitationSendJobs.AsNoTracking().Where(x => x.WeddingId == weddingId)
+            .GroupBy(_ => 1)
+            .Select(group => new
+            {
+                EmailSent = group.Count(x => x.Channel == "EMAIL" && x.Status == "SENT"),
+                SmsSent = group.Count(x => x.Channel == "SMS" && x.Status == "SENT"),
+                Failed = group.Count(x => x.Status == "FAILED"),
+                Pending = group.Count(x => x.Status == "PENDING")
+            }).SingleOrDefaultAsync(ct);
+        return new(weddingDto, plan, settings?.WebsiteStatus.ToString() ?? "DRAFT", activeGuests,
+            jobs?.EmailSent ?? 0, jobs?.SmsSent ?? 0, jobs?.Failed ?? 0, jobs?.Pending ?? 0);
     }
 
     public async Task<PagedResult<AdminTemplateDto>> ListTemplatesAsync(AdminTemplateQuery input, CancellationToken ct)
@@ -282,8 +341,10 @@ public sealed class AdminStore(InviteMeDbContext db, UserManager<ApplicationUser
         if (input.Permissions is null || input.Permissions.Distinct(StringComparer.Ordinal).Count() != input.Permissions.Count)
             throw BadRequest("ADMIN_PERMISSION_SET_INVALID", "Permission codes must be unique.");
         var allowed = AdminPermissionCatalog.PlatformPermissions.Select(x => x.Code).ToHashSet(StringComparer.Ordinal);
-        if (input.Permissions.Any(x => !allowed.Contains(x)) || !input.Permissions.Contains(AdminPermissionCatalog.RbacManage, StringComparer.Ordinal))
-            throw BadRequest("ADMIN_PERMISSION_SET_INVALID", "Choose known platform permissions and keep ADMIN_RBAC_MANAGE assigned.");
+        if (input.Permissions.Any(x => !allowed.Contains(x)) ||
+            !input.Permissions.Contains(AdminPermissionCatalog.RbacManage, StringComparer.Ordinal) ||
+            !input.Permissions.Contains(AdminPermissionCatalog.RbacView, StringComparer.Ordinal))
+            throw BadRequest("ADMIN_PERMISSION_SET_INVALID", "Choose known platform permissions and keep both ADMIN_RBAC_VIEW and ADMIN_RBAC_MANAGE assigned.");
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var role = await db.Roles.SingleOrDefaultAsync(x => x.Name == "ADMIN", ct)
