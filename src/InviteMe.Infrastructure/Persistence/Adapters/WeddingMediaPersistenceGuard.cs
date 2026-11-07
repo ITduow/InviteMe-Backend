@@ -9,16 +9,28 @@ internal static class WeddingMediaPersistenceGuard
         IWeddingMediaStorage storage, IWeddingMediaCatalog catalog, CancellationToken ct)
     {
         foreach (var source in StringValues(document).Distinct(StringComparer.Ordinal))
-            if (storage.TryGetOwnedFileName(weddingId, source, out var fileName) &&
-                !await catalog.ContainsAsync(weddingId, fileName, ct))
+        {
+            if (!storage.TryGetOwnedFileName(weddingId, source, out var fileName) ||
+                await catalog.ContainsAsync(weddingId, fileName, ct)) continue;
+
+            // Older wedding images may predate MediaCatalogJson. Adopt only a file that still
+            // exists under this wedding's storage prefix; never resurrect a deleted object.
+            await using var stream = await storage.OpenReadAsync(weddingId, fileName, ct);
+            if (stream is null || !await catalog.EnsureTrackedAsync(weddingId, new(fileName, source), ct))
                 return false;
+        }
         return true;
     }
 
     public static async Task<bool> CoverMediaExistsAsync(Guid weddingId, string? source,
-        IWeddingMediaStorage storage, IWeddingMediaCatalog catalog, CancellationToken ct) =>
-        !storage.TryGetOwnedFileName(weddingId, source, out var fileName) ||
-        await catalog.ContainsAsync(weddingId, fileName, ct);
+        IWeddingMediaStorage storage, IWeddingMediaCatalog catalog, CancellationToken ct)
+    {
+        if (!storage.TryGetOwnedFileName(weddingId, source, out var fileName) ||
+            await catalog.ContainsAsync(weddingId, fileName, ct)) return true;
+
+        await using var stream = await storage.OpenReadAsync(weddingId, fileName, ct);
+        return stream is not null && await catalog.EnsureTrackedAsync(weddingId, new(fileName, source!), ct);
+    }
 
     private static IEnumerable<string> StringValues(JsonElement element)
     {

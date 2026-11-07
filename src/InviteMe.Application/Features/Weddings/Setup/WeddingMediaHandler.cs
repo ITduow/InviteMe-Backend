@@ -12,6 +12,10 @@ public sealed record WeddingMediaDeleteResult(Guid Id, WeddingMediaDeleteStatus 
 public interface IWeddingMediaCatalog
 {
     Task<bool> ContainsAsync(Guid weddingId, string storageKey, CancellationToken ct);
+    // Persistence guards call this only while holding the wedding row lock and a transaction.
+    // The default keeps alternate catalog implementations backward compatible.
+    Task<bool> EnsureTrackedAsync(Guid weddingId, StoredWeddingImage image, CancellationToken ct) =>
+        ContainsAsync(weddingId, image.Key, ct);
     Task<UploadedWeddingMedia> AddAsync(Guid weddingId, StoredWeddingImage image, CancellationToken ct);
     Task<IReadOnlyList<UploadedWeddingMedia>> ListAsync(Guid weddingId, CancellationToken ct);
     Task<WeddingMediaDeleteResult> DeleteAsync(Guid weddingId, Guid mediaId,

@@ -15,6 +15,22 @@ public sealed class WeddingMediaCatalog(InviteMeDbContext db) : IWeddingMediaCat
         return Read(json).Any(x => x.StorageKey == storageKey && x.MediaType == "IMAGE");
     }
 
+    public async Task<bool> EnsureTrackedAsync(Guid weddingId, StoredWeddingImage image, CancellationToken ct)
+    {
+        // The caller holds the wedding lock and transaction so a concurrent media deletion
+        // cannot pass its reference check while this legacy media reference is repaired.
+        var settings = await db.WeddingSettings.SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
+        if (settings is null) return false;
+
+        var items = Read(settings.MediaCatalogJson);
+        if (items.Any(x => x.StorageKey == image.Key && x.MediaType == "IMAGE")) return true;
+
+        items.Insert(0, new MediaItem(Guid.NewGuid(), image.PublicUrl, image.Key, "IMAGE", DateTimeOffset.UtcNow));
+        settings.SetMediaCatalogJson(JsonSerializer.Serialize(items, Json));
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
+
     public async Task<UploadedWeddingMedia> AddAsync(Guid weddingId, StoredWeddingImage image, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
