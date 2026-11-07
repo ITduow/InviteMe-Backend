@@ -538,7 +538,7 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnName("status");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at")
                         .HasDefaultValueSql("NOW()");
@@ -2816,6 +2816,102 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Weddings.WeddingEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("Address")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("address");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("description");
+
+                    b.Property<DateTimeOffset?>("EndsAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ends_at");
+
+                    b.Property<string>("EventKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("event_key");
+
+                    b.Property<string>("MapUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("map_url");
+
+                    b.Property<int>("SortOrder")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("sort_order");
+
+                    b.Property<DateTimeOffset?>("StartsAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("starts_at");
+
+                    b.Property<string>("TimeZoneId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasDefaultValue("Asia/Ho_Chi_Minh")
+                        .HasColumnName("time_zone_id");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("title");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("VenueName")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("venue_name");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("wedding_events_pkey");
+
+                    b.HasIndex("WeddingId", "EventKey")
+                        .IsUnique()
+                        .HasDatabaseName("uq_wedding_events_key");
+
+                    b.HasIndex("WeddingId", "SortOrder", "StartsAt")
+                        .HasDatabaseName("ix_wedding_events_order");
+
+                    b.ToTable("wedding_events", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_wedding_events_dates", "ends_at IS NULL OR starts_at IS NULL OR ends_at >= starts_at");
+
+                            t.HasCheckConstraint("ck_wedding_events_sort_order", "sort_order >= 0");
+                        });
+                });
+
             modelBuilder.Entity("InviteMe.Domain.Weddings.WeddingMember", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4194,6 +4290,16 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_weddings_owner");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Weddings.WeddingEvent", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.Wedding", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_wedding_events_wedding");
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Weddings.WeddingMember", b =>

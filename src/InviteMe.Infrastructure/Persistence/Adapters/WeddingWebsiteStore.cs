@@ -118,7 +118,7 @@ public sealed class WeddingWebsiteStore(InviteMeDbContext db) : IWeddingWebsiteS
             join owner in db.Users on wedding.OwnerUserId equals owner.Id
             where wedding.Slug == slug && owner.Status == "ACTIVE" && (wedding.Status == "DRAFT" || wedding.Status == "PUBLISHED") &&
                 settings.WebsiteStatus == WebsitePublicationStatus.PUBLISHED
-            select new { wedding.Slug, wedding.CoverImageUrl, settings.MainEventAt, settings.Timezone, settings.VenueName,
+            select new { wedding.Id, wedding.Slug, wedding.CoverImageUrl, settings.MainEventAt, settings.Timezone, settings.VenueName,
                 settings.VenueAddress, settings.WebsitePublishedJson }).SingleOrDefaultAsync(ct);
         if (row?.WebsitePublishedJson is null) return null;
         var publicJson = JsonNode.Parse(row.WebsitePublishedJson)!.AsObject();
@@ -126,6 +126,12 @@ public sealed class WeddingWebsiteStore(InviteMeDbContext db) : IWeddingWebsiteS
         {
             StoryBuilderV4Contract.ResolveBindings(publicJson,
                 new WebsiteBindingData(row.CoverImageUrl, row.MainEventAt, row.Timezone, row.VenueName, row.VenueAddress), "dynamic");
+            var events = await db.WeddingEvents.AsNoTracking().Where(x => x.WeddingId == row.Id)
+                .OrderBy(x => x.SortOrder).ThenBy(x => x.StartsAt).Select(x => new WeddingEventDto(x.EventKey, x.Title,
+                    x.Description, x.StartsAt, x.EndsAt, x.TimeZoneId, x.VenueName, x.Address, x.MapUrl, x.SortOrder)).ToListAsync(ct);
+            var mainEvent = new WeddingEventDto("main", "Lễ cưới", null, row.MainEventAt, null, row.Timezone,
+                row.VenueName, row.VenueAddress, null, 0);
+            StoryBuilderV4Contract.ResolveEventReferences(publicJson, [mainEvent, .. events]);
             publicJson = StoryBuilderV4Contract.PublicProjection(publicJson);
         }
         else publicJson.Remove("sourceDraft");

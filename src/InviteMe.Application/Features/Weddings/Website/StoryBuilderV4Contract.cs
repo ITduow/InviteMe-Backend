@@ -25,7 +25,7 @@ public static class StoryBuilderV4Contract
         ["couple"] = ["alternating", "two-columns", "editorial"],
         ["countdown"] = ["classic", "banner", "inline"],
         ["loveStory"] = ["timeline", "editorial"],
-        ["events"] = ["cards", "minimal"],
+        ["events"] = ["cards", "minimal"], ["weddingParty"] = ["classic", "editorial"],
         ["gallery"] = ["grid", "masonry"],
         ["rsvp"] = ["default"], ["wishes"] = ["default"], ["gift"] = ["default", "minimal"]
     };
@@ -133,7 +133,13 @@ public static class StoryBuilderV4Contract
                             foreach (var listName in new[] { "images", "items" })
                                 if (Field(content, listName, out var list) && list.ValueKind == JsonValueKind.Array)
                                     foreach (var item in list.EnumerateArray()) Add(item, "imageUrl", GetText(item, "id") ?? listName);
-                            foreach (var role in new[] { "groom", "bride" }) if (Field(content, role, out var person)) Add(person, "photoUrl", role);
+                            foreach (var role in new[] { "groom", "bride" })
+                                if (Field(content, role, out var person))
+                                {
+                                    if (person.ValueKind == JsonValueKind.Object) Add(person, "photoUrl", role);
+                                    else if (person.ValueKind == JsonValueKind.Array)
+                                        foreach (var member in person.EnumerateArray()) Add(member, "photoUrl", GetText(member, "id") ?? role);
+                                }
                         }
         return refs;
     }
@@ -217,6 +223,23 @@ public static class StoryBuilderV4Contract
         return result;
     }
 
+    public static void ResolveEventReferences(JsonObject document, IReadOnlyCollection<WeddingEventDto> events)
+    {
+        if (document["pages"] is not JsonArray pages) return;
+        var byId = events.ToDictionary(x => x.Id, StringComparer.Ordinal);
+        foreach (var page in pages.OfType<JsonObject>())
+        foreach (var section in (page["sections"] as JsonArray ?? []).OfType<JsonObject>())
+        {
+            if (section["type"]?.GetValue<string>() != "events" || section["content"] is not JsonObject content ||
+                content["eventIds"] is not JsonArray ids) continue;
+            var resolved = new JsonArray();
+            foreach (var id in ids.Select(x => x?.GetValue<string>()).Where(x => x is not null))
+                if (byId.TryGetValue(id!, out var value))
+                    resolved.Add(JsonSerializer.SerializeToNode(value, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            content["events"] = resolved;
+        }
+    }
+
     private static bool ValidSharedContent(JsonElement content)
     {
         if (!OnlyFields(content, ContentFields)) return false;
@@ -263,11 +286,12 @@ public static class StoryBuilderV4Contract
         var common = new[] { "title", "intro" };
         var fields = type switch
         {
-            "hero" => common.Concat(["eyebrow", "subtitle", "imageUrl", "slides"]).ToArray(),
+            "hero" => common.Concat(["eyebrow", "subtitle", "ctaLabel", "imageUrl", "slides"]).ToArray(),
             "couple" => common.Concat(["groom", "bride"]).ToArray(),
             "countdown" => common.Concat(["targetDate", "targetEventId"]).ToArray(),
             "loveStory" => common.Concat(["items"]).ToArray(),
-            "events" => common.Concat(["events"]).ToArray(),
+            "events" => common.Concat(["events", "eventIds"]).ToArray(),
+            "weddingParty" => common.Concat(["groom", "bride"]).ToArray(),
             "gallery" => common.Concat(["images"]).ToArray(),
             "rsvp" => common.Concat(["submitLabel"]).ToArray(),
             "wishes" => common,
@@ -276,13 +300,19 @@ public static class StoryBuilderV4Contract
         };
         if (!OnlyFields(content, fields)) return false;
         if (!OptionalText(content, "title", 150) || !OptionalText(content, "intro", type == "couple" ? 1000 : 500) ||
-            !OptionalText(content, "eyebrow", 120) || !OptionalText(content, "subtitle", 500) || !OptionalText(content, "submitLabel", 60) ||
+            !OptionalText(content, "eyebrow", 120) || !OptionalText(content, "subtitle", 500) || !OptionalText(content, "ctaLabel", 60) || !OptionalText(content, "submitLabel", 60) ||
             !OptionalText(content, "targetEventId", 100) || !OptionalDate(content, "targetDate") || !OptionalImage(content, "imageUrl")) return false;
         if (Field(content, "slides", out var slides) && (slides.ValueKind != JsonValueKind.Array || slides.GetArrayLength() > 3 || slides.EnumerateArray().Any(x => !ValidImageItem(x)))) return false;
         if (Field(content, "images", out var images) && (images.ValueKind != JsonValueKind.Array || images.GetArrayLength() > 30 || images.EnumerateArray().Any(x => !ValidImageItem(x)))) return false;
         if (Field(content, "items", out var items) && (items.ValueKind != JsonValueKind.Array || items.GetArrayLength() > 20 || items.EnumerateArray().Any(x => !ValidStoryItem(x)))) return false;
         if (Field(content, "events", out var events) && (events.ValueKind != JsonValueKind.Array || events.GetArrayLength() > 20 || events.EnumerateArray().Any(x => !ValidEvent(x)))) return false;
-        foreach (var person in new[] { "groom", "bride" })
+        if (Field(content, "eventIds", out var eventIds) && (eventIds.ValueKind != JsonValueKind.Array || eventIds.GetArrayLength() > 20 ||
+            eventIds.EnumerateArray().Any(x => x.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(x.GetString()) || x.GetString()!.Length > 100) ||
+            eventIds.EnumerateArray().Select(x => x.GetString()).Distinct(StringComparer.Ordinal).Count() != eventIds.GetArrayLength())) return false;
+        foreach (var party in new[] { "groom", "bride" })
+            if (Field(content, party, out var members) && (members.ValueKind != JsonValueKind.Array || members.GetArrayLength() > 12 ||
+                members.EnumerateArray().Any(x => !ValidWeddingPartyMember(x)))) return false;
+        if (type == "couple") foreach (var person in new[] { "groom", "bride" })
             if (Field(content, person, out var overrideData) && (!OnlyFields(overrideData, ["displayName", "fullName", "photoUrl", "bio", "fatherName", "motherName"]) ||
                 !OptionalText(overrideData, "displayName", 50) || !OptionalText(overrideData, "fullName", 100) || !OptionalImage(overrideData, "photoUrl") ||
                 !OptionalText(overrideData, "bio", 2000) || !OptionalText(overrideData, "fatherName", 100) || !OptionalText(overrideData, "motherName", 100))) return false;
@@ -292,7 +322,7 @@ public static class StoryBuilderV4Contract
     private static bool ValidStyle(JsonElement style) => style.ValueKind == JsonValueKind.Object && OnlyFields(style, ["background", "spacing", "animation"]) &&
         (!Field(style, "background", out var bg) || bg.ValueKind == JsonValueKind.String && bg.GetString() is "default" or "soft" or "accent") &&
         (!Field(style, "spacing", out var spacing) || spacing.ValueKind == JsonValueKind.String && spacing.GetString() is "compact" or "normal" or "spacious") &&
-        (!Field(style, "animation", out var animation) || animation.ValueKind == JsonValueKind.String && animation.GetString() is "none" or "fade");
+        (!Field(style, "animation", out var animation) || animation.ValueKind == JsonValueKind.String && animation.GetString() is "none" or "fade" or "rise" or "stagger");
 
     private static bool ValidSeo(JsonElement seo) => seo.ValueKind == JsonValueKind.Object && OnlyFields(seo, ["title", "description", "imageUrl"]) &&
         OptionalText(seo, "title", 70) && OptionalText(seo, "description", 200) && OptionalImage(seo, "imageUrl");
@@ -320,10 +350,15 @@ public static class StoryBuilderV4Contract
         });
     }
 
-    private static bool ValidEvent(JsonElement value) => value.ValueKind == JsonValueKind.Object && OnlyFields(value, ["id", "title", "startsAt", "timeZoneId", "venueName", "address", "mapUrl"]) &&
-        Text(value, "id", 100, true) && Text(value, "title", 150, true) && OptionalDate(value, "startsAt") &&
+    private static bool ValidEvent(JsonElement value) => value.ValueKind == JsonValueKind.Object && OnlyFields(value, ["id", "title", "description", "startsAt", "endsAt", "sortOrder", "timeZoneId", "venueName", "address", "mapUrl"]) &&
+        Text(value, "id", 100, true) && Text(value, "title", 150, true) && OptionalText(value, "description", 1000) && OptionalDate(value, "startsAt") && OptionalDate(value, "endsAt") &&
+        (!Field(value, "sortOrder", out var order) || order.ValueKind == JsonValueKind.Number && order.TryGetInt32(out var orderValue) && orderValue >= 0) &&
         OptionalText(value, "timeZoneId", 100) && OptionalText(value, "venueName", 150) && OptionalText(value, "address", 300) &&
         OptionalHttps(value, "mapUrl");
+
+    private static bool ValidWeddingPartyMember(JsonElement value) => value.ValueKind == JsonValueKind.Object &&
+        OnlyFields(value, ["id", "name", "role", "bio", "photoUrl"]) && Text(value, "id", 100, true) &&
+        Text(value, "name", 100, true) && OptionalText(value, "role", 100) && OptionalText(value, "bio", 1000) && OptionalImage(value, "photoUrl");
 
     private static bool ValidStoryItem(JsonElement value) => value.ValueKind == JsonValueKind.Object && OnlyFields(value, ["id", "title", "date", "body", "imageUrl"]) &&
         Text(value, "id", 100, true) && Text(value, "title", 150, true) && OptionalText(value, "date", 50) && OptionalText(value, "body", 3000) && OptionalImage(value, "imageUrl");

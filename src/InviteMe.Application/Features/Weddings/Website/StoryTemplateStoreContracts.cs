@@ -8,6 +8,7 @@ public interface IStoryTemplateStore
     Task<StoryTemplateDto> SaveDraftAsync(Guid id, SaveStoryTemplateDraft input, Guid actor, CancellationToken ct);
     Task<StoryTemplateDto> PublishAsync(Guid id, int expectedVersion, Guid actor, CancellationToken ct);
     Task<StoryTemplateDto> ArchiveAsync(Guid id, int expectedVersion, bool archived, Guid actor, CancellationToken ct);
+    Task DeleteAsync(Guid id, int expectedVersion, Guid actor, CancellationToken ct);
     Task<IReadOnlyList<PublicStoryTemplateDto>> ListPublicAsync(CancellationToken ct);
     Task<PublicStoryTemplateDto?> GetPublicAsync(string key, CancellationToken ct);
     Task<PublicStoryTemplateDto?> GetPublishedForStoryAsync(string key, CancellationToken ct);

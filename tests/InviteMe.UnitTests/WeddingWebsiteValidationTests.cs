@@ -164,6 +164,7 @@ public sealed class WeddingWebsiteValidationTests
         public Task<StoryTemplateDto> SaveDraftAsync(Guid id, SaveStoryTemplateDraft input, Guid actor, CancellationToken ct) => throw new NotImplementedException();
         public Task<StoryTemplateDto> PublishAsync(Guid id, int expectedVersion, Guid actor, CancellationToken ct) => throw new NotImplementedException();
         public Task<StoryTemplateDto> ArchiveAsync(Guid id, int expectedVersion, bool archived, Guid actor, CancellationToken ct) => throw new NotImplementedException();
+        public Task DeleteAsync(Guid id, int expectedVersion, Guid actor, CancellationToken ct) => throw new NotImplementedException();
         public Task<IReadOnlyList<PublicStoryTemplateDto>> ListPublicAsync(CancellationToken ct) => throw new NotImplementedException();
         public Task<PublicStoryTemplateDto?> GetPublicAsync(string key, CancellationToken ct) => throw new NotImplementedException();
         public Task<PublicStoryTemplateDto?> GetPublishedForStoryAsync(string key, CancellationToken ct) => throw new NotImplementedException();
