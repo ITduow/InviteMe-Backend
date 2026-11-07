@@ -133,6 +133,7 @@ public sealed class SeatingDragHubTests
     }
     private sealed class Plan : IPlanningSeatingStore
     {
+        public Task<PlanningSeatingDto> GenerateAsync(Guid wedding, GenerateSeating input, CancellationToken ct) => throw new NotSupportedException();
         public int Reads;
         public Guid Wedding = Guid.NewGuid(); public Guid Place = Guid.NewGuid(); public Guid OtherPlace = Guid.NewGuid();
         public Task<PlanningSeatingDto> GetAsync(Guid wedding, CancellationToken ct) => GetScopedAsync(wedding, ct, null);

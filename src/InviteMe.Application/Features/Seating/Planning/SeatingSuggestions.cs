@@ -31,7 +31,7 @@ public static class SeatingSuggestions
     public static string Fingerprint(PlanningSeatingDto source)
     {
         // Import does not change seating version. Include all inputs to detect new guests/statuses as well.
-        var canonical = new { source.WeddingId, source.Version,
+        var canonical = new { source.WeddingId, source.Version, source.BrideTablesPerRow, source.GroomTablesPerRow,
             Tables = source.Tables.OrderBy(x => x.Id), Guests = source.Guests.OrderBy(x => x.Id),
             Places = source.Places.OrderBy(x => x.Id), Assignments = source.Assignments.OrderBy(x => x.PlaceId) };
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(canonical))));
@@ -75,7 +75,7 @@ public static class SeatingSuggestions
                 var sides = occupied.Select(a => guests[places[a.PlaceId].GuestId].Side).Distinct().ToArray();
                 var sameGroup = occupied.Any(a => GroupKey(guests[places[a.PlaceId].GuestId]) == GroupKey(party.Guest));
                 return new { Table = t, Free = t.Capacity - occupied.Length,
-                    Compatible = sides.Length == 0 || (sides.Length == 1 && sides[0] == party.Guest.Side), SameGroup = sameGroup };
+                    Compatible = (t.Side == null || t.Side == party.Guest.Side) && (sides.Length == 0 || (sides.Length == 1 && sides[0] == party.Guest.Side)), SameGroup = sameGroup };
             }).ToArray();
             var fits = candidates.Where(t => t.Compatible && t.Free >= party.Pending.Length &&
                 (pinnedTables.Length == 0 || t.Table.Id == pinnedTables[0])).ToArray();

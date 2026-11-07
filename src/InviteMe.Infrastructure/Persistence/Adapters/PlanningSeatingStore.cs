@@ -9,7 +9,7 @@ using static InviteMe.Infrastructure.Persistence.Adapters.PlanningPersistence;
 
 namespace InviteMe.Infrastructure.Persistence.Adapters;
 
-public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLeaseService leases, ICurrentUser user) : IPlanningSeatingStore
+public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLeaseService leases, ICurrentUser user, InviteMe.Application.Features.Billing.IWeddingEntitlements entitlements) : IPlanningSeatingStore
 {
     public Task<PlanningSeatingDto> GetAsync(Guid weddingId, CancellationToken ct) => GetScopedAsync(weddingId, ct, null);
     public async Task<PlanningSeatingDto> GetScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope)
@@ -36,6 +36,14 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         var allTablesQuery = db.Set<PlanningTable>().Where(x => x.WeddingId == weddingId);
         var tables = await (scopeIds is null ? allTablesQuery : allTablesQuery.Where(x => x.Group != null && scopeIds.Contains(x.Group.Value))).ToListAsync(ct);
         var table = input.TableId is { } id ? tables.SingleOrDefault(x => x.Id == id) ?? throw Missing("TABLE_NOT_FOUND") : null;
+        if (scopeIds is not null && input.Side is not null) throw Rule("SEATING_LAYOUT_REQUIRES_WEDDING_SCOPE", "Layout requires wedding-wide access.");
+        if (input.Side is not null && table is not null)
+        {
+            var width = input.Side == "BRIDE" ? plan.BrideTablesPerRow : plan.GroomTablesPerRow;
+            if (input.Column > width || tables.Any(t => t.Id != table.Id && t.Side == input.Side && t.Row == input.Row && t.Column == input.Column)) throw Rule("INVALID_TABLE_SLOT", "Slot unavailable.");
+            if (await (from a in db.Set<PlanningSeatAssignment>() join p in db.Set<PlanningPlace>() on a.PlaceId equals p.Id join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id where a.TableId == table.Id && g.Side != input.Side select a.PlaceId).AnyAsync(ct)) throw Rule("SEATING_SIDE_CONFLICT", "Existing guests must match side.");
+            table.Side = input.Side; table.Row = input.Row; table.Column = input.Column;
+        }
         if (input.Action == "UPDATE_TABLE" && table is not null && scopeIds is not null && input.Group is not null && input.Group != table.Group)
             throw Rule("TABLE_GROUP_IMMUTABLE", "Co-host không thể chuyển bàn sang nhóm khác.");
         if (scopeIds is not null && table is not null)
@@ -73,6 +81,33 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
             db.RemoveRange(old);
             await db.SaveChangesAsync(ct);
             db.AddRange(suggestion.Assignments.Select(a => new PlanningSeatAssignment { PlaceId = a.PlaceId, TableId = a.TableId, SeatNumber = a.SeatNumber }));
+        }
+        else if (input.Action == "MOVE_TABLE_SLOT")
+        {
+            if (table!.Side is null || table.Row is null || table.Column is null) throw Rule("TABLE_LAYOUT_REQUIRED", "Assign legacy table layout first.");
+            var width = table.Side == "BRIDE" ? plan.BrideTablesPerRow : plan.GroomTablesPerRow;
+            if (input.TargetColumn > width || input.TargetColumn is null || input.TargetRow is null || input.TargetRow < 1)
+                throw Rule("INVALID_TABLE_SLOT", "Slot outside layout.");
+            var other = tables.SingleOrDefault(t => t.Side == table.Side && t.Row == input.TargetRow && t.Column == input.TargetColumn);
+            var row = table.Row; var column = table.Column; var sourceSide = table.Side;
+            table.Side = null; table.Row = null; table.Column = null;
+            await db.SaveChangesAsync(ct);
+            if (other is not null && other.Id != table.Id) { other.Row = row; other.Column = column; await db.SaveChangesAsync(ct); }
+            table.Side = other?.Side ?? sourceSide; table.Row = input.TargetRow; table.Column = input.TargetColumn;
+        }
+        else if (input.Action == "UPDATE_LAYOUT")
+        {
+            var originalSides = tables.ToDictionary(t => t.Id, t => t.Side);
+            foreach (var t in tables) { t.Side = null; t.Row = null; t.Column = null; }
+            await db.SaveChangesAsync(ct);
+            plan.BrideTablesPerRow = input.BrideTablesPerRow!.Value;
+            plan.GroomTablesPerRow = input.GroomTablesPerRow!.Value;
+            foreach (var side in new[] { "BRIDE", "GROOM" })
+            {
+                var width = side == "BRIDE" ? plan.BrideTablesPerRow : plan.GroomTablesPerRow;
+                var sorted = tables.Where(t => originalSides[t.Id] == side).OrderBy(t => t.Name).ThenBy(t => t.Id).ToArray();
+                for (var i = 0; i < sorted.Length; i++) { sorted[i].Side = side; sorted[i].Row = i / width + 1; sorted[i].Column = i % width + 1; }
+            }
         }
         else if (input.Action == "CREATE_TABLES")
         {
@@ -115,6 +150,8 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
                 if (destinationGroup is null || sourceGroups.Any(x => x != destinationGroup))
                     throw Rule("SEATING_CROSS_GROUP_MOVE_DENIED", "Không thể xếp khách của nhóm khác vào khu vực này.");
             }
+            if (table?.Side is not null && await (from p in db.Set<PlanningPlace>() join g in db.Set<PlanningGuest>() on p.GuestId equals g.Id where ids.Contains(p.Id) && g.Side != table.Side select p.Id).AnyAsync(ct))
+                throw Rule("SEATING_SIDE_CONFLICT", "Guest side must match table side.");
             var old = await db.Set<PlanningSeatAssignment>().Where(x => ids.Contains(x.PlaceId)).ToListAsync(ct);
             var free = new List<int>();
             if (table is not null)
@@ -141,6 +178,29 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         return result;
     }
 
+    public async Task<PlanningSeatingDto> GenerateAsync(Guid weddingId, GenerateSeating input, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await LockWedding(db, weddingId, ct);
+        var source = await Snapshot(weddingId, ct);
+        if (input.AlgorithmVersion != SeatingPlanner.AlgorithmVersion || !string.Equals(input.SourceFingerprint, SeatingSuggestions.Fingerprint(source), StringComparison.OrdinalIgnoreCase))
+            throw Conflict("SEATING_SOURCE_CHANGED");
+        var proposal = SeatingPlanner.Generate(source, input);
+        await entitlements.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.SeatingTables, proposal.Tables.Count, ct);
+        var plan = await db.Set<PlanningSeatingPlan>().SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
+        if (plan is null) { plan = new() { WeddingId = weddingId }; db.Add(plan); }
+        var rows = input.TablesPerRow ?? new();
+        plan.BrideTablesPerRow = rows.Bride; plan.GroomTablesPerRow = rows.Groom; plan.Version++;
+        var ids = proposal.Tables.ToDictionary(t => t.Code, _ => Guid.NewGuid());
+        db.AddRange(proposal.Tables.Select(t => new PlanningTable { Id = ids[t.Code], WeddingId = weddingId,
+            Name = t.Code, Capacity = t.Capacity, Group = t.Group, Side = t.Side, Row = t.Row, Column = t.Column }));
+        db.AddRange(proposal.Assignments.Select(a => new PlanningSeatAssignment { PlaceId = a.PlaceId, TableId = ids[a.TableCode], SeatNumber = a.SeatNumber }));
+        await db.SaveChangesAsync(ct);
+        var result = await Snapshot(weddingId, ct);
+        await tx.CommitAsync(ct);
+        return result;
+    }
+
     private async Task<PlanningSeatingDto> Snapshot(Guid weddingId, CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope = null)
     {
         var scopeIds = groupScope?.ToArray();
@@ -148,7 +208,7 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         var tablesQuery = db.Set<PlanningTable>().AsNoTracking().Where(x => x.WeddingId == weddingId);
         if (scopeIds is not null) tablesQuery = tablesQuery.Where(x => x.Group != null && scopeIds.Contains(x.Group.Value));
         var tables = await tablesQuery.OrderBy(x => x.Name).ThenBy(x => x.Id)
-            .Select(x => new PlanningTableDto(x.Id, x.Name, x.Capacity, x.Group)).ToListAsync(ct);
+            .Select(x => new PlanningTableDto(x.Id, x.Name, x.Capacity, x.Group, x.Side, x.Row, x.Column)).ToListAsync(ct);
         var guestQuery = db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null);
         if (scopeIds is not null) guestQuery = guestQuery.Where(x => x.Group != null && scopeIds.Contains(x.Group.Value));
         var guests = await guestQuery.OrderBy(g => g.RecipientName).ThenBy(g => g.Id)
@@ -162,6 +222,7 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         var assignments = await (from a in db.Set<PlanningSeatAssignment>().AsNoTracking()
             join t in db.Set<PlanningTable>() on a.TableId equals t.Id where t.WeddingId == weddingId && (scopeIds == null || t.Group != null && scopeIds.Contains(t.Group.Value))
             select new PlanningAssignmentDto(a.PlaceId, a.TableId, a.SeatNumber)).ToListAsync(ct);
-        return new(weddingId, version, tables, guests, places, assignments);
+        var layout = await db.Set<PlanningSeatingPlan>().AsNoTracking().SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
+        return new(weddingId, version, tables, guests, places, assignments, layout?.BrideTablesPerRow ?? 2, layout?.GroomTablesPerRow ?? 2);
     }
 }
