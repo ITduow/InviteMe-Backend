@@ -33,6 +33,11 @@ internal static class WeddingWebsiteEndpoints
         admin.MapPost("/{id:guid}/unarchive", (Guid id, StoryTemplateVersion input, IStoryTemplateStore store, ICurrentUser current, CancellationToken ct) =>
             store.ArchiveAsync(id, input.ExpectedVersion, false, Actor(current), ct))
             .RequireAuthorization(AdminPolicyNames.TemplatesManage).WithName("UnarchiveAdminStoryTemplate");
+        admin.MapDelete("/{id:guid}", async (Guid id, int expectedVersion, IStoryTemplateStore store, ICurrentUser current, CancellationToken ct) =>
+        {
+            await store.DeleteAsync(id, expectedVersion, Actor(current), ct);
+            return Results.NoContent();
+        }).RequireAuthorization(AdminPolicyNames.TemplatesManage).WithName("DeleteAdminStoryTemplate");
         endpoints.MapGet("/api/story-templates", (IStoryTemplateStore store, CancellationToken ct) => store.ListPublicAsync(ct))
             .AllowAnonymous().WithTags("Wedding Story Templates");
         endpoints.MapGet("/api/story-templates/{key}", async (string key, IStoryTemplateStore store, CancellationToken ct) =>
@@ -47,6 +52,16 @@ internal static class WeddingWebsiteEndpoints
         group.MapPut("", (Guid weddingId, SaveWebsite input, WeddingWebsiteHandler handler, CancellationToken ct) => handler.SaveAsync(weddingId, input, ct));
         group.MapPost("/publish", (Guid weddingId, WebsiteVersion input, WeddingWebsiteHandler handler, CancellationToken ct) => handler.PublishAsync(weddingId, input.ExpectedVersion, ct));
         group.MapPost("/unpublish", (Guid weddingId, WebsiteVersion input, WeddingWebsiteHandler handler, CancellationToken ct) => handler.UnpublishAsync(weddingId, input.ExpectedVersion, ct));
+        var events = endpoints.MapGroup("/api/weddings/{weddingId:guid}/events").RequireAuthorization().WithTags("Wedding Events");
+        events.MapGet("", (Guid weddingId, WeddingEventHandler handler, CancellationToken ct) => handler.ListAsync(weddingId, ct))
+            .WithName("ListWeddingEvents");
+        events.MapPost("", async (Guid weddingId, SaveWeddingEvent input, WeddingEventHandler handler, CancellationToken ct) =>
+            Results.Json(await handler.CreateAsync(weddingId, input, ct), statusCode: StatusCodes.Status201Created))
+            .WithName("CreateWeddingEvent");
+        events.MapPut("/{eventKey}", (Guid weddingId, string eventKey, SaveWeddingEvent input, WeddingEventHandler handler, CancellationToken ct) =>
+            handler.UpdateAsync(weddingId, eventKey, input, ct)).WithName("UpdateWeddingEvent");
+        events.MapDelete("/{eventKey}", async (Guid weddingId, string eventKey, WeddingEventHandler handler, CancellationToken ct) =>
+        { await handler.DeleteAsync(weddingId, eventKey, ct); return Results.NoContent(); }).WithName("DeleteWeddingEvent");
         endpoints.MapGet("/api/public/weddings/{slug}", async (string slug, WeddingWebsiteHandler handler, HttpContext http, CancellationToken ct) =>
         {
             var website = await handler.PublicAsync(slug, ct);

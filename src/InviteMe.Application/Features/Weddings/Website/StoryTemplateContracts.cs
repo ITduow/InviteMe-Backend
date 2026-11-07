@@ -30,7 +30,7 @@ public static class StoryTemplateContract
     {
         ["hero"] = ["floral", "dark", "split", "editorial", "ceremonial"], ["couple"] = ["alternating", "two-columns", "editorial"],
         ["countdown"] = ["classic", "banner", "inline"], ["loveStory"] = ["timeline", "editorial"],
-        ["events"] = ["cards", "minimal"], ["gallery"] = ["grid", "masonry"], ["rsvp"] = ["default"],
+        ["events"] = ["cards", "minimal"], ["weddingParty"] = ["classic", "editorial"], ["gallery"] = ["grid", "masonry"], ["rsvp"] = ["default"],
         ["wishes"] = ["default"], ["gift"] = ["default", "minimal"]
     };
     private static readonly HashSet<string> Fonts =
@@ -73,7 +73,7 @@ public static class StoryTemplateContract
         {
             "hero" => new[] { "title", "eyebrow", "subtitle" },
             "rsvp" => new[] { "title", "intro", "submitLabel" },
-            "couple" or "countdown" or "loveStory" or "events" or "gallery" or "wishes" or "gift" => new[] { "title", "intro" },
+            "couple" or "countdown" or "loveStory" or "events" or "weddingParty" or "gallery" or "wishes" or "gift" => new[] { "title", "intro" },
             _ => []
         };
         return OnlyFields(content, fields) && OptionalText(content, "title", 150) &&
@@ -85,7 +85,7 @@ public static class StoryTemplateContract
     private static bool ValidStyle(StorySectionStyle? style) => style is null ||
         (style.Background is null or "default" or "soft" or "accent") &&
         (style.Spacing is null or "compact" or "normal" or "spacious") &&
-        (style.Animation is null or "none" or "fade");
+        (style.Animation is null or "none" or "fade" or "rise" or "stagger");
 
     private static bool OnlyFields(JsonElement obj, IEnumerable<string> fields) => obj.ValueKind == JsonValueKind.Object &&
         obj.EnumerateObject().All(property => fields.Contains(property.Name, StringComparer.Ordinal));

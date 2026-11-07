@@ -1,6 +1,7 @@
 using System.Text.Json;
 using InviteMe.Application.Common.Errors;
 using InviteMe.Application.Features.Weddings.Website;
+using InviteMe.Domain.Audit;
 using InviteMe.Domain.Weddings;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -67,6 +68,19 @@ public sealed class StoryTemplateStore(InviteMeDbContext db, TimeProvider clock)
         row.SetArchived(archived, actor, clock.GetUtcNow());
         await Save(ct);
         return Dto(row);
+    }
+
+    public async Task DeleteAsync(Guid id, int expectedVersion, Guid actor, CancellationToken ct)
+    {
+        var row = await Find(id, expectedVersion, ct);
+        if (!row.IsArchived && row.PublishedConfigJson is not null)
+            throw new ApplicationProblemException(ProblemKind.Conflict, "STORY_TEMPLATE_MUST_BE_ARCHIVED",
+                "Archive a published template before permanently deleting it.");
+
+        db.AuditLogs.Add(AuditLog.ForPlatform(actor, "story_templates", row.Id, "STORY_TEMPLATE_PERMANENTLY_DELETED",
+            JsonSerializer.Serialize(new { row.Key, row.Name, row.IsArchived, row.PublishedVersion })));
+        db.StoryTemplates.Remove(row);
+        await Save(ct);
     }
 
     public async Task<IReadOnlyList<PublicStoryTemplateDto>> ListPublicAsync(CancellationToken ct) =>
