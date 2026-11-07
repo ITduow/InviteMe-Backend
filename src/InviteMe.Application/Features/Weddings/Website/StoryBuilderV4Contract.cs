@@ -319,7 +319,7 @@ public static class StoryBuilderV4Contract
         if (Field(content, "eventIds", out var eventIds) && (eventIds.ValueKind != JsonValueKind.Array || eventIds.GetArrayLength() > 20 ||
             eventIds.EnumerateArray().Any(x => x.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(x.GetString()) || x.GetString()!.Length > 100) ||
             eventIds.EnumerateArray().Select(x => x.GetString()).Distinct(StringComparer.Ordinal).Count() != eventIds.GetArrayLength())) return false;
-        foreach (var party in new[] { "groom", "bride" })
+        if (type == "weddingParty") foreach (var party in new[] { "groom", "bride" })
             if (Field(content, party, out var members) && (members.ValueKind != JsonValueKind.Array || members.GetArrayLength() > 12 ||
                 members.EnumerateArray().Any(x => !ValidWeddingPartyMember(x)))) return false;
         if (type == "couple") foreach (var person in new[] { "groom", "bride" })
