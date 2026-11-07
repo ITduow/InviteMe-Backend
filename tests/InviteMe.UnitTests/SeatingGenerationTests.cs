@@ -16,6 +16,7 @@ public sealed class SeatingGenerationTests
     [InlineData(new int[] { 8 }, 1)]
     [InlineData(new int[] { 6, 4, 6, 4 }, 2)]
     [InlineData(new int[] { 7, 7, 6 }, 3)]
+    [InlineData(new int[] { 6, 5, 3, 2, 2, 2 }, 2)]
     public void PacksWholePartiesAndProvesMinimum(int[] sizes, int expected)
     {
         var source = Source(sizes.Select((s,i) => (s, i % 2 == 0 ? PlanningGroupKind.FRIENDS : PlanningGroupKind.RELATIVES)).ToArray());
@@ -25,7 +26,9 @@ public sealed class SeatingGenerationTests
         Assert.Equal(source.Places.Select(p => p.Id).Order(), result.Assignments.Select(a => a.PlaceId).Order());
         Assert.All(result.Assignments.GroupBy(a => a.TableCode), g => Assert.InRange(g.Count(), 1, 10));
         Assert.All(source.Places.GroupBy(p => p.GuestId), g => Assert.Single(result.Assignments.Where(a => g.Any(p => p.Id == a.PlaceId)).Select(a => a.TableCode).Distinct()));
-        Assert.Equal(result, SeatingPlanner.Generate(source, new(0)) with { Tables = result.Tables, Assignments = result.Assignments, Warnings = result.Warnings });
+        var repeated = SeatingPlanner.Generate(source, new(0));
+        Assert.Equal(result.Assignments, repeated.Assignments);
+        Assert.Equal(result.Tables.Select(t => (t.Code,t.Side,t.Row,t.Column,t.Group)), repeated.Tables.Select(t => (t.Code,t.Side,t.Row,t.Column,t.Group)));
     }
     [Fact]
     public void TwentySixPlacesPreferThreePureGroups()
@@ -46,6 +49,16 @@ public sealed class SeatingGenerationTests
         Assert.Throws<ApplicationProblemException>(()=>SeatingPlanner.Generate(source with { Guests = [source.Guests[0] with { Side="MUTUAL" }] },new(0)));
         Assert.Throws<ApplicationProblemException>(()=>SeatingPlanner.Generate(Source((13,PlanningGroupKind.OTHER)),new(0,12)));
         Assert.Throws<ApplicationProblemException>(()=>SeatingPlanner.Generate(source with { Tables=[new(Guid.NewGuid(),"Old",10)] },new(0)));
+    }
+    [Fact]
+    public void OppositeSidesNeverShareTablesAndOtherDoesNotBecomeKnownAffinity()
+    {
+        var source = Source((4,PlanningGroupKind.OTHER),(4,PlanningGroupKind.OTHER));
+        source = source with { Guests = [source.Guests[0], source.Guests[1] with { Side="BRIDE" }] };
+        var result = SeatingPlanner.Generate(source,new(0));
+        Assert.Equal(2,result.Tables.Count);
+        Assert.Equal(new[]{"BRIDE","GROOM"},result.Tables.Select(t=>t.Side));
+        Assert.Equal(8,result.Assignments.Count);
     }
     [Fact]
     public void SearchExhaustionStillReturnsCompleteFeasiblePlan()

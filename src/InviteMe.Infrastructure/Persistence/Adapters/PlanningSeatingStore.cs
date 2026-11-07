@@ -182,6 +182,7 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await LockWedding(db, weddingId, ct);
+        using var write = leases.BeginWrite(weddingId, user.UserId ?? throw new InvalidOperationException("Authenticated user required."), null, null, null);
         var source = await Snapshot(weddingId, ct);
         if (input.AlgorithmVersion != SeatingPlanner.AlgorithmVersion || !string.Equals(input.SourceFingerprint, SeatingSuggestions.Fingerprint(source), StringComparison.OrdinalIgnoreCase))
             throw Conflict("SEATING_SOURCE_CHANGED");

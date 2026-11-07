@@ -25,6 +25,7 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.Sql("UPDATE inviteme.planning_tables SET \"Group\" = 'OTHER' WHERE \"Group\" IS NULL");
             migrationBuilder.AlterColumn<string>(
                 name: "Group",
                 schema: "inviteme",
@@ -32,7 +33,7 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                 type: "character varying(16)",
                 maxLength: 16,
                 nullable: false,
-                defaultValue: "",
+                defaultValue: "OTHER",
                 oldClrType: typeof(string),
                 oldType: "character varying(16)",
                 oldMaxLength: 16,

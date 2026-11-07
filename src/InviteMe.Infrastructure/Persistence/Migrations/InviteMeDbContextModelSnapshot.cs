@@ -2545,7 +2545,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.HasKey("WeddingId");
 
-                    b.ToTable("planning_seating_plans", "inviteme");
+                    b.ToTable("planning_seating_plans", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_seating_layout_width", "\"BrideTablesPerRow\" BETWEEN 1 AND 4 AND \"GroomTablesPerRow\" BETWEEN 1 AND 4");
+                        });
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Seating.PlanningTable", b =>
@@ -2591,6 +2594,8 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.ToTable("planning_tables", "inviteme", t =>
                         {
                             t.HasCheckConstraint("ck_planning_table_capacity", "\"Capacity\" BETWEEN 1 AND 20");
+
+                            t.HasCheckConstraint("ck_planning_table_slot", "(\"Side\" IS NULL AND \"Row\" IS NULL AND \"Column\" IS NULL) OR (\"Side\" IS NOT NULL AND \"Side\" IN ('BRIDE','GROOM') AND \"Row\" IS NOT NULL AND \"Row\" > 0 AND \"Column\" IS NOT NULL AND \"Column\" BETWEEN 1 AND 4)");
                         });
                 });
 
