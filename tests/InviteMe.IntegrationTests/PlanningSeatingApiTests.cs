@@ -58,7 +58,7 @@ public sealed class PlanningSeatingApiTests
         plan = await Change(new(plan.Version, "MOVE_PLACES", table2, PlaceIds: [group[0]], SeatNumber: 2), b);
         Assert.Contains(plan.Assignments, x => x.PlaceId == group[0] && x.TableId == table2 && x.SeatNumber == 2);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await a.PatchAsJsonAsync(url, new ChangePlanningSeating(plan.Version, "MOVE_PLACES", table2, PlaceIds: [group[1]], SeatNumber: 2))).StatusCode);
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await a.PatchAsJsonAsync(url, new ChangePlanningSeating(plan.Version, "DELETE_TABLE", table2))).StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await a.PatchAsJsonAsync(url, new ChangePlanningSeating(plan.Version, "UPDATE_TABLE", table2, Name: "Bàn 2", Capacity: 1))).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await viewer.PatchAsJsonAsync(url, new ChangePlanningSeating(plan.Version, "MOVE_PLACES", PlaceIds: [group[0]]))).StatusCode);
         var race = await Task.WhenAll(a.PatchAsJsonAsync(url, new ChangePlanningSeating(plan.Version, "MOVE_PLACES", PlaceIds: [group[0]])),
             b.PatchAsJsonAsync(url, new ChangePlanningSeating(plan.Version, "MOVE_PLACES", PlaceIds: [group[1]])));
@@ -82,7 +82,25 @@ public sealed class PlanningSeatingApiTests
         plan = await Change(new(plan.Version, "MOVE_PLACES", PlaceIds: all, DragToken: lease.Token));
         leases.Release(wedding.Id, lease.Token, ownerId, "owner-tab");
         Assert.Empty(plan.Assignments);
-        plan = await Change(new(plan.Version, "DELETE_TABLE", table2));
+        plan = await Change(new(plan.Version, "MOVE_PLACES", table2, PlaceIds: [group[0]]));
+        plan = await Change(new(plan.Version, "MOVE_PLACES", table1, PlaceIds: [group[1]]));
+        var placesBeforeDelete = plan.Places.Select(p => p.Id).Order().ToArray();
+        var guestsBeforeDelete = plan.Guests.Select(g => g.Id).Order().ToArray();
+        var deleteVersion = plan.Version;
+        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.PatchAsJsonAsync(url,
+            new ChangePlanningSeating(deleteVersion, "DELETE_TABLE", table2))).StatusCode);
+        var deleteLease = leases.Acquire(wedding.Id, ownerId, "delete-tab", "Owner", [group[0]]);
+        Assert.Equal(HttpStatusCode.Conflict, (await b.PatchAsJsonAsync(url,
+            new ChangePlanningSeating(deleteVersion, "DELETE_TABLE", table2))).StatusCode);
+        leases.Release(wedding.Id, deleteLease.Token, ownerId, "delete-tab");
+        plan = await Change(new(deleteVersion, "DELETE_TABLE", table2));
+        Assert.Equal(deleteVersion + 1, plan.Version);
+        Assert.DoesNotContain(plan.Assignments, x => x.PlaceId == group[0]);
+        Assert.Contains(plan.Assignments, x => x.PlaceId == group[1] && x.TableId == table1);
+        Assert.Equal(placesBeforeDelete, plan.Places.Select(p => p.Id).Order().ToArray());
+        Assert.Equal(guestsBeforeDelete, plan.Guests.Select(g => g.Id).Order().ToArray());
+        Assert.Equal(HttpStatusCode.Conflict, (await a.PatchAsJsonAsync(url,
+            new ChangePlanningSeating(deleteVersion, "DELETE_TABLE", table1))).StatusCode);
         Assert.Single(plan.Tables);
     });
 }
