@@ -322,7 +322,7 @@ public static class StoryBuilderV4Contract
     private static bool ValidStyle(JsonElement style) => style.ValueKind == JsonValueKind.Object && OnlyFields(style, ["background", "spacing", "animation"]) &&
         (!Field(style, "background", out var bg) || bg.ValueKind == JsonValueKind.String && bg.GetString() is "default" or "soft" or "accent") &&
         (!Field(style, "spacing", out var spacing) || spacing.ValueKind == JsonValueKind.String && spacing.GetString() is "compact" or "normal" or "spacious") &&
-        (!Field(style, "animation", out var animation) || animation.ValueKind == JsonValueKind.String && animation.GetString() is "none" or "fade" or "rise" or "stagger");
+        (!Field(style, "animation", out var animation) || animation.ValueKind == JsonValueKind.String && animation.GetString() is "none" or "fade" or "rise" or "stagger" or "zoom");
 
     private static bool ValidSeo(JsonElement seo) => seo.ValueKind == JsonValueKind.Object && OnlyFields(seo, ["title", "description", "imageUrl"]) &&
         OptionalText(seo, "title", 70) && OptionalText(seo, "description", 200) && OptionalImage(seo, "imageUrl");

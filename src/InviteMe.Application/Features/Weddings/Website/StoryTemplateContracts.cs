@@ -85,7 +85,7 @@ public static class StoryTemplateContract
     private static bool ValidStyle(StorySectionStyle? style) => style is null ||
         (style.Background is null or "default" or "soft" or "accent") &&
         (style.Spacing is null or "compact" or "normal" or "spacious") &&
-        (style.Animation is null or "none" or "fade" or "rise" or "stagger");
+        (style.Animation is null or "none" or "fade" or "rise" or "stagger" or "zoom");
 
     private static bool OnlyFields(JsonElement obj, IEnumerable<string> fields) => obj.ValueKind == JsonValueKind.Object &&
         obj.EnumerateObject().All(property => fields.Contains(property.Name, StringComparer.Ordinal));
