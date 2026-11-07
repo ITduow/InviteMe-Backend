@@ -13,20 +13,25 @@ public sealed class StoryTemplateStore(InviteMeDbContext db, TimeProvider clock)
     private static ApplicationProblemException Missing() => new(ProblemKind.NotFound, "STORY_TEMPLATE_NOT_FOUND", "Story template was not found.");
     private static ApplicationProblemException Conflict() => new(ProblemKind.Conflict, "STORY_TEMPLATE_VERSION_CONFLICT", "Story template was changed by another admin.");
     private static StoryTemplateConfig Config(string json) => JsonSerializer.Deserialize<StoryTemplateConfig>(json, StoryTemplateContract.Json)!;
-    private static StoryTemplateDto Dto(StoryTemplate row) => new(row.Id, row.Key, row.Name, row.Version,
+    private static StoryTemplateDto Dto(StoryTemplate row, int weddingUsageCount = 0) => new(row.Id, row.Key, row.Name, row.Version,
         row.PublishedVersion, Config(row.DraftConfigJson), row.PublishedConfigJson is null ? null : Config(row.PublishedConfigJson),
-        row.IsArchived, row.UpdatedAt, row.PublishedAt);
+        row.IsArchived, row.UpdatedAt, row.PublishedAt, weddingUsageCount);
     private static PublicStoryTemplateDto PublicDto(StoryTemplate row)
     {
         var config = Config(row.PublishedConfigJson!);
         return new(row.Key, config.Name, row.PublishedVersion, config);
     }
 
-    public async Task<IReadOnlyList<StoryTemplateDto>> ListAdminAsync(CancellationToken ct) =>
-        (await db.StoryTemplates.AsNoTracking().OrderBy(x => x.Key).ToListAsync(ct)).Select(Dto).ToArray();
+    public async Task<IReadOnlyList<StoryTemplateDto>> ListAdminAsync(CancellationToken ct)
+    {
+        var rows = await db.StoryTemplates.AsNoTracking().OrderBy(x => x.Key).ToListAsync(ct);
+        var results = new List<StoryTemplateDto>(rows.Count);
+        foreach (var row in rows) results.Add(await AdminDto(row, ct));
+        return results;
+    }
 
     public async Task<StoryTemplateDto> GetAdminAsync(Guid id, CancellationToken ct) =>
-        Dto(await db.StoryTemplates.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, ct) ?? throw Missing());
+        await AdminDto(await db.StoryTemplates.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, ct) ?? throw Missing(), ct);
 
     public async Task<StoryTemplateDto> CreateAsync(CreateStoryTemplate input, Guid actor, CancellationToken ct)
     {
@@ -41,7 +46,7 @@ public sealed class StoryTemplateStore(InviteMeDbContext db, TimeProvider clock)
         try { await db.SaveChangesAsync(ct); }
         catch (DbUpdateException e) when (e.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
         { throw new ApplicationProblemException(ProblemKind.Conflict, "STORY_TEMPLATE_KEY_EXISTS", "Template key is already in use."); }
-        return Dto(row);
+        return await AdminDto(row, ct);
     }
 
     public async Task<StoryTemplateDto> SaveDraftAsync(Guid id, SaveStoryTemplateDraft input, Guid actor, CancellationToken ct)
@@ -50,7 +55,7 @@ public sealed class StoryTemplateStore(InviteMeDbContext db, TimeProvider clock)
         StoryTemplateContract.Validate(input.Draft, row.Key);
         row.SaveDraft(input.Draft.Name, JsonSerializer.Serialize(input.Draft, StoryTemplateContract.Json), actor, clock.GetUtcNow());
         await Save(ct);
-        return Dto(row);
+        return await AdminDto(row, ct);
     }
 
     public async Task<StoryTemplateDto> PublishAsync(Guid id, int expectedVersion, Guid actor, CancellationToken ct)
@@ -59,7 +64,7 @@ public sealed class StoryTemplateStore(InviteMeDbContext db, TimeProvider clock)
         StoryTemplateContract.Validate(Config(row.DraftConfigJson), row.Key);
         row.Publish(actor, clock.GetUtcNow());
         await Save(ct);
-        return Dto(row);
+        return await AdminDto(row, ct);
     }
 
     public async Task<StoryTemplateDto> ArchiveAsync(Guid id, int expectedVersion, bool archived, Guid actor, CancellationToken ct)
@@ -67,12 +72,22 @@ public sealed class StoryTemplateStore(InviteMeDbContext db, TimeProvider clock)
         var row = await Find(id, expectedVersion, ct);
         row.SetArchived(archived, actor, clock.GetUtcNow());
         await Save(ct);
-        return Dto(row);
+        return await AdminDto(row, ct);
     }
 
     public async Task DeleteAsync(Guid id, int expectedVersion, Guid actor, CancellationToken ct)
     {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
         var row = await Find(id, expectedVersion, ct);
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT pg_advisory_xact_lock(hashtextextended({row.Key}, 0))", ct);
+        // Re-read after taking the shared key lock so a concurrent website save cannot create
+        // a reference between the usage check and the hard delete.
+        row = await Find(id, expectedVersion, ct);
+        var usageCount = await WeddingUsageCountAsync(row.Key, ct);
+        if (usageCount > 0)
+            throw new ApplicationProblemException(ProblemKind.Conflict, "STORY_TEMPLATE_IN_USE",
+                $"This template is used by {usageCount} wedding(s). Archive it instead; permanent deletion is only available after all weddings switch templates.");
         if (!row.IsArchived && row.PublishedConfigJson is not null)
             throw new ApplicationProblemException(ProblemKind.Conflict, "STORY_TEMPLATE_MUST_BE_ARCHIVED",
                 "Archive a published template before permanently deleting it.");
@@ -81,6 +96,7 @@ public sealed class StoryTemplateStore(InviteMeDbContext db, TimeProvider clock)
             JsonSerializer.Serialize(new { row.Key, row.Name, row.IsArchived, row.PublishedVersion })));
         db.StoryTemplates.Remove(row);
         await Save(ct);
+        await tx.CommitAsync(ct);
     }
 
     public async Task<IReadOnlyList<PublicStoryTemplateDto>> ListPublicAsync(CancellationToken ct) =>
@@ -109,5 +125,24 @@ public sealed class StoryTemplateStore(InviteMeDbContext db, TimeProvider clock)
     {
         try { await db.SaveChangesAsync(ct); }
         catch (DbUpdateConcurrencyException) { throw Conflict(); }
+    }
+
+    private async Task<StoryTemplateDto> AdminDto(StoryTemplate row, CancellationToken ct) =>
+        Dto(row, await WeddingUsageCountAsync(row.Key, ct));
+
+    private Task<int> WeddingUsageCountAsync(string key, CancellationToken ct)
+    {
+        var romanticFallback = key == "romantic";
+        return db.Database.SqlQuery<int>($"""
+            SELECT COUNT(DISTINCT wedding_id)::int AS "Value"
+            FROM inviteme.wedding_settings
+            WHERE website_draft_json ->> 'templateKey' = {key}
+               OR website_draft_json ->> 'templateId' = {key}
+               OR ({romanticFallback} AND website_draft_json ->> 'templateId' = 'story-classic')
+               OR website_published_json ->> 'templateKey' = {key}
+               OR website_published_json ->> 'templateId' = {key}
+               OR website_published_json -> 'storyTemplate' ->> 'key' = {key}
+               OR ({romanticFallback} AND website_published_json ->> 'templateId' = 'story-classic')
+            """).SingleAsync(ct);
     }
 }

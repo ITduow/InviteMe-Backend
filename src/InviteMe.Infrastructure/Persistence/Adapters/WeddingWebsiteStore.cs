@@ -23,6 +23,15 @@ public sealed class WeddingWebsiteStore(InviteMeDbContext db) : IWeddingWebsiteS
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await LockWedding(db, id, ct);
+        if (StoryTemplateKey(input.Document) is { } templateKey)
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock(hashtextextended({templateKey}, 0))", ct);
+            var available = await db.StoryTemplates.AsNoTracking()
+                .AnyAsync(x => x.Key == templateKey && x.PublishedConfigJson != null, ct);
+            if (!available)
+                throw Rule("STORY_TEMPLATE_UNAVAILABLE", "This website template is no longer available. Choose an available template before saving.");
+        }
         var settings = await db.WeddingSettings.SingleOrDefaultAsync(x => x.WeddingId == id, ct);
         if (settings is null) { settings = WeddingSettings.Create(id); db.Add(settings); }
         Version(settings.WebsiteVersion, input.ExpectedVersion);
@@ -49,7 +58,7 @@ public sealed class WeddingWebsiteStore(InviteMeDbContext db) : IWeddingWebsiteS
             var selectedKey = draft.RootElement.GetProperty(v4 || v3 ? "templateKey" : "templateId").GetString()!;
             var row = await db.StoryTemplates.AsNoTracking().SingleOrDefaultAsync(
                 x => x.Key == (selectedKey == "story-classic" ? "romantic" : selectedKey) && x.PublishedConfigJson != null, ct);
-            if (row is null) throw Rule("STORY_TEMPLATE_UNAVAILABLE", "Publish the selected story template first.");
+            if (row is null) throw Rule("STORY_TEMPLATE_UNAVAILABLE", "The selected website template is unavailable. Choose another template before publishing.");
             var config = JsonSerializer.Deserialize<StoryTemplateConfig>(row.PublishedConfigJson!, StoryTemplateContract.Json)!;
             if (v4 ? !StoryBuilderV4Contract.ValidDraft(draft.RootElement, config) : v3 ? !StoryV3Contract.ValidDraft(draft.RootElement, config) :
                 !WeddingStoryDocumentValidator.Valid(draft.RootElement, selectedKey == "story-classic" ? null : config))
@@ -148,5 +157,17 @@ public sealed class WeddingWebsiteStore(InviteMeDbContext db) : IWeddingWebsiteS
                 .Any(x => x.TryGetProperty("slug", out var value) && value.GetString() == slug);
         }
         catch (JsonException) { return false; }
+    }
+
+    private static string? StoryTemplateKey(JsonElement document)
+    {
+        if (StoryBuilderV4Contract.IsDocument(document) || StoryV3Contract.IsDraft(document))
+            return document.TryGetProperty("templateKey", out var key) && key.ValueKind == JsonValueKind.String
+                ? key.GetString()
+                : null;
+        if (!WeddingStoryDocumentValidator.IsStory(document) ||
+            !document.TryGetProperty("templateId", out var templateId) || templateId.ValueKind != JsonValueKind.String)
+            return null;
+        return templateId.GetString() == "story-classic" ? "romantic" : templateId.GetString();
     }
 }
