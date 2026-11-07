@@ -8,7 +8,8 @@ using Npgsql;
 
 namespace InviteMe.Infrastructure.Persistence.Adapters;
 
-public sealed class WeddingSetupStore(InviteMeDbContext db, InviteMe.Application.Features.Billing.IWeddingEntitlements entitlements)
+public sealed class WeddingSetupStore(InviteMeDbContext db, InviteMe.Application.Features.Billing.IWeddingEntitlements entitlements,
+    IWeddingMediaStorage mediaStorage, IWeddingMediaCatalog mediaCatalog)
     : IWeddingSetupStore
 {
     private static readonly JsonSerializerOptions AuditJson = new(JsonSerializerDefaults.Web);
@@ -58,6 +59,8 @@ public sealed class WeddingSetupStore(InviteMeDbContext db, InviteMe.Application
             throw new ApplicationProblemException(ProblemKind.BusinessRule, "WEDDING_CLOSED", "Wedding setup cannot be changed in its current state.");
         if (wedding.Version != input.ExpectedVersion)
             throw new ApplicationProblemException(ProblemKind.Conflict, "WEDDING_CONCURRENCY_CONFLICT", "Wedding changed. Reload it before saving.");
+        if (!await WeddingMediaPersistenceGuard.CoverMediaExistsAsync(weddingId, input.CoverImageUrl, mediaStorage, mediaCatalog, ct))
+            throw new ApplicationProblemException(ProblemKind.Conflict, "WEDDING_COVER_MEDIA_MISSING", "This cover image is no longer in the wedding media library. Choose another image.");
         await LockSlugsAsync([wedding.Slug.ToLowerInvariant(), normalizedSlug], ct);
         if (await db.Weddings.AnyAsync(x => x.Id != weddingId && x.Slug.ToLower() == normalizedSlug, ct)
             || await SlugReleasedByAnotherWedding(normalizedSlug, weddingId, ct)) throw SlugConflict();
@@ -149,6 +152,8 @@ public sealed class WeddingSetupStore(InviteMeDbContext db, InviteMe.Application
             throw new ApplicationProblemException(ProblemKind.BusinessRule, "WEDDING_CLOSED", "Wedding setup cannot be changed in its current state.");
         if (wedding.Version != expectedVersion)
             throw new ApplicationProblemException(ProblemKind.Conflict, "WEDDING_CONCURRENCY_CONFLICT", "Wedding changed. Reload it before saving.");
+        if (!await WeddingMediaPersistenceGuard.CoverMediaExistsAsync(weddingId, imageUrl, mediaStorage, mediaCatalog, ct))
+            throw new ApplicationProblemException(ProblemKind.Conflict, "WEDDING_COVER_MEDIA_MISSING", "This cover image is no longer in the wedding media library. Choose another image.");
 
         var previous = wedding.CoverImageUrl;
         wedding.UpdateCoverImage(imageUrl);

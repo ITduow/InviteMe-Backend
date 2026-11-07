@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using InviteMe.Application.Features.Weddings.Setup;
 using InviteMe.Application.Features.Weddings.Website;
 using InviteMe.Domain.Audit;
 using InviteMe.Domain.Weddings;
@@ -8,7 +9,7 @@ using static InviteMe.Infrastructure.Persistence.Adapters.PlanningPersistence;
 
 namespace InviteMe.Infrastructure.Persistence.Adapters;
 
-public sealed class WeddingWebsiteStore(InviteMeDbContext db) : IWeddingWebsiteStore
+public sealed class WeddingWebsiteStore(InviteMeDbContext db, IWeddingMediaStorage mediaStorage, IWeddingMediaCatalog mediaCatalog) : IWeddingWebsiteStore
 {
     public async Task<WebsiteDto> GetAsync(Guid id, CancellationToken ct)
     {
@@ -23,6 +24,8 @@ public sealed class WeddingWebsiteStore(InviteMeDbContext db) : IWeddingWebsiteS
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await LockWedding(db, id, ct);
+        if (!await WeddingMediaPersistenceGuard.DocumentMediaExistsAsync(id, input.Document, mediaStorage, mediaCatalog, ct))
+            throw Rule("WEBSITE_MEDIA_MISSING", "A wedding image was removed while this website was being saved. Choose another image and retry.");
         if (StoryTemplateKey(input.Document) is { } templateKey)
         {
             await db.Database.ExecuteSqlInterpolatedAsync(

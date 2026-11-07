@@ -7,13 +7,15 @@ namespace InviteMe.Application.Features.Weddings.Website;
 public sealed record StoryThemeColors(string Primary, string Background, string Accent, string Text);
 public sealed record StoryTheme(StoryThemeColors Colors, string FontHeading, string FontBody);
 public sealed record StoryPalette(string Id, string Label, StoryThemeColors Colors);
+public sealed record StoryGuestExperienceDefaults(IReadOnlyList<string>? Tools = null, string? Decoration = null, string? Intensity = null);
 public sealed record StorySectionStyle(string? Background = null, string? Spacing = null, string? Animation = null);
 public sealed record StorySection(string Type, string Variant, JsonElement? DefaultContent = null, StorySectionStyle? Style = null);
 public sealed record StoryTemplateConfig(
     string Key, string Name, IReadOnlyList<StorySection> Sections, StoryTheme Theme,
     IReadOnlyList<StoryPalette> Palettes, IReadOnlyList<string> AllowedFonts,
     IReadOnlyDictionary<string, string>? Assets = null,
-    string AccessTier = "UNCLASSIFIED", string? Category = null, string? PreviewImageUrl = null);
+    string AccessTier = "UNCLASSIFIED", string? Category = null, string? PreviewImageUrl = null,
+    StoryGuestExperienceDefaults? GuestExperienceDefaults = null);
 
 public sealed record StoryTemplateDto(Guid Id, string Key, string Name, int Version, int PublishedVersion,
     StoryTemplateConfig Draft, StoryTemplateConfig? Published, bool IsArchived,
@@ -35,6 +37,7 @@ public static class StoryTemplateContract
     };
     private static readonly HashSet<string> Fonts =
         ["Georgia", "Playfair Display", "Nunito", "Lora", "Cormorant Garamond", "Montserrat"];
+    private static readonly HashSet<string> GuestTools = ["rsvp", "calendar", "gift", "wishes", "share"];
 
     public static IReadOnlyDictionary<string, string[]> AllowedVariants => Variants;
     public static IReadOnlyList<string> AllowedFonts => Fonts.Order(StringComparer.Ordinal).ToArray();
@@ -60,11 +63,18 @@ public static class StoryTemplateContract
             (config.Category is { Length: > 80 } || config.Category?.Any(char.IsControl) == true) ||
             (config.PreviewImageUrl is not null && (config.PreviewImageUrl.Length > 2048 ||
                 !config.PreviewImageUrl.StartsWith("/images/story-templates/", StringComparison.Ordinal))) ||
+            !ValidGuestExperience(config.GuestExperienceDefaults) ||
             config.Assets is { Count: > 20 } ||
             config.Assets?.Any(x => x.Key.Length > 80 || x.Value is null || x.Value.Length > 2048 ||
                 !x.Value.StartsWith("/images/story-templates/", StringComparison.Ordinal)) == true)
             throw new ApplicationProblemException(ProblemKind.BadRequest, "STORY_TEMPLATE_CONFIG_INVALID", "Story template configuration is invalid.");
     }
+
+    private static bool ValidGuestExperience(StoryGuestExperienceDefaults? value) => value is null ||
+        (value.Tools is null || (value.Tools.Count <= 4 && value.Tools.All(GuestTools.Contains) &&
+            value.Tools.Distinct(StringComparer.Ordinal).Count() == value.Tools.Count)) &&
+        (value.Decoration is null or "none" or "petals" or "sparkles") &&
+        (value.Intensity is null or "light" or "medium");
 
     private static bool ValidDefaultContent(StorySection section)
     {

@@ -44,6 +44,53 @@ public sealed class WeddingMediaCatalog(InviteMeDbContext db) : IWeddingMediaCat
             .Take(150).Select(x => new UploadedWeddingMedia(x.Id, x.Url)).ToArray();
     }
 
+    public async Task<WeddingMediaDeleteResult> DeleteAsync(Guid weddingId, Guid mediaId,
+        Func<string, CancellationToken, Task> deleteStorage, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await PlanningPersistence.LockWedding(db, weddingId, ct);
+        var settings = await db.WeddingSettings.FromSqlInterpolated(
+                $"SELECT * FROM inviteme.wedding_settings WHERE wedding_id={weddingId} FOR UPDATE")
+            .SingleOrDefaultAsync(ct);
+        if (settings is null)
+        {
+            await tx.CommitAsync(ct);
+            return new(mediaId, WeddingMediaDeleteStatus.NotFound);
+        }
+
+        var items = Read(settings.MediaCatalogJson);
+        var item = items.FirstOrDefault(x => x.Id == mediaId && x.MediaType == "IMAGE");
+        if (item is null)
+        {
+            await tx.CommitAsync(ct);
+            return new(mediaId, WeddingMediaDeleteStatus.NotFound);
+        }
+
+        var weddingCover = await db.Weddings.AsNoTracking().Where(x => x.Id == weddingId)
+            .Select(x => x.CoverImageUrl).SingleAsync(ct);
+        var referencedDocuments = new[]
+        {
+            weddingCover, settings.SettingsJson, settings.WebsiteDraftJson, settings.WebsitePublishedJson,
+            settings.InvitationDraftDocumentJson, settings.InvitationPublishedSnapshotJson
+        };
+        if (referencedDocuments.Any(value => ReferencesMedia(value, item.StorageKey)))
+        {
+            await tx.CommitAsync(ct);
+            return new(mediaId, WeddingMediaDeleteStatus.InUse);
+        }
+
+        // Keep the wedding row lock through both the reference check and object deletion.
+        await deleteStorage(item.StorageKey, ct);
+        items.Remove(item);
+        settings.SetMediaCatalogJson(JsonSerializer.Serialize(items, Json));
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return new(mediaId, WeddingMediaDeleteStatus.Deleted);
+    }
+
+    private static bool ReferencesMedia(string? document, string storageKey) =>
+        !string.IsNullOrWhiteSpace(document) && document.Contains(storageKey, StringComparison.OrdinalIgnoreCase);
+
     private static List<MediaItem> Read(string? json)
     {
         if (string.IsNullOrWhiteSpace(json)) return [];

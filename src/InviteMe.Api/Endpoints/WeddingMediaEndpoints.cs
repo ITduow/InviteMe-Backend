@@ -13,6 +13,10 @@ internal static class WeddingMediaEndpoints
         var host = endpoints.MapGroup("/api/weddings/{weddingId:guid}/media")
             .RequireAuthorization().WithTags("Wedding Media");
         host.MapGet("", (Guid weddingId, WeddingMediaHandler h, CancellationToken ct) => h.ListAsync(weddingId, ct));
+        host.MapDelete("/{mediaId:guid}", async (Guid weddingId, Guid mediaId, WeddingMediaHandler h, CancellationToken ct) =>
+            Results.Ok(await h.DeleteAsync(weddingId, mediaId, ct)))
+            .WithName("DeleteWeddingMedia").WithSummary("Delete an unused image from this wedding's media library.")
+            .Produces<DeletedWeddingMedia>().ProducesProblem(401).ProducesProblem(403).ProducesProblem(404).ProducesProblem(409);
         host.MapPost("", async (Guid weddingId, [FromForm] WeddingMediaUploadForm form,
             WeddingMediaHandler h, CancellationToken ct) =>
         {

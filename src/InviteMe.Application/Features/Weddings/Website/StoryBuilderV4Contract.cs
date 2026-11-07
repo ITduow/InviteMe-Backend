@@ -18,7 +18,8 @@ public static class StoryBuilderV4Contract
     private static readonly HashSet<string> ReservedSlugs = ["admin", "api", "assets", "_next"];
     private static readonly HashSet<string> RootFields = ["kind", "schemaVersion", "builderVersion", "templateKey", "templateVersion", "templateSnapshot", "navigationMode", "content", "appearance", "pages", "publishedAt", "seo"];
     private static readonly HashSet<string> ContentFields = ["groom", "bride", "events", "mainEventId", "gallery", "loveStory", "gift", "heroImageUrl", "heroSlides", "countdownTitle", "eventsEnabled", "galleryEnabled", "wishesEnabled"];
-    private static readonly HashSet<string> AppearanceFields = ["paletteId", "fontHeading", "fontBody", "motion"];
+    private static readonly HashSet<string> AppearanceFields = ["paletteId", "fontHeading", "fontBody", "motion", "guestExperience"];
+    private static readonly HashSet<string> GuestTools = ["rsvp", "calendar", "gift", "wishes", "share"];
     private static readonly Dictionary<string, string[]> Variants = new(StringComparer.Ordinal)
     {
         ["hero"] = ["floral", "dark", "split", "editorial", "ceremonial"],
@@ -264,7 +265,16 @@ public static class StoryBuilderV4Contract
         (!Field(appearance, "paletteId", out var palette) || palette.ValueKind == JsonValueKind.String && template.Palettes.Any(x => x.Id == palette.GetString())) &&
         (!Field(appearance, "fontHeading", out var heading) || heading.ValueKind == JsonValueKind.String && template.AllowedFonts.Contains(heading.GetString()!)) &&
         (!Field(appearance, "fontBody", out var body) || body.ValueKind == JsonValueKind.String && template.AllowedFonts.Contains(body.GetString()!)) &&
-        (!Field(appearance, "motion", out var motion) || motion.ValueKind == JsonValueKind.String && motion.GetString() is "template" or "off");
+        (!Field(appearance, "motion", out var motion) || motion.ValueKind == JsonValueKind.String && motion.GetString() is "template" or "off") &&
+        (!Field(appearance, "guestExperience", out var guestExperience) || ValidGuestExperience(guestExperience));
+
+    private static bool ValidGuestExperience(JsonElement value) => value.ValueKind == JsonValueKind.Object &&
+        OnlyFields(value, ["tools", "decoration", "intensity"]) &&
+        (!Field(value, "tools", out var tools) || (tools.ValueKind == JsonValueKind.Array && tools.GetArrayLength() <= 4 &&
+            tools.EnumerateArray().All(item => item.ValueKind == JsonValueKind.String && GuestTools.Contains(item.GetString()!)) &&
+            tools.EnumerateArray().Select(item => item.GetString()).Distinct(StringComparer.Ordinal).Count() == tools.GetArrayLength())) &&
+        (!Field(value, "decoration", out var decoration) || decoration.ValueKind == JsonValueKind.String && decoration.GetString() is "none" or "petals" or "sparkles") &&
+        (!Field(value, "intensity", out var intensity) || intensity.ValueKind == JsonValueKind.String && intensity.GetString() is "light" or "medium");
 
     private static bool ValidSection(JsonElement section, StoryTemplateConfig template, HashSet<string> sectionIds)
     {
@@ -313,9 +323,10 @@ public static class StoryBuilderV4Contract
             if (Field(content, party, out var members) && (members.ValueKind != JsonValueKind.Array || members.GetArrayLength() > 12 ||
                 members.EnumerateArray().Any(x => !ValidWeddingPartyMember(x)))) return false;
         if (type == "couple") foreach (var person in new[] { "groom", "bride" })
-            if (Field(content, person, out var overrideData) && (!OnlyFields(overrideData, ["displayName", "fullName", "photoUrl", "bio", "fatherName", "motherName"]) ||
+            if (Field(content, person, out var overrideData) && (!OnlyFields(overrideData, ["displayName", "fullName", "photoUrl", "bio", "fatherName", "motherName", "social"]) ||
                 !OptionalText(overrideData, "displayName", 50) || !OptionalText(overrideData, "fullName", 100) || !OptionalImage(overrideData, "photoUrl") ||
-                !OptionalText(overrideData, "bio", 2000) || !OptionalText(overrideData, "fatherName", 100) || !OptionalText(overrideData, "motherName", 100))) return false;
+                !OptionalText(overrideData, "bio", 2000) || !OptionalText(overrideData, "fatherName", 100) || !OptionalText(overrideData, "motherName", 100) ||
+                (Field(overrideData, "social", out var social) && !ValidSocial(social)))) return false;
         return true;
     }
 
