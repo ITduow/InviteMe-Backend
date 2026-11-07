@@ -34,9 +34,10 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         if (scopeIds is not null && (input.Action is "CREATE_TABLES" or "CREATE_TABLE") && (input.Group is null || !scopeIds.Contains(input.Group.Value)))
             throw Rule("SEATING_GROUP_REQUIRED", "Chỉ được tạo bàn trong nhóm khách được giao.");
         var allTablesQuery = db.Set<PlanningTable>().Where(x => x.WeddingId == weddingId);
-        var tables = await (scopeIds is null ? allTablesQuery : allTablesQuery.Where(x => x.Group != null && scopeIds.Contains(x.Group.Value))).ToListAsync(ct);
+        var allTables = await allTablesQuery.ToListAsync(ct);
+        var tables = scopeIds is null ? allTables : allTables.Where(x => x.Group != null && scopeIds.Contains(x.Group.Value)).ToList();
         var table = input.TableId is { } id ? tables.SingleOrDefault(x => x.Id == id) ?? throw Missing("TABLE_NOT_FOUND") : null;
-        if (scopeIds is not null && input.Side is not null) throw Rule("SEATING_LAYOUT_REQUIRES_WEDDING_SCOPE", "Layout requires wedding-wide access.");
+        if (scopeIds is not null && input.Side is not null && input.Action == "UPDATE_TABLE") throw Rule("SEATING_LAYOUT_REQUIRES_WEDDING_SCOPE", "Layout requires wedding-wide access.");
         if (input.Side is not null && table is not null)
         {
             var width = input.Side == "BRIDE" ? plan.BrideTablesPerRow : plan.GroomTablesPerRow;
@@ -56,10 +57,29 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
             if (assignmentsOutsideGroup)
                 throw Rule("SEATING_TABLE_HAS_OUT_OF_SCOPE_GUESTS", "Bàn đang có khách ngoài nhóm được giao; chủ đám cưới cần xử lý trước.");
         }
+        void PositionNewTable(PlanningTable created, bool first)
+        {
+            if (input.Side is null) return; // Keep old API clients compatible; current FE always supplies a side.
+            var width = input.Side == "BRIDE" ? plan.BrideTablesPerRow : plan.GroomTablesPerRow;
+            var occupied = allTables.Where(t => t.Side == input.Side).Select(t => (t.Row, t.Column)).ToHashSet();
+            int row, column;
+            if (first && input.Row is { } requestedRow && input.Column is { } requestedColumn)
+            {
+                row = requestedRow; column = requestedColumn;
+                if (column > width || occupied.Contains((row, column))) throw Rule("INVALID_TABLE_SLOT", "Slot unavailable.");
+            }
+            else
+            {
+                var index = Enumerable.Range(0, 100 * width).FirstOrDefault(i => !occupied.Contains((i / width + 1, i % width + 1)), -1);
+                if (index < 0) throw Rule("INVALID_TABLE_SLOT", "No free slot.");
+                row = index / width + 1; column = index % width + 1;
+            }
+            created.Side = input.Side; created.Row = row; created.Column = column;
+            allTables.Add(created);
+        }
         IReadOnlyList<Guid>? affected = input.Action switch
         {
             "MOVE_PLACES" => input.PlaceIds,
-            "APPLY_SUGGESTION" => null,
             "UPDATE_TABLE" or "DELETE_TABLE" => await db.Set<PlanningSeatAssignment>().Where(x => x.TableId == input.TableId)
                 .Select(x => x.PlaceId).ToArrayAsync(ct),
             _ => []
@@ -68,21 +88,7 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         // Admission stays reserved until commit so an expiring lease cannot be reassigned mid-write.
         using var write = leases.BeginWrite(weddingId, user.UserId ?? throw new InvalidOperationException("Authenticated user required."),
             input.DragToken, affected, input.Action is "UPDATE_TABLE" or "DELETE_TABLE" ? input.TableId : null);
-        if (input.Action == "APPLY_SUGGESTION")
-        {
-            var source = await Snapshot(weddingId, ct, groupScope);
-            if (!string.Equals(SeatingSuggestions.Fingerprint(source), input.SourceFingerprint, StringComparison.OrdinalIgnoreCase))
-                throw Conflict("SEATING_SOURCE_CHANGED");
-            // Recompute on BE; never accept client-supplied assignments as a trusted suggestion.
-            var suggestion = SeatingSuggestions.Generate(source, new(input.Strategy!, input.Mode));
-            if (suggestion.ChangedPlaceCount == 0) throw Rule("NO_SEATING_CHANGES", "Phương án không thay đổi vị trí nào.");
-            var old = await (from a in db.Set<PlanningSeatAssignment>() join t in db.Set<PlanningTable>() on a.TableId equals t.Id
-                where t.WeddingId == weddingId select a).ToListAsync(ct);
-            db.RemoveRange(old);
-            await db.SaveChangesAsync(ct);
-            db.AddRange(suggestion.Assignments.Select(a => new PlanningSeatAssignment { PlaceId = a.PlaceId, TableId = a.TableId, SeatNumber = a.SeatNumber }));
-        }
-        else if (input.Action == "MOVE_TABLE_SLOT")
+        if (input.Action == "MOVE_TABLE_SLOT")
         {
             if (table!.Side is null || table.Row is null || table.Column is null) throw Rule("TABLE_LAYOUT_REQUIRED", "Assign legacy table layout first.");
             var width = table.Side == "BRIDE" ? plan.BrideTablesPerRow : plan.GroomTablesPerRow;
@@ -112,7 +118,7 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         else if (input.Action == "CREATE_TABLES")
         {
             var count = input.TableCount!.Value;
-            if (tables.Count + count > 100) throw Rule("TABLE_LIMIT", "Tối đa 100 bàn; giảm số bàn cần thêm.");
+            if (allTables.Count + count > 100) throw Rule("TABLE_LIMIT", "Tối đa 100 bàn; giảm số bàn cần thêm.");
             var names = tables.Select(t => t.Name.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var number = 1;
             for (var i = 0; i < count; i++)
@@ -120,13 +126,17 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
                 while (names.Contains($"Bàn {number}")) number++;
                 var name = $"Bàn {number++}";
                 names.Add(name);
-                db.Add(new PlanningTable { Id = Guid.NewGuid(), WeddingId = weddingId, Name = name, Capacity = input.Capacity!.Value, Group = input.Group ?? PlanningGroupKind.OTHER });
+                var created = new PlanningTable { Id = Guid.NewGuid(), WeddingId = weddingId, Name = name, Capacity = input.Capacity!.Value, Group = input.Group ?? PlanningGroupKind.OTHER };
+                PositionNewTable(created, i == 0);
+                db.Add(created);
             }
         }
         else if (input.Action == "CREATE_TABLE")
         {
-            if (tables.Count >= 100) throw Rule("TABLE_LIMIT", "Tối đa 100 bàn.");
-            db.Add(new PlanningTable { Id = Guid.NewGuid(), WeddingId = weddingId, Name = input.Name!.Trim(), Capacity = input.Capacity!.Value, Group = input.Group ?? PlanningGroupKind.OTHER });
+            if (allTables.Count >= 100) throw Rule("TABLE_LIMIT", "Tối đa 100 bàn.");
+            var created = new PlanningTable { Id = Guid.NewGuid(), WeddingId = weddingId, Name = input.Name!.Trim(), Capacity = input.Capacity!.Value, Group = input.Group ?? PlanningGroupKind.OTHER };
+            PositionNewTable(created, true);
+            db.Add(created);
         }
         else if (input.Action is "UPDATE_TABLE" or "DELETE_TABLE")
         {
@@ -184,7 +194,7 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         await LockWedding(db, weddingId, ct);
         using var write = leases.BeginWrite(weddingId, user.UserId ?? throw new InvalidOperationException("Authenticated user required."), null, null, null);
         var source = await Snapshot(weddingId, ct);
-        if (input.AlgorithmVersion != SeatingPlanner.AlgorithmVersion || !string.Equals(input.SourceFingerprint, SeatingSuggestions.Fingerprint(source), StringComparison.OrdinalIgnoreCase))
+        if (input.AlgorithmVersion != SeatingPlanner.AlgorithmVersion || !string.Equals(input.SourceFingerprint, SeatingSnapshot.Fingerprint(source), StringComparison.OrdinalIgnoreCase))
             throw Conflict("SEATING_SOURCE_CHANGED");
         var proposal = SeatingPlanner.Generate(source, input);
         await entitlements.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.SeatingTables, proposal.Tables.Count, ct);

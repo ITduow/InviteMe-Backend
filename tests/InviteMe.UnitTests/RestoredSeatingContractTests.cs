@@ -6,6 +6,7 @@ namespace InviteMe.UnitTests;
 public sealed class RestoredSeatingContractTests
 {
     [Theory]
+    [InlineData("APPLY_SUGGESTION")]
     [InlineData("MOVE_PARTY")]
     [InlineData("SWAP_PLACES")]
     [InlineData("SWAP_UNATTENDED")]

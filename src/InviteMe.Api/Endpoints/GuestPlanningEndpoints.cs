@@ -67,7 +67,6 @@ internal static class GuestPlanningEndpoints
         g.MapPost("/seating-plan/generate-apply", (Guid weddingId, GenerateSeating input, PlanningSeatingHandler handler, CancellationToken ct) => handler.GenerateApplyAsync(weddingId, input, ct));
         g.MapGet("/seating-plan", (Guid weddingId, PlanningSeatingHandler handler, CancellationToken ct) => handler.GetAsync(weddingId, ct));
         g.MapPatch("/seating-plan", (Guid weddingId, ChangePlanningSeating input, PlanningSeatingHandler handler, CancellationToken ct) => handler.ChangeAsync(weddingId, input, ct));
-        g.MapPost("/seating-suggestions", (Guid weddingId, SuggestPlanningSeating input, PlanningSeatingHandler handler, CancellationToken ct) => handler.SuggestAsync(weddingId, input, ct));
         return endpoints;
     }
 }

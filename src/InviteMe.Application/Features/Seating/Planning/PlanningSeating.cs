@@ -13,7 +13,7 @@ public sealed record PlanningSeatingDto(Guid WeddingId, int Version, IReadOnlyLi
     IReadOnlyList<PlanningGuestDto> Guests, IReadOnlyList<PlanningSeatingPlace> Places, IReadOnlyList<PlanningAssignmentDto> Assignments, int BrideTablesPerRow = 2, int GroomTablesPerRow = 2);
 public sealed record ChangePlanningSeating(int ExpectedVersion, string Action, Guid? TableId = null,
     string? Name = null, int? Capacity = null, IReadOnlyList<Guid>? PlaceIds = null, int? SeatNumber = null,
-    int? TableCount = null, string? Strategy = null, string Mode = "UNASSIGNED", string? SourceFingerprint = null, bool ConfirmReplace = false,
+    int? TableCount = null,
     Guid? DragToken = null, InviteMe.Domain.Guests.PlanningGroupKind? Group = null, int? TargetRow = null, int? TargetColumn = null, int? BrideTablesPerRow = null, int? GroomTablesPerRow = null, string? Side = null, int? Row = null, int? Column = null);
 
 public interface IPlanningSeatingStore
@@ -38,11 +38,11 @@ public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePla
             RuleFor(x => x.GroomTablesPerRow).NotNull().InclusiveBetween(1, 4);
         });
         RuleFor(x => x.ExpectedVersion).GreaterThanOrEqualTo(0);
-        RuleFor(x => x.Action).Must(x => x is "CREATE_TABLE" or "CREATE_TABLES" or "UPDATE_TABLE" or "DELETE_TABLE" or "MOVE_PLACES" or "APPLY_SUGGESTION" or "MOVE_TABLE_SLOT" or "UPDATE_LAYOUT");
+        RuleFor(x => x.Action).Must(x => x is "CREATE_TABLE" or "CREATE_TABLES" or "UPDATE_TABLE" or "DELETE_TABLE" or "MOVE_PLACES" or "MOVE_TABLE_SLOT" or "UPDATE_LAYOUT");
         RuleFor(x => x.TableId).NotEqual(Guid.Empty).When(x => x.TableId.HasValue);
-        RuleFor(x => x).Must(x => x.Side is null || x.Action == "UPDATE_TABLE");
+        RuleFor(x => x).Must(x => x.Side is null || x.Action is "UPDATE_TABLE" or "CREATE_TABLE" or "CREATE_TABLES");
         RuleFor(x => x.Side).Must(x => x is null or "BRIDE" or "GROOM");
-        RuleFor(x => x).Must(x => x.Side is null ? x.Row is null && x.Column is null : x.Row is >= 1 and <= 100 && x.Column is >= 1 and <= 4);
+        RuleFor(x => x).Must(x => x.Side is null ? x.Row is null && x.Column is null : ((x.Action is "CREATE_TABLE" or "CREATE_TABLES") && x.Row is null && x.Column is null) || (x.Row is >= 1 and <= 100 && x.Column is >= 1 and <= 4));
         RuleFor(x => x.Group).Must(x => x is null || Enum.IsDefined(x.Value));
         RuleFor(x => x).Must(x => x.TableId.HasValue).When(x => x.Action is "UPDATE_TABLE" or "DELETE_TABLE");
         When(x => x.Action is "CREATE_TABLE" or "UPDATE_TABLE", () =>
@@ -61,18 +61,11 @@ public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePla
             RuleFor(x => x.TableCount).NotNull().InclusiveBetween(1, 100);
             RuleFor(x => x.Capacity).NotNull().InclusiveBetween(1, 20);
         });
-        When(x => x.Action == "APPLY_SUGGESTION", () =>
-        {
-            RuleFor(x => x.Strategy).Must(SeatingSuggestions.KnownStrategy);
-            RuleFor(x => x.Mode).Must(SeatingSuggestions.KnownMode);
-            RuleFor(x => x.SourceFingerprint).NotNull().Matches("^[A-Fa-f0-9]{64}$");
-            RuleFor(x => x).Must(x => x.Mode != "REPLACE_ALL" || x.ConfirmReplace)
-                .WithMessage("Xác nhận thay thế sơ đồ trước khi xếp lại toàn bộ.");
-        });
+
     }
 }
 public sealed class PlanningSeatingHandler(IPlanningSeatingStore store, IWeddingPermissionService permissions,
-    RequestValidation<ChangePlanningSeating> validation, RequestValidation<SuggestPlanningSeating> suggestions, IPlanningChangePublisher changes,
+    RequestValidation<ChangePlanningSeating> validation, IPlanningChangePublisher changes,
     InviteMe.Application.Features.Billing.IWeddingEntitlements plans)
 {
     public async Task<PlanningSeatingDto> GetAsync(Guid weddingId, CancellationToken ct)
@@ -87,7 +80,7 @@ public sealed class PlanningSeatingHandler(IPlanningSeatingStore store, IWedding
         if (!viewScope.IsWeddingWide && (editScope.IsWeddingWide || !editScope.GroupIds.IsSubsetOf(viewScope.GroupIds)))
             throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.Forbidden, "SEATING_SCOPE_MISMATCH", "Seating edit scope must be contained in the assigned view scope.");
         var groupScope = editScope.IsWeddingWide ? null : editScope.GroupIds;
-        if (groupScope is not null && input.Action is "APPLY_SUGGESTION" or "MOVE_TABLE_SLOT" or "UPDATE_LAYOUT")
+        if (groupScope is not null && input.Action is "MOVE_TABLE_SLOT" or "UPDATE_LAYOUT")
             throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.Forbidden, "SEATING_SUGGESTION_REQUIRES_WEDDING_SCOPE", "Automatic seating suggestions require wedding-wide seating access.");
         await validation.ValidateAsync(input, ct);
         if (input.Action is "CREATE_TABLE" or "CREATE_TABLES")
@@ -116,13 +109,5 @@ public sealed class PlanningSeatingHandler(IPlanningSeatingStore store, IWedding
         var result = await store.GenerateAsync(weddingId, input, ct);
         await changes.PublishAsync(weddingId, new("PlanningSeatingChanged", weddingId, result.Version), ct);
         return result;
-    }
-    public async Task<PlanningSeatingSuggestion> SuggestAsync(Guid weddingId, SuggestPlanningSeating input, CancellationToken ct)
-    {
-        var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
-        if (!scope.IsWeddingWide)
-            throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.Forbidden, "SEATING_SUGGESTION_REQUIRES_WEDDING_SCOPE", "Automatic seating suggestions require wedding-wide seating access.");
-        await suggestions.ValidateAsync(input, ct);
-        return SeatingSuggestions.Generate(await store.GetAsync(weddingId, ct), input);
     }
 }

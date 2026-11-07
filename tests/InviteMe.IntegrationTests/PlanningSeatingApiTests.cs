@@ -78,8 +78,7 @@ public sealed class PlanningSeatingApiTests
             new ChangePlanningSeating(plan.Version, "MOVE_PLACES", PlaceIds: all, DragToken: lease.Token))).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await a.PatchAsJsonAsync(url,
             new ChangePlanningSeating(plan.Version, "UPDATE_TABLE", table1, Name: "Bàn 1", Capacity: 4))).StatusCode);
-        Assert.Equal(HttpStatusCode.Conflict, (await a.PatchAsJsonAsync(url,
-            new ChangePlanningSeating(plan.Version, "APPLY_SUGGESTION", Strategy: "COMPACT", SourceFingerprint: SeatingSuggestions.Fingerprint(plan)))).StatusCode);
+
         plan = await Change(new(plan.Version, "MOVE_PLACES", PlaceIds: all, DragToken: lease.Token));
         leases.Release(wedding.Id, lease.Token, ownerId, "owner-tab");
         Assert.Empty(plan.Assignments);

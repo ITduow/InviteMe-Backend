@@ -105,7 +105,7 @@ public static class SeatingPlanner
             }
         }
         if (tables.Count > 100) throw Invalid("TABLE_LIMIT", "Maximum 100 tables.");
-        return new(source.Version, SeatingSuggestions.Fingerprint(source), AlgorithmVersion, proven ? "PROVEN_OPTIMAL" : "FEASIBLE_NOT_PROVEN",
+        return new(source.Version, SeatingSnapshot.Fingerprint(source), AlgorithmVersion, proven ? "PROVEN_OPTIMAL" : "FEASIBLE_NOT_PROVEN",
             new(parties.Length, assignments.Count, tables.Count, tables.Count * input.TableCapacity - assignments.Count), tables, assignments,
             ["Initial planning includes all places, including declined guests.", "Mixed-group tables are managed with wedding-wide access."]);
     }
