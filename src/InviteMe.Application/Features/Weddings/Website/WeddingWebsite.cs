@@ -46,7 +46,10 @@ public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAc
     {
         await Owner(id, ct);
         await RequireTemplateEntitlement(id, input.Document, ct);
-        if (input.ExpectedVersion < 0 || !await ValidForSave(input.Document, ct))
+        if (input.ExpectedVersion < 0)
+            throw new ApplicationProblemException(ProblemKind.BadRequest, "WEBSITE_DOCUMENT_INVALID", "Website content is invalid.");
+        await EnsureTemplateAvailable(input.Document, ct);
+        if (!await ValidForSave(input.Document, ct))
             throw new ApplicationProblemException(ProblemKind.BadRequest, "WEBSITE_DOCUMENT_INVALID", "Website content is invalid.");
         await ValidateMedia(id, input.Document, ct);
         var result = await store.SaveAsync(id, input, ct);
@@ -62,6 +65,7 @@ public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAc
         if (draft.Document is { } doc)
         {
             await RequireTemplateEntitlement(id, doc, ct);
+            await EnsureTemplateAvailable(doc, ct);
             if (!await ValidForSave(doc, ct)) throw new ApplicationProblemException(ProblemKind.BadRequest, "WEBSITE_DRAFT_INVALID", "Save valid website content before publishing.");
             await ValidateMedia(id, doc, ct);
         }
@@ -135,6 +139,25 @@ public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAc
         if (key.GetString() == "story-classic") return WeddingStoryDocumentValidator.Valid(doc);
         var template = await templates.GetPublishedForStoryAsync(key.GetString()!, ct);
         return template is not null && WeddingStoryDocumentValidator.Valid(doc, template.Config);
+    }
+
+    private async Task EnsureTemplateAvailable(JsonElement document, CancellationToken ct)
+    {
+        string? key = null;
+        if (StoryBuilderV4Contract.IsDocument(document) || StoryV3Contract.IsDraft(document))
+        {
+            if (document.TryGetProperty("templateKey", out var templateKey) && templateKey.ValueKind == JsonValueKind.String)
+                key = templateKey.GetString();
+        }
+        else if (WeddingStoryDocumentValidator.IsStory(document) &&
+            document.TryGetProperty("templateId", out var templateId) && templateId.ValueKind == JsonValueKind.String)
+        {
+            key = templateId.GetString() == "story-classic" ? "romantic" : templateId.GetString();
+        }
+
+        if (key is not null && await templates.GetPublishedForStoryAsync(key, ct) is null)
+            throw new ApplicationProblemException(ProblemKind.BadRequest, "STORY_TEMPLATE_UNAVAILABLE",
+                "This website template is no longer available. Choose an available template before saving or publishing.");
     }
 
     private async Task RequireTemplateEntitlement(Guid weddingId, JsonElement document, CancellationToken ct)

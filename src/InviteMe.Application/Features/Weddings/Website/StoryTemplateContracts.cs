@@ -17,7 +17,7 @@ public sealed record StoryTemplateConfig(
 
 public sealed record StoryTemplateDto(Guid Id, string Key, string Name, int Version, int PublishedVersion,
     StoryTemplateConfig Draft, StoryTemplateConfig? Published, bool IsArchived,
-    DateTimeOffset UpdatedAt, DateTimeOffset? PublishedAt);
+    DateTimeOffset UpdatedAt, DateTimeOffset? PublishedAt, int WeddingUsageCount = 0);
 public sealed record PublicStoryTemplateDto(string Key, string Name, int Version, StoryTemplateConfig Config);
 public sealed record CreateStoryTemplate(string Key, StoryTemplateConfig Draft);
 public sealed record SaveStoryTemplateDraft(int ExpectedVersion, StoryTemplateConfig Draft);
