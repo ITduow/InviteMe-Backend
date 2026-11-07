@@ -141,9 +141,14 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         else if (input.Action is "UPDATE_TABLE" or "DELETE_TABLE")
         {
             var assigned = db.Set<PlanningSeatAssignment>().Where(x => x.TableId == table!.Id);
-            if (await assigned.AnyAsync(x => input.Action == "DELETE_TABLE" || x.SeatNumber > input.Capacity, ct))
-                throw Rule("TABLE_HAS_ASSIGNED_PLACES", "Chuyển các chỗ đang xếp trước khi xóa bàn hoặc giảm số ghế.");
-            if (input.Action == "DELETE_TABLE") db.Remove(table!);
+            if (input.Action == "UPDATE_TABLE" && await assigned.AnyAsync(x => x.SeatNumber > input.Capacity, ct))
+                throw Rule("TABLE_HAS_ASSIGNED_PLACES", "Chuyển các chỗ đang xếp trước khi giảm số ghế.");
+            if (input.Action == "DELETE_TABLE")
+            {
+                // Remove seats, not guests/places: they return to the unassigned queue.
+                db.RemoveRange(await assigned.ToListAsync(ct));
+                db.Remove(table!);
+            }
             else { table!.Name = input.Name!.Trim(); table.Capacity = input.Capacity!.Value; if (input.Group.HasValue) table.Group = input.Group; }
         }
         else
