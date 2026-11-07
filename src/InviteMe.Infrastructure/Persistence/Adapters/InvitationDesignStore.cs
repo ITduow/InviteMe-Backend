@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using InviteMe.Application.Features.Invitations;
+using InviteMe.Application.Features.Weddings.Setup;
 using InviteMe.Domain.Audit;
 using InviteMe.Domain.Guests;
 using InviteMe.Domain.Invitations;
@@ -10,7 +11,7 @@ using static InviteMe.Infrastructure.Persistence.Adapters.PlanningPersistence;
 
 namespace InviteMe.Infrastructure.Persistence.Adapters;
 
-public sealed class InvitationDesignStore(InviteMeDbContext db) : IInvitationDesignStore
+public sealed class InvitationDesignStore(InviteMeDbContext db, IWeddingMediaStorage mediaStorage, IWeddingMediaCatalog mediaCatalog) : IInvitationDesignStore
 {
     public async Task<InvitationDesignDto> GetAsync(Guid id, CancellationToken ct)
     {
@@ -28,6 +29,8 @@ public sealed class InvitationDesignStore(InviteMeDbContext db) : IInvitationDes
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await LockWedding(db, id, ct);
+        if (!await WeddingMediaPersistenceGuard.DocumentMediaExistsAsync(id, input.Document, mediaStorage, mediaCatalog, ct))
+            throw Rule("INVITATION_MEDIA_MISSING", "A wedding image was removed while this invitation was being saved. Choose another image and retry.");
         var settings = await db.WeddingSettings.SingleOrDefaultAsync(x => x.WeddingId == id, ct);
         if (settings is null) { settings = WeddingSettings.Create(id); db.Add(settings); }
         Version(settings.InvitationDesignVersion, input.ExpectedVersion);

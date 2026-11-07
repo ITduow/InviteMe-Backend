@@ -5,12 +5,17 @@ using InviteMe.Domain.Weddings;
 namespace InviteMe.Application.Features.Weddings.Setup;
 
 public sealed record UploadedWeddingMedia(Guid Id, string Url);
+public sealed record DeletedWeddingMedia(Guid Id);
+public enum WeddingMediaDeleteStatus { Deleted, NotFound, InUse }
+public sealed record WeddingMediaDeleteResult(Guid Id, WeddingMediaDeleteStatus Status);
 
 public interface IWeddingMediaCatalog
 {
     Task<bool> ContainsAsync(Guid weddingId, string storageKey, CancellationToken ct);
     Task<UploadedWeddingMedia> AddAsync(Guid weddingId, StoredWeddingImage image, CancellationToken ct);
     Task<IReadOnlyList<UploadedWeddingMedia>> ListAsync(Guid weddingId, CancellationToken ct);
+    Task<WeddingMediaDeleteResult> DeleteAsync(Guid weddingId, Guid mediaId,
+        Func<string, CancellationToken, Task> deleteStorage, CancellationToken ct);
 }
 
 public sealed class WeddingMediaHandler(IWeddingMediaStorage storage, IWeddingMediaCatalog catalog,
@@ -36,5 +41,21 @@ public sealed class WeddingMediaHandler(IWeddingMediaStorage storage, IWeddingMe
     {
         await permissions.RequireAsync(weddingId, WeddingPermission.WEDDING_VIEW, ct);
         return await catalog.ListAsync(weddingId, ct);
+    }
+
+    public async Task<DeletedWeddingMedia> DeleteAsync(Guid weddingId, Guid mediaId, CancellationToken ct)
+    {
+        await permissions.RequireAsync(weddingId, WeddingPermission.WEDDING_EDIT, ct);
+        var result = await catalog.DeleteAsync(weddingId, mediaId,
+            (storageKey, token) => storage.DeleteAsync(weddingId, storageKey, token), ct);
+        return result.Status switch
+        {
+            WeddingMediaDeleteStatus.Deleted => new(result.Id),
+            WeddingMediaDeleteStatus.NotFound => throw new ApplicationProblemException(ProblemKind.NotFound,
+                "MEDIA_NOT_FOUND", "Image is no longer available in this wedding's media library."),
+            WeddingMediaDeleteStatus.InUse => throw new ApplicationProblemException(ProblemKind.Conflict,
+                "MEDIA_IN_USE", "This image is still used by Wedding Setup, the website, or the invitation. Replace or remove it there before deleting it."),
+            _ => throw new InvalidOperationException("Unknown wedding media deletion result.")
+        };
     }
 }
