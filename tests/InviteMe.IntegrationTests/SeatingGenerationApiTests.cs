@@ -30,6 +30,8 @@ public sealed class SeatingGenerationApiTests
         await db.SaveChangesAsync();
         var url=$"/api/weddings/{wedding.Id}/guest-planning/seating-plan";
         Assert.Equal(HttpStatusCode.Forbidden,(await editor.PostAsJsonAsync(url+"/generate-preview",new GenerateSeating(0))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden,(await editor.PostAsJsonAsync(url+"/arrange-preview",new ArrangeSeating(0))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden,(await editor.PostAsJsonAsync(url+"/arrange-apply",new ArrangeSeating(0))).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden,(await editor.PostAsJsonAsync(url+"/generate-apply",new GenerateSeating(0))).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden,(await owner.PostAsJsonAsync(url+"/generate-preview",new GenerateSeating(0))).StatusCode);
         Assert.Empty(await db.Set<PlanningTable>().ToListAsync());

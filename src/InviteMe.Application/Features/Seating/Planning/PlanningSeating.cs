@@ -19,6 +19,7 @@ public sealed record ChangePlanningSeating(int ExpectedVersion, string Action, G
 public interface IPlanningSeatingStore
 {
     Task<PlanningSeatingDto> GetAsync(Guid weddingId, CancellationToken ct);
+    Task<PlanningSeatingDto> ArrangeAsync(Guid weddingId, ArrangeSeating input, CancellationToken ct);
     Task<PlanningSeatingDto> GenerateAsync(Guid weddingId, GenerateSeating input, CancellationToken ct);
     Task<PlanningSeatingDto> ChangeAsync(Guid weddingId, ChangePlanningSeating input, CancellationToken ct);
     Task<PlanningSeatingDto> GetScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope) => GetAsync(weddingId, ct);
@@ -95,6 +96,18 @@ public sealed class PlanningSeatingHandler(IPlanningSeatingStore store, IWedding
         var view = await permissions.RequireScopeAsync(weddingId, WeddingPermission.SEATING_VIEW, ct);
         if (!scope.IsWeddingWide || !view.IsWeddingWide)
             throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.Forbidden, "SEATING_GENERATION_REQUIRES_WEDDING_SCOPE", "Generation requires wedding-wide access.");
+    }
+    public async Task<SeatingArrangementPreview> ArrangePreviewAsync(Guid weddingId, ArrangeSeating input, CancellationToken ct)
+    {
+        await RequireGenerationAccess(weddingId, ct);
+        return SeatingArranger.Preview(await store.GetAsync(weddingId, ct), input);
+    }
+    public async Task<PlanningSeatingDto> ArrangeApplyAsync(Guid weddingId, ArrangeSeating input, CancellationToken ct)
+    {
+        await RequireGenerationAccess(weddingId, ct);
+        var result = await store.ArrangeAsync(weddingId, input, ct);
+        await changes.PublishAsync(weddingId, new("PlanningSeatingChanged", weddingId, result.Version), ct);
+        return result;
     }
     public async Task<SeatingGenerationPreview> GeneratePreviewAsync(Guid weddingId, GenerateSeating input, CancellationToken ct)
     {

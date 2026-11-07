@@ -188,6 +188,37 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         return result;
     }
 
+    public async Task<PlanningSeatingDto> ArrangeAsync(Guid weddingId, ArrangeSeating input, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await LockWedding(db, weddingId, ct);
+        using var write = leases.BeginWrite(weddingId, user.UserId ?? throw new InvalidOperationException("Authenticated user required."), null, null, null);
+        var source = await Snapshot(weddingId, ct);
+        if (input.AlgorithmVersion != SeatingArranger.AlgorithmVersion || !string.Equals(input.SourceFingerprint, SeatingSnapshot.Fingerprint(source), StringComparison.OrdinalIgnoreCase))
+            throw Conflict("SEATING_SOURCE_CHANGED");
+        var proposal = SeatingArranger.Preview(source, input);
+        if (proposal.NewlyAssignedCount == 0) throw Rule("NO_SEATING_CHANGES", "No unassigned places fit the existing tables.");
+        var fixedIds = source.Assignments.Select(a => a.PlaceId).ToHashSet();
+        var additions = proposal.Assignments.Where(a => !fixedIds.Contains(a.PlaceId)).ToArray();
+        db.AddRange(additions.Select(a => new PlanningSeatAssignment {PlaceId = a.PlaceId, TableId = a.TableId, SeatNumber = a.SeatNumber}));
+        var affectedIds = additions.Select(a => a.TableId).Distinct().ToArray();
+        var guests = source.Guests.ToDictionary(g => g.Id);
+        var places = source.Places.ToDictionary(p => p.Id);
+        foreach (var table in await db.Set<PlanningTable>().Where(t => t.WeddingId == weddingId && affectedIds.Contains(t.Id)).ToListAsync(ct))
+        {
+            var groups = proposal.Assignments.Where(a => a.TableId == table.Id).Select(a =>
+                places.TryGetValue(a.PlaceId, out var place) && guests.TryGetValue(place.GuestId, out var guest) ? (PlanningGroupKind?)guest.Group : null).Distinct().ToArray();
+            table.Group = groups.Length == 1 ? groups[0] : null;
+        }
+        var plan = await db.Set<PlanningSeatingPlan>().SingleOrDefaultAsync(p => p.WeddingId == weddingId, ct);
+        if (plan is null) { plan = new() {WeddingId = weddingId}; db.Add(plan); }
+        plan.Version++;
+        await db.SaveChangesAsync(ct);
+        var result = await Snapshot(weddingId, ct);
+        await tx.CommitAsync(ct);
+        return result;
+    }
+
     public async Task<PlanningSeatingDto> GenerateAsync(Guid weddingId, GenerateSeating input, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
