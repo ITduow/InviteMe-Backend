@@ -7,7 +7,8 @@ namespace InviteMe.Application.Features.Weddings.Website;
 public sealed record StoryThemeColors(string Primary, string Background, string Accent, string Text);
 public sealed record StoryTheme(StoryThemeColors Colors, string FontHeading, string FontBody);
 public sealed record StoryPalette(string Id, string Label, StoryThemeColors Colors);
-public sealed record StorySection(string Type, string Variant, JsonElement? DefaultContent = null);
+public sealed record StorySectionStyle(string? Background = null, string? Spacing = null, string? Animation = null);
+public sealed record StorySection(string Type, string Variant, JsonElement? DefaultContent = null, StorySectionStyle? Style = null);
 public sealed record StoryTemplateConfig(
     string Key, string Name, IReadOnlyList<StorySection> Sections, StoryTheme Theme,
     IReadOnlyList<StoryPalette> Palettes, IReadOnlyList<string> AllowedFonts,
@@ -46,6 +47,7 @@ public static class StoryTemplateContract
             config.Sections.GroupBy(s => s.Type, StringComparer.Ordinal).Any(g => g.Count() > 1) ||
             config.Sections.Any(s => !Variants.TryGetValue(s.Type, out var allowed) || !allowed.Contains(s.Variant, StringComparer.Ordinal)) ||
             config.Sections.Any(s => !ValidDefaultContent(s)) ||
+            config.Sections.Any(s => !ValidStyle(s.Style)) ||
             !config.Sections.Any(s => s.Type == "rsvp") || config.Theme is null || config.Theme.Colors is null ||
             config.AllowedFonts is null || config.AllowedFonts.Count is < 1 or > 6 ||
             config.AllowedFonts.Any(f => !Fonts.Contains(f)) ||
@@ -79,6 +81,11 @@ public static class StoryTemplateContract
             OptionalText(content, "eyebrow", 120) && OptionalText(content, "subtitle", 500) &&
             OptionalText(content, "submitLabel", 60);
     }
+
+    private static bool ValidStyle(StorySectionStyle? style) => style is null ||
+        (style.Background is null or "default" or "soft" or "accent") &&
+        (style.Spacing is null or "compact" or "normal" or "spacious") &&
+        (style.Animation is null or "none" or "fade");
 
     private static bool OnlyFields(JsonElement obj, IEnumerable<string> fields) => obj.ValueKind == JsonValueKind.Object &&
         obj.EnumerateObject().All(property => fields.Contains(property.Name, StringComparer.Ordinal));
