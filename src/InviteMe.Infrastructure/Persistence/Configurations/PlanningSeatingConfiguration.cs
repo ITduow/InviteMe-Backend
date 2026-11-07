@@ -13,16 +13,20 @@ public sealed class PlanningSeatingConfiguration : IEntityTypeConfiguration<Plan
     {
         b.ToTable("planning_seating_plans"); b.HasKey(x => x.WeddingId);
         b.Property(x => x.Version).IsConcurrencyToken();
+        b.Property(x => x.BrideTablesPerRow).HasDefaultValue(2);
+        b.Property(x => x.GroomTablesPerRow).HasDefaultValue(2);
         b.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade);
     }
     public void Configure(EntityTypeBuilder<PlanningTable> b)
     {
         b.ToTable("planning_tables", t => t.HasCheckConstraint("ck_planning_table_capacity", "\"Capacity\" BETWEEN 1 AND 20"));
         b.HasKey(x => x.Id); b.Property(x => x.Name).HasMaxLength(100);
+        b.Property(x => x.Side).HasMaxLength(5);
+        b.HasIndex(x => new { x.WeddingId, x.Side, x.Row, x.Column }).IsUnique();
         b.HasIndex(x => x.WeddingId);
         b.HasIndex(x => new { x.WeddingId, x.Group });
         b.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade);
-        b.Property(x => x.Group).HasConversion<string>().HasMaxLength(16).IsRequired();
+        b.Property(x => x.Group).HasConversion<string>().HasMaxLength(16);
     }
     public void Configure(EntityTypeBuilder<PlanningSeatAssignment> b)
     {

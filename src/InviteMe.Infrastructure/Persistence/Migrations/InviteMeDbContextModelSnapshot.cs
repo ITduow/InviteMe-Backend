@@ -2523,6 +2523,16 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("WeddingId")
                         .HasColumnType("uuid");
 
+                    b.Property<int>("BrideTablesPerRow")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(2);
+
+                    b.Property<int>("GroomTablesPerRow")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(2);
+
                     b.Property<DateTimeOffset?>("PublishedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -2547,8 +2557,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<int>("Capacity")
                         .HasColumnType("integer");
 
+                    b.Property<int?>("Column")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Group")
-                        .IsRequired()
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
 
@@ -2556,6 +2568,13 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
+
+                    b.Property<int?>("Row")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Side")
+                        .HasMaxLength(5)
+                        .HasColumnType("character varying(5)");
 
                     b.Property<Guid>("WeddingId")
                         .HasColumnType("uuid");
@@ -2565,6 +2584,9 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.HasIndex("WeddingId");
 
                     b.HasIndex("WeddingId", "Group");
+
+                    b.HasIndex("WeddingId", "Side", "Row", "Column")
+                        .IsUnique();
 
                     b.ToTable("planning_tables", "inviteme", t =>
                         {
