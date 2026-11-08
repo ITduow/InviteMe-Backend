@@ -268,13 +268,15 @@ public static class StoryBuilderV4Contract
         (!Field(appearance, "motion", out var motion) || motion.ValueKind == JsonValueKind.String && motion.GetString() is "template" or "off") &&
         (!Field(appearance, "guestExperience", out var guestExperience) || ValidGuestExperience(guestExperience));
 
-    private static bool ValidGuestExperience(JsonElement value) => value.ValueKind == JsonValueKind.Object &&
-        OnlyFields(value, ["tools", "decoration", "intensity"]) &&
-        (!Field(value, "tools", out var tools) || (tools.ValueKind == JsonValueKind.Array && tools.GetArrayLength() <= 4 &&
-            tools.EnumerateArray().All(item => item.ValueKind == JsonValueKind.String && GuestTools.Contains(item.GetString()!)) &&
-            tools.EnumerateArray().Select(item => item.GetString()).Distinct(StringComparer.Ordinal).Count() == tools.GetArrayLength())) &&
-        (!Field(value, "decoration", out var decoration) || decoration.ValueKind == JsonValueKind.String && decoration.GetString() is "none" or "petals" or "sparkles") &&
-        (!Field(value, "intensity", out var intensity) || intensity.ValueKind == JsonValueKind.String && intensity.GetString() is "light" or "medium");
+    private static bool ValidGuestExperience(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Object || !OnlyFields(value, ["tools", "decoration", "intensity"])) return false;
+        if (Field(value, "tools", out var tools) && (tools.ValueKind != JsonValueKind.Array || tools.GetArrayLength() > 4 ||
+            tools.EnumerateArray().Any(item => item.ValueKind != JsonValueKind.String || !GuestTools.Contains(item.GetString()!)) ||
+            tools.EnumerateArray().Select(item => item.GetString()).Distinct(StringComparer.Ordinal).Count() != tools.GetArrayLength())) return false;
+        if (Field(value, "decoration", out var decoration) && (decoration.ValueKind != JsonValueKind.String || decoration.GetString() is not ("none" or "petals" or "sparkles" or "hearts" or "fireflies"))) return false;
+        return !Field(value, "intensity", out var intensity) || intensity.ValueKind == JsonValueKind.String && intensity.GetString() is "light" or "medium" or "vivid";
+    }
 
     private static bool ValidSection(JsonElement section, StoryTemplateConfig template, HashSet<string> sectionIds)
     {

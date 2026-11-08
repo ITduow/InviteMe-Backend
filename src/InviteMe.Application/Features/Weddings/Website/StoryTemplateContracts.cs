@@ -73,8 +73,8 @@ public static class StoryTemplateContract
     private static bool ValidGuestExperience(StoryGuestExperienceDefaults? value) => value is null ||
         (value.Tools is null || (value.Tools.Count <= 4 && value.Tools.All(GuestTools.Contains) &&
             value.Tools.Distinct(StringComparer.Ordinal).Count() == value.Tools.Count)) &&
-        (value.Decoration is null or "none" or "petals" or "sparkles") &&
-        (value.Intensity is null or "light" or "medium");
+        (value.Decoration is null or "none" or "petals" or "sparkles" or "hearts" or "fireflies") &&
+        (value.Intensity is null or "light" or "medium" or "vivid");
 
     private static bool ValidDefaultContent(StorySection section)
     {
