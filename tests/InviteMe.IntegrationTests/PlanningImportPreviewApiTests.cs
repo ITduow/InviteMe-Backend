@@ -71,7 +71,7 @@ public sealed class PlanningImportPreviewApiTests
         await db.Set<PlanningGuest>().Where(x => x.Id == first.Items[0].GuestId).ExecuteUpdateAsync(x => x.SetProperty(g => g.Note, "Đã đổi"));
         var staleResponse = await Send(Commit(input, stale), Guid.NewGuid()); Assert.Equal(HttpStatusCode.Conflict, staleResponse.StatusCode);
         Assert.Contains("PREVIEW_STALE", await staleResponse.Content.ReadAsStringAsync());
-        var invalid = await Check(new([new(17, "An", ExpectedPeople: 501)])); Assert.Null(invalid.PreviewToken); Assert.Contains(invalid.Errors, x => x.RowNumber == 17);
+        var invalid = await Check(new([new(17, "An", ExpectedPeople: 11)])); Assert.Null(invalid.PreviewToken); Assert.Contains(invalid.Errors, x => x.RowNumber == 17);
         var tampered = Commit(input, await Check(input)) with { PreviewToken = "tampered" };
         Assert.Equal(HttpStatusCode.Conflict, (await Send(tampered, Guid.NewGuid())).StatusCode);
         using var outsider = await CoHostPermissionTests.SignIn(factory, "import-preview-outsider");

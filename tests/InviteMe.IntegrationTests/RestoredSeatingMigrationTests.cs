@@ -48,13 +48,15 @@ public sealed class RestoredSeatingMigrationTests
         Assert.Equal(2, await db.Set<PlanningSeatAssignment>().CountAsync());
         Assert.Equal(6, (await db.Set<PlanningTable>().SingleAsync(x => x.Id == tableA)).Capacity);
         Assert.Equal(4, (await db.Set<PlanningSeatingPlan>().SingleAsync()).Version);
+        Assert.All(await db.Set<PlanningTable>().ToListAsync(), t => { Assert.Null(t.Side); Assert.Null(t.Row); Assert.Null(t.Column); });
+        Assert.Equal(2, (await db.Set<PlanningSeatingPlan>().SingleAsync()).BrideTablesPerRow);
         await using (var command = db.Database.GetDbConnection().CreateCommand())
         {
             await db.Database.OpenConnectionAsync();
             command.CommandText = """
                 SELECT count(*) FROM information_schema.columns
                 WHERE table_schema='inviteme' AND
-                    ((table_name='planning_tables' AND column_name IN ('Half','Row','Column','Number','ExtraSeats','IsVip','Side'))
+                    ((table_name='planning_tables' AND column_name IN ('Half','Number','ExtraSeats','IsVip'))
                     OR (table_name='planning_seating_plans' AND column_name IN ('IsLocked','IsEventStarted','GroomRows','Numbering'))
                     OR (table_name='planning_seat_assignments' AND column_name IN ('PlannedTableId','PlannedSeatNumber')));
                 """;
