@@ -233,6 +233,7 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         if (input.AlgorithmVersion != SeatingPlanner.AlgorithmVersion || !string.Equals(input.SourceFingerprint, SeatingSnapshot.Fingerprint(source), StringComparison.OrdinalIgnoreCase))
             throw Conflict("SEATING_SOURCE_CHANGED");
         var proposal = SeatingPlanner.Generate(source, input);
+        if (input.Draft is not null) proposal = SeatingPlanner.ValidateDraft(source, input);
         await entitlements.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.SeatingTables, proposal.Tables.Count, ct);
         var plan = await db.Set<PlanningSeatingPlan>().SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
         if (plan is null) { plan = new() { WeddingId = weddingId }; db.Add(plan); }
@@ -240,7 +241,8 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         plan.BrideTablesPerRow = rows.Bride; plan.GroomTablesPerRow = rows.Groom; plan.Version++;
         var ids = proposal.Tables.ToDictionary(t => t.Code, _ => Guid.NewGuid());
         db.AddRange(proposal.Tables.Select(t => new PlanningTable { Id = ids[t.Code], WeddingId = weddingId,
-            Name = t.Code, Capacity = t.Capacity, Group = t.Group, Side = t.Side, Row = t.Row, Column = t.Column }));
+            Name = input.Draft?.Tables?.Single(d => d.Code == t.Code).Name.Trim() ?? t.Code,
+            Capacity = t.Capacity, Group = t.Group, Side = t.Side, Row = t.Row, Column = t.Column }));
         db.AddRange(proposal.Assignments.Select(a => new PlanningSeatAssignment { PlaceId = a.PlaceId, TableId = ids[a.TableCode], SeatNumber = a.SeatNumber }));
         await db.SaveChangesAsync(ct);
         var result = await Snapshot(weddingId, ct);

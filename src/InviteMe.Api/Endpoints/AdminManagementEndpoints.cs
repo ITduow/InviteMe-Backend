@@ -58,8 +58,8 @@ internal static class AdminManagementEndpoints
             .RequireAuthorization(AdminPolicyNames.WeddingsView).WithName("GetAdminWeddingDetail");
 
         group.MapGet("/templates", async (IAdminStore store, CancellationToken ct, int page = 1, int pageSize = 25,
-                string? search = null, string? status = null) =>
-            Results.Ok(await store.ListTemplatesAsync(new(page, pageSize, search, status), ct)))
+                string? search = null, string? status = null, bool? hasUnpublishedChanges = null) =>
+            Results.Ok(await store.ListTemplatesAsync(new(page, pageSize, search, status, hasUnpublishedChanges), ct)))
             .RequireAuthorization(AdminPolicyNames.TemplatesView).WithName("ListAdminTemplates");
         group.MapGet("/templates/{templateId:guid}", async (Guid templateId, IAdminStore store, CancellationToken ct) =>
             Results.Ok(await store.GetTemplateAsync(templateId, ct)))

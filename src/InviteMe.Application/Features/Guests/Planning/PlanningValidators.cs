@@ -43,7 +43,8 @@ public sealed class PlanningRowValidator : AbstractValidator<PlanningRow>
             .Must(x => PlanningText.Valid(x, 254)).WithErrorCode("INVALID_EMAIL")
             .When(x => !string.IsNullOrWhiteSpace(x.Email));
         RuleFor(x => x.Note).Must(x => PlanningText.Valid(x, 2000)).WithErrorCode("INVALID_TEXT");
-        RuleFor(x => x.ExpectedPeople).Must(x => (x ?? 1) is >= 1 and <= 500).WithErrorCode("INVALID_EXPECTED_PEOPLE");
+        RuleFor(x => x.ExpectedPeople).Must(x => (x ?? 1) is >= 1 and <= 10).WithErrorCode("INVALID_EXPECTED_PEOPLE")
+            .WithMessage("Tổng người dự kiến phải là số nguyên từ 1 đến 10.");
         RuleFor(x => x.Side).Must(PlanningText.ValidSide).WithErrorCode("INVALID_SIDE");
         RuleFor(x => x.Group).Must(x => x is null || Enum.IsDefined(x.Value)).WithErrorCode("INVALID_GROUP");
     }
@@ -103,7 +104,8 @@ public sealed class CreatePlanningGuestValidator : AbstractValidator<CreatePlann
     {
         RuleFor(x => x.RecipientName).Must(x => PlanningText.Valid(x, 150, required: true)).WithErrorCode("INVALID_TEXT");
         RuleFor(x => x.Honorific).Must(x => PlanningText.Valid(x, 50)).WithErrorCode("INVALID_TEXT");
-        RuleFor(x => x.ExpectedPeople).InclusiveBetween(1, 500).WithErrorCode("INVALID_EXPECTED_PEOPLE");
+        RuleFor(x => x.ExpectedPeople).InclusiveBetween(1, 10).WithErrorCode("INVALID_EXPECTED_PEOPLE")
+            .WithMessage("Tổng người dự kiến phải là số nguyên từ 1 đến 10.");
         RuleFor(x => x.Side).Must(PlanningText.ValidSide).WithErrorCode("INVALID_SIDE");
         RuleFor(x => x.Group).IsInEnum().WithErrorCode("INVALID_GROUP");
         RuleFor(x => x.Phone).Must(PlanningText.ValidPhone).WithErrorCode("INVALID_PHONE")

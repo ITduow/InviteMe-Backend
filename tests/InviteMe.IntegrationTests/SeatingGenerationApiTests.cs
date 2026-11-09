@@ -61,7 +61,13 @@ public sealed class SeatingGenerationApiTests
         var stale= new GenerateSeating(0,SourceFingerprint:new string('0',64),AlgorithmVersion:preview.AlgorithmVersion);
         Assert.Equal(HttpStatusCode.Conflict,(await client.PostAsJsonAsync(url+"/generate-apply",stale)).StatusCode);
         Assert.Empty(await db.Set<PlanningTable>().ToListAsync());
-        var apply=stale with {SourceFingerprint=preview.SourceFingerprint};
+        var draftTables = preview.Tables.Select(t => new SeatingDraftTable(t.Code,
+            "Bản nháp " + t.Code, t.Side, t.Row, t.Column, 8)).ToArray();
+        var draftAssignments = preview.Assignments.SkipLast(1).ToArray();
+        var apply=stale with {SourceFingerprint=preview.SourceFingerprint, Draft = new(draftTables, draftAssignments)};
+        var invalidDraft = apply with { Draft = new(draftTables, [draftAssignments[0], draftAssignments[0]]) };
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await client.PostAsJsonAsync(url+"/generate-apply", invalidDraft)).StatusCode);
+        Assert.Empty(await db.Set<PlanningTable>().AsNoTracking().ToListAsync());
         await db.Database.ExecuteSqlRawAsync("""
             CREATE FUNCTION inviteme.fail_generation_assignment() RETURNS trigger LANGUAGE plpgsql AS $$
             BEGIN RAISE EXCEPTION 'injected generation failure'; END $$;
@@ -75,6 +81,8 @@ public sealed class SeatingGenerationApiTests
         var race=await Task.WhenAll(client.PostAsJsonAsync(url+"/generate-apply",apply),client.PostAsJsonAsync(url+"/generate-apply",apply));
         Assert.Single(race,r=>r.StatusCode==HttpStatusCode.OK); Assert.Single(race,r=>r.StatusCode==HttpStatusCode.Conflict);
         var plan=(await client.GetFromJsonAsync<PlanningSeatingDto>(url))!;
+        Assert.Equal(13, plan.Assignments.Count);
+        Assert.All(plan.Tables, t => { Assert.StartsWith("Bản nháp ", t.Name); Assert.Equal(8, t.Capacity); });
         var before=plan.Assignments.OrderBy(a=>a.PlaceId).ToArray();
         var first=plan.Tables.Single(t=>t.Column==1); var second=plan.Tables.Single(t=>t.Column==2);
         var swap=await client.PatchAsJsonAsync(url,new ChangePlanningSeating(plan.Version,"MOVE_TABLE_SLOT",first.Id,TargetRow:second.Row,TargetColumn:second.Column));

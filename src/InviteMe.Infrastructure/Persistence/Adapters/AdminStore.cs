@@ -219,10 +219,21 @@ public sealed class AdminStore(InviteMeDbContext db, UserManager<ApplicationUser
             query = query.Where(x => EF.Functions.ILike(x.Name, pattern) || EF.Functions.ILike(x.Slug, pattern));
         }
         if (input.Status is not null) query = query.Where(x => x.Status == input.Status);
-        var total = await query.LongCountAsync(ct);
-        var items = await query.OrderBy(x => x.Name).ThenBy(x => x.Id).Skip((input.Page - 1) * input.PageSize)
-            .Take(input.PageSize).Select(x => new AdminTemplateDto(x.Id, x.Name, x.Slug, x.Theme, x.PreviewUrl,
-                x.Configuration, x.Status, x.CreatedAt, x.UpdatedAt)).ToListAsync(ct);
+        var templates = query.Select(x => new
+        {
+            Template = x,
+            HasUnpublishedChanges = x.Configuration != x.PublishedConfiguration ||
+                x.Name != x.PublishedName || x.Theme != x.PublishedTheme ||
+                x.PreviewUrl != x.PublishedPreviewUrl
+        });
+        if (input.HasUnpublishedChanges is { } hasChanges)
+            templates = templates.Where(x => x.HasUnpublishedChanges == hasChanges);
+        var total = await templates.LongCountAsync(ct);
+        var items = await templates.OrderBy(x => x.Template.Name).ThenBy(x => x.Template.Id)
+            .Skip((input.Page - 1) * input.PageSize).Take(input.PageSize)
+            .Select(x => new AdminTemplateDto(x.Template.Id, x.Template.Name, x.Template.Slug, x.Template.Theme,
+                x.Template.PreviewUrl, x.Template.Configuration, x.Template.Status, x.Template.CreatedAt,
+                x.Template.UpdatedAt, x.Template.PublishedVersion, x.HasUnpublishedChanges)).ToListAsync(ct);
         return new(items, input.Page, input.PageSize, checked((int)total));
     }
 
@@ -243,7 +254,7 @@ public sealed class AdminStore(InviteMeDbContext db, UserManager<ApplicationUser
         var rows = await db.Templates.AsNoTracking().Where(x => x.Status == "ACTIVE" && x.PublishedConfiguration != null)
             .OrderBy(x => x.Name).Select(x => new AdminTemplateDto(x.Id, x.PublishedName ?? x.Name,
                 x.Slug, x.PublishedTheme, x.PublishedPreviewUrl, x.PublishedConfiguration, x.Status,
-                x.CreatedAt, x.UpdatedAt)).ToListAsync(ct);
+                x.CreatedAt, x.UpdatedAt, x.PublishedVersion, false)).ToListAsync(ct);
         return rows.Where(x => ValidPublishedDocument(x.ConfigurationJson!)).ToArray();
     }
 
@@ -295,9 +306,15 @@ public sealed class AdminStore(InviteMeDbContext db, UserManager<ApplicationUser
             ?? throw NotFound("TEMPLATE_NOT_FOUND", "Template not found.");
         var oldStatus = template.Status;
         if (oldStatus == status) return Describe(template);
-        ValidateTemplate(template.Name, template.Slug, template.PreviewUrl, template.Configuration, status);
-        if (status == "ACTIVE") template.Publish();
-        else template.SetStatus(status);
+        if (status == "ACTIVE" && template.PublishedConfiguration is null)
+        {
+            ValidateTemplate(template.Name, template.Slug, template.PreviewUrl, template.Configuration, status);
+            template.Publish();
+        }
+        else
+        {
+            template.SetStatus(status);
+        }
         db.AuditLogs.Add(AuditLog.ForPlatform(actorId, "templates", template.Id, "TEMPLATE_STATUS_CHANGED",
             JsonSerializer.Serialize(new { oldStatus, newStatus = status, template.Slug })));
         await SaveTemplateAsync(ct);
@@ -450,7 +467,10 @@ public sealed class AdminStore(InviteMeDbContext db, UserManager<ApplicationUser
         new(user.Id, user.Email ?? "", user.FullName, await DescribeRoleAsync(user, ct), user.Status, user.CreatedAt);
 
     private static AdminTemplateDto Describe(InvitationTemplate template) => new(template.Id, template.Name, template.Slug,
-        template.Theme, template.PreviewUrl, template.Configuration, template.Status, template.CreatedAt, template.UpdatedAt);
+        template.Theme, template.PreviewUrl, template.Configuration, template.Status, template.CreatedAt, template.UpdatedAt,
+        template.PublishedVersion, template.Configuration != template.PublishedConfiguration ||
+        template.Name != template.PublishedName || template.Theme != template.PublishedTheme ||
+        template.PreviewUrl != template.PublishedPreviewUrl);
 
     private async Task SaveTemplateAsync(CancellationToken ct)
     {

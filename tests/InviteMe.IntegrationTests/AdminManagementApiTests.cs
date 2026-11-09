@@ -69,9 +69,23 @@ public sealed class AdminManagementApiTests
             Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
             Assert.Contains((await ordinary.GetFromJsonAsync<List<PublicTemplateDto>>("/api/templates"))!,
                 x => x.Id == id && x.Name == "Snapshot original" && SameDocument(x.ConfigurationJson, original));
+            var pending = await admin.GetFromJsonAsync<AdminTemplatePage>(
+                $"/api/admin/templates?search={slug}&hasUnpublishedChanges=true");
+            var draft = Assert.Single(pending!.Items);
+            Assert.Equal(1, draft.PublishedVersion);
+            Assert.True(draft.HasUnpublishedChanges);
+            Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync($"/api/admin/templates/{id}/status", new { status = "INACTIVE" })).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync($"/api/admin/templates/{id}/status", new { status = "ACTIVE" })).StatusCode);
+            Assert.Contains((await ordinary.GetFromJsonAsync<List<PublicTemplateDto>>("/api/templates"))!,
+                x => x.Id == id && SameDocument(x.ConfigurationJson, original));
             Assert.Equal(HttpStatusCode.OK, (await admin.PostAsync($"/api/admin/templates/{id}/publish", null)).StatusCode);
             Assert.Contains((await ordinary.GetFromJsonAsync<List<PublicTemplateDto>>("/api/templates"))!,
                 x => x.Id == id && x.Name == "Snapshot revised" && SameDocument(x.ConfigurationJson, revised));
+            var synced = await admin.GetFromJsonAsync<AdminTemplatePage>(
+                $"/api/admin/templates?search={slug}&hasUnpublishedChanges=false");
+            var published = Assert.Single(synced!.Items);
+            Assert.Equal(2, published.PublishedVersion);
+            Assert.False(published.HasUnpublishedChanges);
             Assert.Equal(HttpStatusCode.OK, (await admin.PutAsJsonAsync($"/api/admin/templates/{id}/status", new { status = "INACTIVE" })).StatusCode);
             Assert.DoesNotContain((await ordinary.GetFromJsonAsync<List<PublicTemplateDto>>("/api/templates"))!, x => x.Id == id);
 
@@ -249,7 +263,9 @@ public sealed class AdminManagementApiTests
     private sealed record DashboardDto(long TotalAccounts, long ActiveAccounts, long SuspendedAccounts,
         long TotalWeddings, long DraftWeddings, long PublishedWeddings, long ClosedWeddings, long ActiveGuests, long InvitationsSent);
     private sealed record AdminTemplateDto(Guid Id, string Name, string Slug, string? Theme, string? PreviewUrl,
-        string? ConfigurationJson, string Status, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
+        string? ConfigurationJson, string Status, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
+        int PublishedVersion, bool HasUnpublishedChanges);
+    private sealed record AdminTemplatePage(IReadOnlyList<AdminTemplateDto> Items);
     private sealed record PublicTemplateDto(Guid Id, string Name, string Slug, string? Theme, string? PreviewUrl, string? ConfigurationJson);
     private sealed record AuditItemDto(Guid Id, string Action, Guid? EntityId, JsonElement? Metadata);
     private sealed record AuditPageDto(IReadOnlyList<AuditItemDto> Items, int Page, int PageSize, int TotalCount, int TotalPages);

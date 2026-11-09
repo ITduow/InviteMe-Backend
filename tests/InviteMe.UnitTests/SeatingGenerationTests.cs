@@ -6,6 +6,30 @@ using InviteMe.Domain.Guests;
 namespace InviteMe.UnitTests;
 public sealed class SeatingGenerationTests
 {
+    [Fact]
+    public void EditedDraftValidatesFinalAssignmentsAndKeepsUnassignedPlaces()
+    {
+        var source = Source((2, PlanningGroupKind.FRIENDS));
+        var table = new SeatingDraftTable("draft:T01", "Bạn thân", "GROOM", 2, 1, 8);
+        var assignment = new GeneratedAssignment(source.Places[0].Id, table.Code, 3);
+        var input = new GenerateSeating(0, Draft: new([table], [assignment]));
+        var result = SeatingPlanner.ValidateDraft(source, input);
+        Assert.Single(result.Assignments);
+        Assert.Equal(PlanningGroupKind.FRIENDS, result.Tables[0].Group);
+        Assert.Equal(2, result.Tables[0].Row);
+        Assert.Empty(source.Tables);
+        Assert.Empty(source.Assignments);
+        foreach (var draft in new SeatingGenerationDraft[] {
+            new([table], [assignment, assignment]),
+            new([table], [assignment with { SeatNumber = 9 }]),
+            new([table], [assignment with { PlaceId = Guid.NewGuid() }]),
+            new([table with { Side = "BRIDE" }], [assignment]),
+            new([table, table with { Code = "other" }], [assignment]),
+            new([table with { Column = 3 }], [assignment]),
+            new([table], [assignment, new(source.Places[1].Id, table.Code, assignment.SeatNumber)])
+        })
+            Assert.Throws<ApplicationProblemException>(() => SeatingPlanner.ValidateDraft(source, input with { Draft = draft }));
+    }
     private static PlanningSeatingDto Source(params (int Size, PlanningGroupKind Group)[] rows)
     {
         var guests = rows.Select((r, i) => new PlanningGuestDto(Guid.Parse($"00000000-0000-0000-0000-{i+1:000000000000}"), 1, $"Guest {i}", null, r.Size, "GROOM", r.Group, null, null)).ToArray();

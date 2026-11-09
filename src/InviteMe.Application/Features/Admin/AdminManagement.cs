@@ -22,13 +22,14 @@ public sealed record AdminWeddingDetailDto(AdminWeddingDto Wedding, WeddingPlanD
 public sealed record AdminWeddingQuery(int Page = 1, int PageSize = 25, string? Search = null, string? Status = null);
 
 public sealed record AdminTemplateDto(Guid Id, string Name, string Slug, string? Theme, string? PreviewUrl,
-    string? ConfigurationJson, string Status, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
+    string? ConfigurationJson, string Status, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
+    int PublishedVersion = 0, bool HasUnpublishedChanges = false);
 public sealed record AdminTemplateVisibilityDto(string Slug, bool Visible);
 public sealed record CreateAdminTemplateInput(string Name, string Slug, string? Theme, string? PreviewUrl,
     string? ConfigurationJson, string Status = "DRAFT");
 public sealed record UpdateAdminTemplateInput(string Name, string Slug, string? Theme, string? PreviewUrl,
     string? ConfigurationJson, string Status);
-public sealed record AdminTemplateQuery(int Page = 1, int PageSize = 25, string? Search = null, string? Status = null);
+public sealed record AdminTemplateQuery(int Page = 1, int PageSize = 25, string? Search = null, string? Status = null, bool? HasUnpublishedChanges = null);
 
 public sealed record AdminPermissionDto(string Code, string Name, string Scope, string? Description, bool Assignable);
 public sealed record AdminRoleDto(string Code, string Name, string Description, string Scope,

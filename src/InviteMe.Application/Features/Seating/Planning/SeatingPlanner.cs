@@ -5,7 +5,9 @@ namespace InviteMe.Application.Features.Seating.Planning;
 
 public sealed record SeatingRows(int Bride = 2, int Groom = 2);
 public sealed record GenerateSeating(int ExpectedVersion, int TableCapacity = 10, SeatingRows? TablesPerRow = null,
-    string? SourceFingerprint = null, string? AlgorithmVersion = null);
+    string? SourceFingerprint = null, string? AlgorithmVersion = null, SeatingGenerationDraft? Draft = null);
+public sealed record SeatingDraftTable(string Code, string Name, string Side, int Row, int Column, int Capacity);
+public sealed record SeatingGenerationDraft(IReadOnlyList<SeatingDraftTable>? Tables, IReadOnlyList<GeneratedAssignment>? Assignments);
 public sealed record GeneratedTable(string Code, string Side, int Row, int Column, int Capacity, PlanningGroupKind? Group, IReadOnlyList<Guid> GuestIds);
 public sealed record GeneratedAssignment(Guid PlaceId, string TableCode, int SeatNumber);
 public sealed record GenerationSummary(int Guests, int Places, int Tables, int EmptySeats);
@@ -19,6 +21,40 @@ public static class SeatingPlanner
     public const string AlgorithmVersion = "party-bfd-search-v1";
     private sealed record Party(Guid Id, PlanningGroupKind Group, PlanningSeatingPlace[] Places);
     private static ApplicationProblemException Invalid(string code, string message) => new(ProblemKind.BusinessRule, code, message);
+    public static SeatingGenerationPreview ValidateDraft(PlanningSeatingDto source, GenerateSeating input)
+    {
+        var draft = input.Draft!;
+        var rows = input.TablesPerRow ?? new();
+        if (draft.Tables is null || draft.Assignments is null || draft.Tables.Count > 100 ||
+            draft.Assignments.Count > source.Places.Count || draft.Tables.Any(t => t is null) ||
+            draft.Assignments.Any(a => a is null))
+            throw Invalid("INVALID_SEATING_DRAFT", "Bản nháp bàn hoặc chỗ ngồi không hợp lệ.");
+        var tables = draft.Tables;
+        if (tables.Any(t => string.IsNullOrWhiteSpace(t.Code) || t.Code.Length > 100 ||
+            string.IsNullOrWhiteSpace(t.Name) || t.Name.Trim().Length > 100 || t.Side is not ("BRIDE" or "GROOM") ||
+            t.Capacity is < 1 or > 20 || t.Row is < 1 or > 100 ||
+            t.Column < 1 || t.Column > (t.Side == "BRIDE" ? rows.Bride : rows.Groom)) ||
+            tables.Select(t => t.Code).Distinct().Count() != tables.Count ||
+            tables.Select(t => (t.Side, t.Row, t.Column)).Distinct().Count() != tables.Count)
+            throw Invalid("INVALID_SEATING_DRAFT", "Kiểm tra tên, sức chứa và vị trí các bàn trong bản nháp.");
+        var byCode = tables.ToDictionary(t => t.Code);
+        var places = source.Places.ToDictionary(p => p.Id);
+        var guests = source.Guests.ToDictionary(g => g.Id);
+        if (draft.Assignments.Select(a => a.PlaceId).Distinct().Count() != draft.Assignments.Count ||
+            draft.Assignments.Select(a => (a.TableCode, a.SeatNumber)).Distinct().Count() != draft.Assignments.Count ||
+            draft.Assignments.Any(a => a.TableCode is null || !byCode.TryGetValue(a.TableCode, out var table) ||
+                !places.TryGetValue(a.PlaceId, out var place) || a.SeatNumber < 1 || a.SeatNumber > table.Capacity ||
+                guests[place.GuestId].Side != table.Side))
+            throw Invalid("INVALID_SEATING_DRAFT", "Chỗ ngồi bị trùng, vượt sức chứa hoặc không đúng phía khách.");
+        var generated = tables.Select(t => {
+            var ids = draft.Assignments.Where(a => a.TableCode == t.Code).Select(a => places[a.PlaceId].GuestId).Distinct().ToArray();
+            var groups = ids.Select(id => guests[id].Group).Distinct().ToArray();
+            return new GeneratedTable(t.Code, t.Side, t.Row, t.Column, t.Capacity, groups.Length == 1 ? groups[0] : null, ids);
+        }).ToArray();
+        return new(source.Version, SeatingSnapshot.Fingerprint(source), AlgorithmVersion, "FEASIBLE_NOT_PROVEN",
+            new(generated.SelectMany(t => t.GuestIds).Distinct().Count(), draft.Assignments.Count, generated.Length,
+                generated.Sum(t => t.Capacity) - draft.Assignments.Count), generated, draft.Assignments, []);
+    }
     public static SeatingGenerationPreview Generate(PlanningSeatingDto source, GenerateSeating input, int nodeLimit = 100000)
     {
         var rows = input.TablesPerRow ?? new();
