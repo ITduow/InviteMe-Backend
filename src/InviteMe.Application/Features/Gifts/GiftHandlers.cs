@@ -258,7 +258,7 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
         await changes.PublishAsync(weddingId, new(GiftRules.ChangedEvent, transactionId), ct);
     }
 
-    /// <summary>Development only: builds the exact SePay webhook body for a transfer into one of the couple's accounts and processes it.</summary>
+    /// <summary>Demo (Gifts:SimulationEnabled): builds the exact SePay webhook body for a transfer into one of the couple's accounts and processes it.</summary>
     public async Task<GiftWebhookResult> SimulateAsync(Guid weddingId, SimulateSePayTransfer input, GiftWebhookHandler webhook, CancellationToken ct)
     {
         await Require(weddingId, WeddingPermission.GIFT_EDIT, ct);
@@ -266,6 +266,7 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
         var accounts = await store.AccountsAsync(weddingId, ct);
         var account = (input.AccountId is { } id ? accounts.FirstOrDefault(x => x.Id == id) : accounts.FirstOrDefault())
             ?? throw new ApplicationProblemException(ProblemKind.BusinessRule, "GIFT_ACCOUNT_REQUIRED", "Add a receiving account first.");
+        await RequireOwnGiftCode(weddingId, input.Content, ct);
         var now = clock.GetUtcNow();
         var payload = new SePayWebhookPayload(RandomNumberGenerator.GetInt32(100_000_000, int.MaxValue), account.BankName,
             now.ToOffset(TimeSpan.FromHours(7)).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture), account.AccountNumber, "",
@@ -273,7 +274,7 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
         return await webhook.ProcessAsync(payload, JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web)), ct);
     }
 
-    /// <summary>Development only: the Bank Hub IPN body for a transfer into one of the couple's accounts, processed like SePay's.</summary>
+    /// <summary>Demo (Gifts:SimulationEnabled): the Bank Hub IPN body for a transfer into one of the couple's accounts, processed like SePay's.</summary>
     public async Task<GiftWebhookResult> SimulateBankHubAsync(Guid weddingId, SimulateSePayTransfer input, BankHubWebhookHandler webhook,
         CancellationToken ct)
     {
@@ -282,6 +283,7 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
         var accounts = await store.AccountsAsync(weddingId, ct);
         var account = (input.AccountId is { } id ? accounts.FirstOrDefault(x => x.Id == id) : accounts.FirstOrDefault())
             ?? throw new ApplicationProblemException(ProblemKind.BusinessRule, "GIFT_ACCOUNT_REQUIRED", "Add a receiving account first.");
+        await RequireOwnGiftCode(weddingId, input.Content, ct);
         var now = clock.GetUtcNow();
         var raw = JsonSerializer.Serialize(new
         {
@@ -290,6 +292,16 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
             amount = input.Amount, reference_code = "DEV" + now.ToUnixTimeMilliseconds(), accumulated = 0, transaction_id = Guid.NewGuid().ToString()
         });
         return await webhook.ProcessAsync(raw, ct) ?? throw new InvalidOperationException("Simulated Bank Hub body is invalid.");
+    }
+
+    /// <summary>
+    /// A simulated transfer may only carry a gift code of this wedding: receiving account numbers are typed in, not verified, so
+    /// otherwise an owner could add another couple's account and mark their own gift to that couple as received without paying.
+    /// </summary>
+    private async Task RequireOwnGiftCode(Guid weddingId, string content, CancellationToken ct)
+    {
+        if (GiftRules.FindCode(null, content) is { } code && (await store.GiftsAsync(weddingId, ct)).All(x => x.Code != code))
+            throw new ApplicationProblemException(ProblemKind.NotFound, "GIFT_NOT_FOUND", "This gift code is not one of this wedding's gifts.");
     }
 
     private async Task<GiftDto> Received(Guid weddingId, GiftDto gift, CancellationToken ct)

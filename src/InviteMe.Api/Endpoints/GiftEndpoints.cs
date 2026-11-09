@@ -153,13 +153,15 @@ internal static class GiftEndpoints
             { await h.DismissAsync(weddingId, transactionId, ct); return Results.NoContent(); })
             .WithName("DismissGiftTransaction").Produces(StatusCodes.Status204NoContent).ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-        if (endpoints.ServiceProvider.GetRequiredService<IWebHostEnvironment>().IsDevelopment())
+        // Demo of incoming money for the wedding owner, in every environment unless "Gifts:SimulationEnabled" is false.
+        // The simulated transaction carries a "DEV..." reference code, so it never passes for a real transfer.
+        if (endpoints.ServiceProvider.GetRequiredService<IConfiguration>().GetValue("Gifts:SimulationEnabled", true))
         {
-            // Development only: sends the SePay webhook body of a transfer into the couple's account (no SePay account needed).
+            // Sends the SePay webhook body of a transfer into the couple's account (no SePay account needed).
             host.MapPost("/dev/simulate-sepay", (Guid weddingId, SimulateSePayTransfer input, GiftHostHandler h, GiftWebhookHandler webhook,
                     CancellationToken ct) => h.SimulateAsync(weddingId, input, webhook, ct))
                 .WithName("SimulateSePayGiftTransfer").Produces<GiftWebhookResult>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden);
-            // Development only: the same transfer as a Bank Hub IPN (the Bank Hub sandbox cannot create transactions).
+            // The same transfer as a Bank Hub IPN (the Bank Hub sandbox cannot create transactions).
             host.MapPost("/dev/simulate-bankhub", (Guid weddingId, SimulateSePayTransfer input, GiftHostHandler h, BankHubWebhookHandler webhook,
                     CancellationToken ct) => h.SimulateBankHubAsync(weddingId, input, webhook, ct))
                 .WithName("SimulateBankHubGiftTransfer").Produces<GiftWebhookResult>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden);

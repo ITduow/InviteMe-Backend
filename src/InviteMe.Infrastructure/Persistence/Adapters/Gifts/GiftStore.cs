@@ -465,6 +465,9 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
                 gift.MarkPaid(payload.TransferAmount, PlanningGift.Auto, null, transaction.TransactionAt);
                 transaction.Resolve(PlanningGiftTransaction.Matched, gift.WeddingId, gift.Id);
                 db.AuditLogs.Add(Audit(gift, "GIFT_PAID_BY_BANK", null, transaction.Id));
+                // The money is in: the couple hears about it (Bank Hub or SePay), with the amount the bank reported.
+                await notifier.GiftAsync(gift.WeddingId, NotificationTypes.GiftReceived,
+                    new(gift.Id, gift.GiverName, gift.Method, payload.TransferAmount), null, ct);
                 paid = true;
             }
         }
