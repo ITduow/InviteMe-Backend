@@ -13,6 +13,7 @@ internal static class PublicationJson
                 website_draft_json IS DISTINCT FROM (CASE
                     WHEN website_draft_json ->> 'schemaVersion' = '2' THEN website_published_json - 'storyTemplate'
                     WHEN website_draft_json ->> 'schemaVersion' = '3' THEN website_published_json -> 'sourceDraft'
+                    WHEN website_draft_json ->> 'schemaVersion' = '4' THEN website_published_json -> 'sourceDraft'
                     ELSE website_published_json END) AS "Value"
             FROM inviteme.wedding_settings WHERE wedding_id = {id}
             """).SingleOrDefaultAsync(ct);

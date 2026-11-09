@@ -9,6 +9,7 @@ public static class StoryTemplateSnapshot
         DateTimeOffset? now = null)
     {
         var draft = JsonNode.Parse(draftJson)!.AsObject();
+        draft["sourceDraft"] = draft.DeepClone();
         draft["templateVersion"] = template.Version;
         draft["templateSnapshot"] = JsonSerializer.SerializeToNode(template.Config, StoryTemplateContract.Json);
         draft["publishedAt"] = JsonSerializer.SerializeToNode(now ?? DateTimeOffset.UtcNow);
