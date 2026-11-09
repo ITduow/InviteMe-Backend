@@ -14,9 +14,10 @@ public static class NotificationTypes
 {
     public const string RsvpSubmitted = "RSVP_SUBMITTED", RsvpUpdated = "RSVP_UPDATED", RsvpOverLimit = "RSVP_OVER_LIMIT",
         RsvpChangeRequested = "RSVP_CHANGE_REQUESTED",
-        GiftClaimed = "GIFT_CLAIMED", GiftDeskPending = "GIFT_DESK_PENDING", GiftItemDeclared = "GIFT_ITEM_DECLARED";
+        GiftClaimed = "GIFT_CLAIMED", GiftDeskPending = "GIFT_DESK_PENDING", GiftItemDeclared = "GIFT_ITEM_DECLARED",
+        GiftReceived = "GIFT_RECEIVED";
 
-    public static readonly IReadOnlySet<string> Gifts = new HashSet<string> { GiftClaimed, GiftDeskPending, GiftItemDeclared };
+    public static readonly IReadOnlySet<string> Gifts = new HashSet<string> { GiftClaimed, GiftDeskPending, GiftItemDeclared, GiftReceived };
 }
 
 /// <summary>RSVP notification data: who answered, the answer and how many people (MaxPeople = the invitation's threshold).</summary>

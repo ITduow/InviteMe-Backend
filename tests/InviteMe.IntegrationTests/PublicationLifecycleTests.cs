@@ -210,7 +210,7 @@ public sealed class PublicationLifecycleTests
             await db.SaveChangesAsync();
             await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO inviteme.wedding_settings(wedding_id, settings_json) VALUES ({custom.Id}, {legacy}::jsonb)");
             await db.Database.MigrateAsync();
-            var design = await new InvitationDesignStore(db).GetAsync(wedding.Id, default);
+            var design = await new InvitationDesignStore(db, null!, null!).GetAsync(wedding.Id, default);
             Assert.Equal((7, "PUBLISHED", false), (design.Version, design.Status, design.HasUnpublishedChanges));
             var row = await db.WeddingSettings.AsNoTracking().SingleAsync(x => x.WeddingId == wedding.Id);
             Assert.NotNull(row.InvitationPublishedSnapshotJson);
@@ -218,7 +218,7 @@ public sealed class PublicationLifecycleTests
             Assert.True(JsonNode.Parse(row.SettingsJson!)!["otherSetting"]!.GetValue<bool>());
             var customRow = await db.WeddingSettings.AsNoTracking().SingleAsync(x => x.WeddingId == custom.Id);
             Assert.Contains("lễ cũ", JsonNode.Parse(customRow.InvitationPublishedSnapshotJson!)!["wording"]!.ToJsonString(new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
-            Assert.False((await new InvitationDesignStore(db).GetAsync(custom.Id, default)).HasUnpublishedChanges);
+            Assert.False((await new InvitationDesignStore(db, null!, null!).GetAsync(custom.Id, default)).HasUnpublishedChanges);
             var invalid = await Assert.ThrowsAsync<PostgresException>(() => db.Database.ExecuteSqlInterpolatedAsync(
                 $"UPDATE inviteme.wedding_settings SET invitation_published_snapshot_json = NULL WHERE wedding_id = {wedding.Id}"));
             Assert.Equal(PostgresErrorCodes.CheckViolation, invalid.SqlState);
