@@ -2523,6 +2523,16 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("WeddingId")
                         .HasColumnType("uuid");
 
+                    b.Property<int>("BrideTablesPerRow")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(2);
+
+                    b.Property<int>("GroomTablesPerRow")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(2);
+
                     b.Property<DateTimeOffset?>("PublishedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -2535,7 +2545,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.HasKey("WeddingId");
 
-                    b.ToTable("planning_seating_plans", "inviteme");
+                    b.ToTable("planning_seating_plans", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_seating_layout_width", "\"BrideTablesPerRow\" BETWEEN 1 AND 4 AND \"GroomTablesPerRow\" BETWEEN 1 AND 4");
+                        });
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Seating.PlanningTable", b =>
@@ -2547,8 +2560,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<int>("Capacity")
                         .HasColumnType("integer");
 
+                    b.Property<int?>("Column")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Group")
-                        .IsRequired()
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
 
@@ -2556,6 +2571,13 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
+
+                    b.Property<int?>("Row")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Side")
+                        .HasMaxLength(5)
+                        .HasColumnType("character varying(5)");
 
                     b.Property<Guid>("WeddingId")
                         .HasColumnType("uuid");
@@ -2566,9 +2588,14 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("WeddingId", "Group");
 
+                    b.HasIndex("WeddingId", "Side", "Row", "Column")
+                        .IsUnique();
+
                     b.ToTable("planning_tables", "inviteme", t =>
                         {
                             t.HasCheckConstraint("ck_planning_table_capacity", "\"Capacity\" BETWEEN 1 AND 20");
+
+                            t.HasCheckConstraint("ck_planning_table_slot", "(\"Side\" IS NULL AND \"Row\" IS NULL AND \"Column\" IS NULL) OR (\"Side\" IS NOT NULL AND \"Side\" IN ('BRIDE','GROOM') AND \"Row\" IS NOT NULL AND \"Row\" > 0 AND \"Column\" IS NOT NULL AND \"Column\" BETWEEN 1 AND 4)");
                         });
                 });
 

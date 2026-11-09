@@ -6,6 +6,22 @@ namespace InviteMe.UnitTests;
 public sealed class PlanningImportValidationTests
 {
     [Theory]
+    [InlineData(1, true)]
+    [InlineData(10, true)]
+    [InlineData(0, false)]
+    [InlineData(11, false)]
+    [InlineData(500, false)]
+    public void ExpectedPeopleHasSameLimitForImportAndManualCreate(int count, bool valid)
+    {
+        var row = new PlanningRow(2, "An", ExpectedPeople: count);
+        var importErrors = Validate(new([row]));
+        Assert.Equal(valid, !importErrors.Any(x => x.Field == "expectedPeople"));
+        var create = new CreatePlanningGuest("An", null, count, "GROOM", PlanningGroupKind.OTHER, null, null, null);
+        var createErrors = new CreatePlanningGuestValidator().Validate(create).Errors;
+        Assert.Equal(valid, !createErrors.Any(x => x.PropertyName == "ExpectedPeople"));
+    }
+
+    [Theory]
     [InlineData(null, null)]
     [InlineData("", "")]
     [InlineData("  ", "  ")]
