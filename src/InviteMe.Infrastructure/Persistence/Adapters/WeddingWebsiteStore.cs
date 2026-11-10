@@ -9,8 +9,12 @@ using static InviteMe.Infrastructure.Persistence.Adapters.PlanningPersistence;
 
 namespace InviteMe.Infrastructure.Persistence.Adapters;
 
-public sealed class WeddingWebsiteStore(InviteMeDbContext db, IWeddingMediaStorage mediaStorage, IWeddingMediaCatalog mediaCatalog) : IWeddingWebsiteStore
+public sealed class WeddingWebsiteStore(InviteMeDbContext db, IWeddingMediaStorage mediaStorage, IWeddingMediaCatalog mediaCatalog,
+    TimeProvider clock) : IWeddingWebsiteStore
 {
+    private const int MaxSavedVersions = 20;
+    private static readonly TimeSpan AutoSnapshotInterval = TimeSpan.FromMinutes(5);
+
     public async Task<WebsiteDto> GetAsync(Guid id, CancellationToken ct)
     {
         var row = await db.WeddingSettings.AsNoTracking().Where(x => x.WeddingId == id)
@@ -38,8 +42,10 @@ public sealed class WeddingWebsiteStore(InviteMeDbContext db, IWeddingMediaStora
         var settings = await db.WeddingSettings.SingleOrDefaultAsync(x => x.WeddingId == id, ct);
         if (settings is null) { settings = WeddingSettings.Create(id); db.Add(settings); }
         Version(settings.WebsiteVersion, input.ExpectedVersion);
+        await AddAutoSnapshotIfNeededAsync(id, settings, input.Document.GetRawText(), ct);
         settings.SaveWebsiteDraft(input.Document.GetRawText());
         await db.SaveChangesAsync(ct);
+        await PruneVersionsAsync(id, ct);
         await tx.CommitAsync(ct);
         return await GetAsync(id, ct);
     }
@@ -90,8 +96,10 @@ public sealed class WeddingWebsiteStore(InviteMeDbContext db, IWeddingMediaStora
         else settings.PublishWebsite(storyTemplate is null ? null : v3
             ? StoryTemplateSnapshot.BuildV3(settings.WebsiteDraftJson, storyTemplate)
             : StoryTemplateSnapshot.Build(settings.WebsiteDraftJson, storyTemplate));
+        await AddSnapshotAsync(id, settings.WebsiteVersion, "PUBLISHED", settings.WebsiteDraftJson!, actorId, ct);
         db.AuditLogs.Add(AuditLog.ForEntity(id, "wedding_website", id, "WEBSITE_PUBLISHED", actorId));
         await db.SaveChangesAsync(ct);
+        await PruneVersionsAsync(id, ct);
         await tx.CommitAsync(ct);
         return await GetAsync(id, ct);
     }
@@ -109,6 +117,94 @@ public sealed class WeddingWebsiteStore(InviteMeDbContext db, IWeddingMediaStora
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return await GetAsync(id, ct);
+    }
+
+    public async Task<IReadOnlyList<WeddingWebsiteVersionDto>> ListVersionsAsync(Guid id, CancellationToken ct) =>
+        await db.WeddingWebsiteVersions.AsNoTracking().Where(x => x.WeddingId == id)
+            .OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Take(MaxSavedVersions)
+            .Select(x => new WeddingWebsiteVersionDto(x.Id, x.Version, x.Kind, x.CreatedAt)).ToListAsync(ct);
+
+    public async Task<WeddingWebsiteVersionDetailDto?> GetVersionAsync(Guid id, Guid versionId, CancellationToken ct)
+    {
+        var row = await db.WeddingWebsiteVersions.AsNoTracking()
+            .Where(x => x.WeddingId == id && x.Id == versionId)
+            .Select(x => new { x.Id, x.Version, x.Kind, x.CreatedAt, x.DocumentJson }).SingleOrDefaultAsync(ct);
+        return row is null ? null : new(row.Id, row.Version, row.Kind, row.CreatedAt,
+            JsonDocument.Parse(row.DocumentJson).RootElement.Clone());
+    }
+
+    public async Task<WebsiteDto> RestoreVersionAsync(Guid id, Guid versionId, int expectedVersion, Guid actorId, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await LockWedding(db, id, ct);
+        var settings = await db.WeddingSettings.SingleOrDefaultAsync(x => x.WeddingId == id, ct);
+        Version(settings?.WebsiteVersion ?? 0, expectedVersion);
+        if (settings is null) throw Rule("WEBSITE_VERSION_NOT_FOUND", "Website settings are not available.");
+        var snapshot = await db.WeddingWebsiteVersions.SingleOrDefaultAsync(x => x.WeddingId == id && x.Id == versionId, ct);
+        if (snapshot is null) throw Rule("WEBSITE_VERSION_NOT_FOUND", "Website version is no longer available.");
+        if (SameJson(settings.WebsiteDraftJson, snapshot.DocumentJson))
+        {
+            await tx.CommitAsync(ct);
+            return await GetAsync(id, ct);
+        }
+
+        if (settings.WebsiteDraftJson is { } current)
+            await AddSnapshotIfChangedAsync(id, settings.WebsiteVersion, "AUTO_SAVE", current, ct);
+        settings.SaveWebsiteDraft(snapshot.DocumentJson);
+        db.WeddingWebsiteVersions.Add(WeddingWebsiteVersion.Create(id, settings.WebsiteVersion, "RESTORED",
+            snapshot.DocumentJson, clock.GetUtcNow(), actorId));
+        db.AuditLogs.Add(AuditLog.ForEntity(id, "wedding_website", id, "WEBSITE_VERSION_RESTORED", actorId));
+        await db.SaveChangesAsync(ct);
+        await PruneVersionsAsync(id, ct);
+        await tx.CommitAsync(ct);
+        return await GetAsync(id, ct);
+    }
+
+    private async Task AddAutoSnapshotIfNeededAsync(Guid id, WeddingSettings settings, string nextDocument, CancellationToken ct)
+    {
+        if (settings.WebsiteDraftJson is not { } currentDocument)
+        {
+            await AddSnapshotIfChangedAsync(id, settings.WebsiteVersion, "BASELINE", nextDocument, ct);
+            return;
+        }
+        if (SameJson(currentDocument, nextDocument)) return;
+        var latest = await db.WeddingWebsiteVersions.AsNoTracking().Where(x => x.WeddingId == id)
+            .OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id)
+            .Select(x => new { x.CreatedAt, x.DocumentJson }).FirstOrDefaultAsync(ct);
+        var now = clock.GetUtcNow();
+        if (latest is not null && (now - latest.CreatedAt < AutoSnapshotInterval || SameJson(latest.DocumentJson, currentDocument))) return;
+        await AddSnapshotAsync(id, settings.WebsiteVersion, latest is null ? "BASELINE" : "AUTO_SAVE", currentDocument, null, ct);
+    }
+
+    private async Task AddSnapshotIfChangedAsync(Guid id, int version, string kind, string document, CancellationToken ct)
+    {
+        var latest = await db.WeddingWebsiteVersions.AsNoTracking().Where(x => x.WeddingId == id)
+            .OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id)
+            .Select(x => x.DocumentJson).FirstOrDefaultAsync(ct);
+        if (latest is not null && SameJson(latest, document)) return;
+        await AddSnapshotAsync(id, version, kind, document, null, ct);
+    }
+
+    private Task AddSnapshotAsync(Guid id, int version, string kind, string document, Guid? actorId, CancellationToken ct)
+    {
+        db.WeddingWebsiteVersions.Add(WeddingWebsiteVersion.Create(id, version, kind, document, clock.GetUtcNow(), actorId));
+        return Task.CompletedTask;
+    }
+
+    private async Task PruneVersionsAsync(Guid id, CancellationToken ct)
+    {
+        var obsolete = await db.WeddingWebsiteVersions.AsNoTracking().Where(x => x.WeddingId == id)
+            .OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Skip(MaxSavedVersions)
+            .Select(x => x.Id).ToListAsync(ct);
+        if (obsolete.Count > 0)
+            await db.WeddingWebsiteVersions.Where(x => obsolete.Contains(x.Id)).ExecuteDeleteAsync(ct);
+    }
+
+    private static bool SameJson(string? left, string? right)
+    {
+        if (left is null || right is null) return left is null && right is null;
+        try { return JsonNode.DeepEquals(JsonNode.Parse(left), JsonNode.Parse(right)); }
+        catch (JsonException) { return string.Equals(left, right, StringComparison.Ordinal); }
     }
 
     public async Task<PublicWebsiteDto?> PublicAsync(string slug, CancellationToken ct)

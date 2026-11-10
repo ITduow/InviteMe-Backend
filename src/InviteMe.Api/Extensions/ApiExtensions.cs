@@ -52,6 +52,7 @@ internal static class ApiExtensions
         });
         services.AddExceptionHandler<ApiExceptionHandler>();
         services.AddSignalR(options => options.EnableDetailedErrors = false);
+        services.AddSingleton<BuilderPresenceRegistry>();
         services.AddScoped<IPlanningChangePublisher, SignalRPlanningChangePublisher>();
         services.AddHostedService<SeatingDragBroadcaster>();
         services.AddHostedService<SeatingPointerBroadcaster>();

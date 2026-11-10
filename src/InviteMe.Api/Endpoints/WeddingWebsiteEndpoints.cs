@@ -52,6 +52,12 @@ internal static class WeddingWebsiteEndpoints
         group.MapPut("", (Guid weddingId, SaveWebsite input, WeddingWebsiteHandler handler, CancellationToken ct) => handler.SaveAsync(weddingId, input, ct));
         group.MapPost("/publish", (Guid weddingId, WebsiteVersion input, WeddingWebsiteHandler handler, CancellationToken ct) => handler.PublishAsync(weddingId, input.ExpectedVersion, ct));
         group.MapPost("/unpublish", (Guid weddingId, WebsiteVersion input, WeddingWebsiteHandler handler, CancellationToken ct) => handler.UnpublishAsync(weddingId, input.ExpectedVersion, ct));
+        group.MapGet("/versions", (Guid weddingId, WeddingWebsiteHandler handler, CancellationToken ct) => handler.ListVersionsAsync(weddingId, ct))
+            .WithName("ListWeddingWebsiteVersions");
+        group.MapGet("/versions/{versionId:guid}", (Guid weddingId, Guid versionId, WeddingWebsiteHandler handler, CancellationToken ct) => handler.GetVersionAsync(weddingId, versionId, ct))
+            .WithName("GetWeddingWebsiteVersion");
+        group.MapPost("/versions/{versionId:guid}/restore", (Guid weddingId, Guid versionId, WebsiteVersion input, WeddingWebsiteHandler handler, CancellationToken ct) => handler.RestoreVersionAsync(weddingId, versionId, input.ExpectedVersion, ct))
+            .WithName("RestoreWeddingWebsiteVersion");
         var events = endpoints.MapGroup("/api/weddings/{weddingId:guid}/events").RequireAuthorization().WithTags("Wedding Events");
         events.MapGet("", (Guid weddingId, WeddingEventHandler handler, CancellationToken ct) => handler.ListAsync(weddingId, ct))
             .WithName("ListWeddingEvents");

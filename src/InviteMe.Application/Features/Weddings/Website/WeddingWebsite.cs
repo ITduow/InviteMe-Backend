@@ -11,6 +11,8 @@ namespace InviteMe.Application.Features.Weddings.Website;
 public sealed record SaveWebsite(int ExpectedVersion, JsonElement Document);
 public sealed record WebsiteDto(int Version, JsonElement? Document, string Status,
     bool HasUnpublishedChanges, IReadOnlyList<string> Warnings);
+public sealed record WeddingWebsiteVersionDto(Guid Id, int Version, string Kind, DateTimeOffset CreatedAt);
+public sealed record WeddingWebsiteVersionDetailDto(Guid Id, int Version, string Kind, DateTimeOffset CreatedAt, JsonElement Document);
 public sealed record PublicWebsiteDto(string Slug, JsonElement Document, bool BrandingBadge = false);
 
 public interface IWeddingWebsiteStore
@@ -19,6 +21,9 @@ public interface IWeddingWebsiteStore
     Task<WebsiteDto> SaveAsync(Guid id, SaveWebsite input, CancellationToken ct);
     Task<WebsiteDto> PublishAsync(Guid id, int expectedVersion, Guid actorId, CancellationToken ct);
     Task<WebsiteDto> UnpublishAsync(Guid id, int expectedVersion, Guid actorId, CancellationToken ct);
+    Task<IReadOnlyList<WeddingWebsiteVersionDto>> ListVersionsAsync(Guid id, CancellationToken ct);
+    Task<WeddingWebsiteVersionDetailDto?> GetVersionAsync(Guid id, Guid versionId, CancellationToken ct);
+    Task<WebsiteDto> RestoreVersionAsync(Guid id, Guid versionId, int expectedVersion, Guid actorId, CancellationToken ct);
     Task<PublicWebsiteDto?> PublicAsync(string slug, CancellationToken ct);
 }
 
@@ -79,6 +84,38 @@ public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAc
         if (version < 0) throw new ApplicationProblemException(ProblemKind.BadRequest, "WEBSITE_VERSION_INVALID", "Invalid publication version.");
         var result = await store.UnpublishAsync(id, version, await Owner(id, ct), ct);
         await changes.PublishAsync(id, new("WeddingWebsiteUnpublished", id, result.Version), ct);
+        return result;
+    }
+
+    public async Task<IReadOnlyList<WeddingWebsiteVersionDto>> ListVersionsAsync(Guid id, CancellationToken ct)
+    {
+        await Owner(id, ct);
+        return await store.ListVersionsAsync(id, ct);
+    }
+
+    public async Task<WeddingWebsiteVersionDetailDto> GetVersionAsync(Guid id, Guid versionId, CancellationToken ct)
+    {
+        await Owner(id, ct);
+        return await store.GetVersionAsync(id, versionId, ct) ??
+            throw new ApplicationProblemException(ProblemKind.NotFound, "WEBSITE_VERSION_NOT_FOUND", "Không tìm thấy phiên bản website này.");
+    }
+
+    public async Task<WebsiteDto> RestoreVersionAsync(Guid id, Guid versionId, int expectedVersion, CancellationToken ct)
+    {
+        var actor = await Owner(id, ct);
+        if (expectedVersion < 0)
+            throw new ApplicationProblemException(ProblemKind.BadRequest, "WEBSITE_VERSION_INVALID", "Invalid website version.");
+        var snapshot = await store.GetVersionAsync(id, versionId, ct) ??
+            throw new ApplicationProblemException(ProblemKind.NotFound, "WEBSITE_VERSION_NOT_FOUND", "Không tìm thấy phiên bản website này.");
+        if (!StoryBuilderV4Contract.IsDocument(snapshot.Document))
+            throw new ApplicationProblemException(ProblemKind.BadRequest, "WEBSITE_VERSION_RESTORE_UNSUPPORTED", "Phiên bản này không dùng định dạng Website Builder V4 nên không thể khôi phục từ màn hình này.");
+        await RequireTemplateEntitlement(id, snapshot.Document, ct);
+        await EnsureTemplateAvailable(snapshot.Document, ct);
+        if (!await ValidForSave(snapshot.Document, ct))
+            throw new ApplicationProblemException(ProblemKind.BadRequest, "WEBSITE_DRAFT_INVALID", "Phiên bản cũ không còn hợp lệ với mẫu website hiện tại.");
+        await ValidateMedia(id, snapshot.Document, ct);
+        var result = await store.RestoreVersionAsync(id, versionId, expectedVersion, actor, ct);
+        await changes.PublishAsync(id, new("WeddingWebsiteChanged", id, result.Version), ct);
         return result;
     }
 
