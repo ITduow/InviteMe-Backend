@@ -79,10 +79,22 @@ internal static class WeddingWebsiteEndpoints
                 return Results.StatusCode(StatusCodes.Status304NotModified);
             return Results.Json(website);
         }).AllowAnonymous().RequireRateLimiting("guest-invitation").WithTags("Wedding Website");
-        endpoints.MapGet("/api/public/weddings/{slug}/wishes", (string slug, StoryWishHandler handler, CancellationToken ct) => handler.ListAsync(slug, ct))
+        var publicWishes = endpoints.MapGroup("/api/public/weddings/{slug}/wishes")
             .AllowAnonymous().RequireRateLimiting("guest-invitation").WithTags("Wedding Website");
-        endpoints.MapPost("/api/public/weddings/{slug}/wishes", (string slug, SubmitStoryWish input, StoryWishHandler handler, CancellationToken ct) => handler.AddAsync(slug, input, ct))
-            .AllowAnonymous().RequireRateLimiting("guest-invitation").WithTags("Wedding Website");
+        publicWishes.MapGet("", (string slug, HttpRequest request, StoryWishHandler handler, CancellationToken ct) =>
+            handler.ListAsync(slug, request.Headers["X-InviteMe-Visitor"].FirstOrDefault(), ct));
+        publicWishes.MapPost("", (string slug, SubmitStoryWish input, StoryWishHandler handler, CancellationToken ct) =>
+            handler.AddAsync(slug, input, ct));
+        publicWishes.MapGet("/{wishId:guid}/comments", (string slug, Guid wishId, int? skip, int? take,
+            StoryWishHandler handler, CancellationToken ct) => handler.ListCommentsAsync(slug, wishId, skip ?? 0, take ?? 20, ct));
+        publicWishes.MapPost("/{wishId:guid}/comments", (string slug, Guid wishId, SubmitStoryWishComment input,
+            StoryWishHandler handler, CancellationToken ct) => handler.AddCommentAsync(slug, wishId, input, ct));
+        publicWishes.MapPut("/{wishId:guid}/like", (string slug, Guid wishId, HttpRequest request,
+            StoryWishHandler handler, CancellationToken ct) =>
+            handler.SetLikedAsync(slug, wishId, request.Headers["X-InviteMe-Visitor"].FirstOrDefault(), true, ct));
+        publicWishes.MapDelete("/{wishId:guid}/like", (string slug, Guid wishId, HttpRequest request,
+            StoryWishHandler handler, CancellationToken ct) =>
+            handler.SetLikedAsync(slug, wishId, request.Headers["X-InviteMe-Visitor"].FirstOrDefault(), false, ct));
         return endpoints;
     }
 

@@ -3506,6 +3506,51 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.ToTable("account_confirmation_email_jobs", "inviteme");
                 });
 
+            modelBuilder.Entity("InviteMe.Infrastructure.Persistence.Adapters.StoryWishInteractionRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Name")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("StoryWishId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("VisitorKeyHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("StoryWishId", "VisitorKeyHash")
+                        .IsUnique()
+                        .HasFilter("\"Kind\" = 'LIKE'");
+
+                    b.HasIndex("StoryWishId", "Kind", "CreatedAt");
+
+                    b.ToTable("StoryWishInteractions", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("CK_StoryWishInteractions_Kind", "\"Kind\" IN ('LIKE', 'COMMENT')");
+
+                            t.HasCheckConstraint("CK_StoryWishInteractions_Payload", "(\"Kind\" = 'LIKE' AND \"VisitorKeyHash\" IS NOT NULL AND \"Name\" IS NULL AND \"Message\" IS NULL) OR (\"Kind\" = 'COMMENT' AND \"VisitorKeyHash\" IS NULL AND \"Name\" IS NOT NULL AND \"Message\" IS NOT NULL)");
+                        });
+                });
+
             modelBuilder.Entity("InviteMe.Infrastructure.Persistence.Adapters.StoryWishRow", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4456,6 +4501,15 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("InviteMe.Infrastructure.Persistence.Adapters.StoryWishInteractionRow", b =>
+                {
+                    b.HasOne("InviteMe.Infrastructure.Persistence.Adapters.StoryWishRow", null)
+                        .WithMany()
+                        .HasForeignKey("StoryWishId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

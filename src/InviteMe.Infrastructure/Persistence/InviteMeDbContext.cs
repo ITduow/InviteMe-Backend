@@ -34,6 +34,7 @@ public sealed class InviteMeDbContext(DbContextOptions<InviteMeDbContext> option
     public DbSet<WeddingWebsiteVersion> WeddingWebsiteVersions => Set<WeddingWebsiteVersion>();
     public DbSet<WeddingEvent> WeddingEvents => Set<WeddingEvent>();
     public DbSet<InviteMe.Infrastructure.Persistence.Adapters.StoryWishRow> StoryWishes => Set<InviteMe.Infrastructure.Persistence.Adapters.StoryWishRow>();
+    public DbSet<InviteMe.Infrastructure.Persistence.Adapters.StoryWishInteractionRow> StoryWishInteractions => Set<InviteMe.Infrastructure.Persistence.Adapters.StoryWishInteractionRow>();
     public DbSet<InvitationDraft> InvitationDrafts => Set<InvitationDraft>();
     public DbSet<InvitationSendBatch> InvitationSendBatches => Set<InvitationSendBatch>();
     public DbSet<InvitationSendJob> InvitationSendJobs => Set<InvitationSendJob>();

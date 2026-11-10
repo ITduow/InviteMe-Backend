@@ -204,6 +204,8 @@ public sealed class WeddingWebsiteValidationTests
         public Task<bool> ContainsAsync(Guid id, string key, CancellationToken ct) => Task.FromResult(registered && key == "known.png");
         public Task<UploadedWeddingMedia> AddAsync(Guid id, StoredWeddingImage image, CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<UploadedWeddingMedia>> ListAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
+        public Task<WeddingMediaDeleteResult> DeleteAsync(Guid weddingId, Guid mediaId,
+            Func<string, CancellationToken, Task> deleteStorage, CancellationToken ct) => throw new NotSupportedException();
     }
 
     private sealed class Store : IWeddingWebsiteStore
@@ -220,6 +222,12 @@ public sealed class WeddingWebsiteValidationTests
             Task.FromResult(new WebsiteDto(expectedVersion + 1, null, "PUBLISHED", false, []));
         public Task<WebsiteDto> UnpublishAsync(Guid id, int expectedVersion, Guid actorId, CancellationToken ct) =>
             Task.FromResult(new WebsiteDto(expectedVersion + 1, null, "UNPUBLISHED", false, []));
+        public Task<IReadOnlyList<WeddingWebsiteVersionDto>> ListVersionsAsync(Guid id, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<WeddingWebsiteVersionDto>>([]);
+        public Task<WeddingWebsiteVersionDetailDto?> GetVersionAsync(Guid id, Guid versionId, CancellationToken ct) =>
+            Task.FromResult<WeddingWebsiteVersionDetailDto?>(null);
+        public Task<WebsiteDto> RestoreVersionAsync(Guid id, Guid versionId, int expectedVersion, Guid actorId, CancellationToken ct) =>
+            throw new NotSupportedException();
         public Task<PublicWebsiteDto?> PublicAsync(string slug, CancellationToken ct) => Task.FromResult<PublicWebsiteDto?>(null);
     }
 }
