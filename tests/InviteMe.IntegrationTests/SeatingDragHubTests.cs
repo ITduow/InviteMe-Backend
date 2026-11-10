@@ -98,8 +98,14 @@ public sealed class SeatingDragHubTests
     }
 
     private static WeddingHub Hub(string connection, Guid user, IWeddingPermissionService permissions, ISeatingDragLeaseService leases,
-        IPlanningSeatingStore plan, IAccountStore account) => new(permissions, leases, plan, account)
+        IPlanningSeatingStore plan, IAccountStore account) => new(permissions, leases, plan, account,
+        new DenyAccess(), new BuilderPresenceRegistry(TimeProvider.System))
         { Context = new Caller(connection, user), Groups = new Groups() };
+    private sealed class DenyAccess : IWeddingAccessReader
+    {
+        public Task<WeddingAccess?> FindAsync(Guid weddingId, Guid userId, CancellationToken cancellationToken) =>
+            Task.FromResult<WeddingAccess?>(null);
+    }
     private sealed class Caller(string connection, Guid user) : HubCallerContext
     {
         public override string ConnectionId => connection;

@@ -35,6 +35,29 @@ public static class StoryBuilderV4Contract
         Field(document, "kind", out var kind) && kind.ValueKind == JsonValueKind.String && kind.GetString() == "wedding-website" &&
         Field(document, "schemaVersion", out var version) && version.ValueKind == JsonValueKind.Number && version.TryGetInt32(out var number) && number == 4;
 
+    /// <summary>Returns whether the published V4 document contains a guest-visible wishes section.</summary>
+    public static bool WishesEnabled(JsonElement document)
+    {
+        if (!IsDocument(document) || !Field(document, "pages", out var pages) || pages.ValueKind != JsonValueKind.Array)
+            return false;
+
+        return pages.EnumerateArray().Any(page => IsVisible(page) &&
+            Field(page, "sections", out var sections) && sections.ValueKind == JsonValueKind.Array &&
+            sections.EnumerateArray().Any(section => IsVisible(section) && GetText(section, "type") == "wishes"));
+    }
+
+    public static bool WishInteractionEnabled(JsonElement document, string interaction)
+    {
+        if (interaction is not ("allowLikes" or "allowComments") || !IsDocument(document) ||
+            !Field(document, "pages", out var pages) || pages.ValueKind != JsonValueKind.Array)
+            return false;
+
+        return pages.EnumerateArray().Any(page => IsVisible(page) &&
+            Field(page, "sections", out var sections) && sections.ValueKind == JsonValueKind.Array &&
+            sections.EnumerateArray().Any(section => IsVisible(section) && GetText(section, "type") == "wishes" &&
+                Field(section, "content", out var content) && Field(content, interaction, out var enabled) && enabled.ValueKind == JsonValueKind.True));
+    }
+
     public static bool ValidDraft(JsonElement doc, StoryTemplateConfig template)
     {
         if (!IsDocument(doc) || doc.GetRawText().Length > 200_000 || !OnlyFields(doc, RootFields) ||
@@ -306,7 +329,7 @@ public static class StoryBuilderV4Contract
             "weddingParty" => common.Concat(["groom", "bride"]).ToArray(),
             "gallery" => common.Concat(["images"]).ToArray(),
             "rsvp" => common.Concat(["submitLabel"]).ToArray(),
-            "wishes" => common,
+            "wishes" => common.Concat(["allowLikes", "allowComments", "displayLimit"]).ToArray(),
             "gift" => common,
             _ => []
         };
@@ -314,6 +337,7 @@ public static class StoryBuilderV4Contract
         if (!OptionalText(content, "title", 150) || !OptionalText(content, "intro", type == "couple" ? 1000 : 500) ||
             !OptionalText(content, "eyebrow", 120) || !OptionalText(content, "subtitle", 500) || !OptionalText(content, "ctaLabel", 60) || !OptionalText(content, "submitLabel", 60) ||
             !OptionalText(content, "targetEventId", 100) || !OptionalDate(content, "targetDate") || !OptionalImage(content, "imageUrl")) return false;
+        if (type == "wishes" && (!OptionalBool(content, "allowLikes") || !OptionalBool(content, "allowComments") || !OptionalWishDisplayLimit(content, "displayLimit"))) return false;
         if (Field(content, "slides", out var slides) && (slides.ValueKind != JsonValueKind.Array || slides.GetArrayLength() > 3 || slides.EnumerateArray().Any(x => !ValidImageItem(x)))) return false;
         if (Field(content, "images", out var images) && (images.ValueKind != JsonValueKind.Array || images.GetArrayLength() > 30 || images.EnumerateArray().Any(x => !ValidImageItem(x)))) return false;
         if (Field(content, "items", out var items) && (items.ValueKind != JsonValueKind.Array || items.GetArrayLength() > 20 || items.EnumerateArray().Any(x => !ValidStoryItem(x)))) return false;
@@ -395,12 +419,15 @@ public static class StoryBuilderV4Contract
         value is not null && WeddingStoryDocumentValidator.IsSharedAsset(value);
     private static bool ValidSlug(string slug) => slug.Length is >= 1 and <= 100 && Slug.IsMatch(slug) && !ReservedSlugs.Contains(slug);
     private static bool IsVisibleSection(JsonElement section) => !Field(section, "visible", out var value) || value.ValueKind == JsonValueKind.True;
+    private static bool IsVisible(JsonElement item) => !Field(item, "visible", out var value) || value.ValueKind == JsonValueKind.True;
     private static bool OnlyFields(JsonElement obj, IEnumerable<string> fields) => obj.ValueKind == JsonValueKind.Object &&
         obj.EnumerateObject().All(property => fields.Contains(property.Name, StringComparer.Ordinal));
     private static bool Field(JsonElement obj, string name, out JsonElement value) { value = default; return obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(name, out value); }
     private static bool Text(JsonElement obj, string name, int max, bool required = false) => Field(obj, name, out var value) && value.ValueKind == JsonValueKind.String && value.GetString()!.Length <= max && (!required || !string.IsNullOrWhiteSpace(value.GetString()));
     private static bool OptionalText(JsonElement obj, string name, int max) => !Field(obj, name, out _) || Text(obj, name, max);
     private static bool OptionalBool(JsonElement obj, string name) => !Field(obj, name, out var value) || value.ValueKind is JsonValueKind.True or JsonValueKind.False;
+    private static bool OptionalWishDisplayLimit(JsonElement obj, string name) => !Field(obj, name, out var value) ||
+        value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var limit) && limit is 0 or 3 or 6 or 9 or 12;
     private static bool Bool(JsonElement obj, string name) => Field(obj, name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False;
     private static bool Int(JsonElement obj, string name, int min, int max) => Field(obj, name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number) && number >= min && number <= max;
     private static bool GetBool(JsonElement obj, string name) => Field(obj, name, out var value) && value.ValueKind == JsonValueKind.True;

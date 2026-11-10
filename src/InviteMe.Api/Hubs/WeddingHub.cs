@@ -1,16 +1,17 @@
-using InviteMe.Application.Ports.Authorization;
 using InviteMe.Application.Common.Errors;
 using InviteMe.Domain.Weddings;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using InviteMe.Application.Features.Seating.Planning;
 using InviteMe.Application.Ports.Authentication;
+using InviteMe.Application.Ports.Authorization;
 
 namespace InviteMe.Api.Hubs;
 
 [Authorize]
 public sealed class WeddingHub(IWeddingPermissionService permissions, ISeatingDragLeaseService leases,
-    IPlanningSeatingStore seating, IAccountStore accounts) : Hub
+    IPlanningSeatingStore seating, IAccountStore accounts, IWeddingAccessReader access,
+    BuilderPresenceRegistry builderPresence) : Hub
 {
     public async Task JoinWedding(Guid weddingId)
     {
@@ -30,6 +31,52 @@ public sealed class WeddingHub(IWeddingPermissionService permissions, ISeatingDr
         leases.Disconnect(Context.ConnectionId, weddingId);
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, GroupName(weddingId), Context.ConnectionAborted);
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, SeatingGroupName(weddingId), Context.ConnectionAborted);
+    }
+
+    public async Task<IReadOnlyList<BuilderPresenceDto>> JoinBuilder(Guid weddingId, Guid sessionId, string? displayName,
+        string? pageId, string? sectionId)
+    {
+        await RequireBuilderOwner(weddingId);
+        if (sessionId == Guid.Empty) throw new HubException("BUILDER_SESSION_INVALID");
+        var location = new BuilderPresenceLocation(CleanToken(pageId, 100), CleanToken(sectionId, 100), null, "viewing");
+        var group = GroupName(weddingId);
+        await Groups.AddToGroupAsync(Context.ConnectionId, group, Context.ConnectionAborted);
+        var snapshot = builderPresence.Join(weddingId, sessionId, UserId, Context.ConnectionId,
+            CleanDisplayName(displayName), location);
+        var own = snapshot.Single(item => item.SessionId == sessionId);
+        await Clients.Caller.SendAsync("builderPresenceSnapshot", snapshot, Context.ConnectionAborted);
+        await Clients.OthersInGroup(group).SendAsync("builderPresenceChanged", own, Context.ConnectionAborted);
+        return snapshot;
+    }
+
+    public async Task UpdateBuilderPresence(Guid weddingId, Guid sessionId, string? displayName,
+        string? pageId, string? sectionId, string? fieldPath, string? status)
+    {
+        await RequireBuilderOwner(weddingId);
+        if (!builderPresence.AllowLocationUpdate(Context.ConnectionId)) return;
+        var location = new BuilderPresenceLocation(CleanToken(pageId, 100), CleanToken(sectionId, 100),
+            CleanFieldPath(fieldPath), CleanStatus(status));
+        var update = builderPresence.Update(weddingId, sessionId, UserId, Context.ConnectionId,
+            CleanDisplayName(displayName), location);
+        if (!update.Changed || update.Presence is null) return;
+        await Clients.OthersInGroup(GroupName(weddingId))
+            .SendAsync("builderPresenceChanged", update.Presence, Context.ConnectionAborted);
+    }
+
+    public async Task<IReadOnlyList<BuilderPresenceDto>> HeartbeatBuilder(Guid weddingId, Guid sessionId)
+    {
+        await RequireBuilderOwner(weddingId);
+        if (!builderPresence.Heartbeat(weddingId, sessionId, UserId, Context.ConnectionId))
+            throw new HubException("BUILDER_SESSION_EXPIRED");
+        return builderPresence.Snapshot(weddingId);
+    }
+
+    public async Task LeaveBuilder(Guid weddingId, Guid sessionId)
+    {
+        await RequireBuilderOwner(weddingId);
+        if (!builderPresence.Leave(weddingId, sessionId, UserId, Context.ConnectionId)) return;
+        await Clients.OthersInGroup(GroupName(weddingId))
+            .SendAsync("builderPresenceLeft", sessionId, Context.ConnectionAborted);
     }
 
     public async Task<SeatingDragSnapshot> GetSeatingDrags(Guid weddingId)
@@ -100,10 +147,12 @@ public sealed class WeddingHub(IWeddingPermissionService permissions, ISeatingDr
         return Task.CompletedTask;
     }
 
-    public override Task OnDisconnectedAsync(Exception? exception)
+    public override async Task OnDisconnectedAsync(Exception? exception)
     {
         leases.Disconnect(Context.ConnectionId);
-        return base.OnDisconnectedAsync(exception);
+        if (builderPresence.LeaveConnection(Context.ConnectionId) is { } presence)
+            await Clients.Group(GroupName(presence.WeddingId)).SendAsync("builderPresenceLeft", presence.SessionId);
+        await base.OnDisconnectedAsync(exception);
     }
 
     private Guid UserId => Guid.Parse(Context.User!.FindFirst("sub")!.Value);
@@ -117,6 +166,41 @@ public sealed class WeddingHub(IWeddingPermissionService permissions, ISeatingDr
         }
         catch (ApplicationProblemException) { throw new HubException("SEATING_ACCESS_DENIED"); }
     }
+
+    private async Task RequireBuilderOwner(Guid weddingId)
+    {
+        try
+        {
+            var userId = UserId;
+            if (await access.FindAsync(weddingId, userId, Context.ConnectionAborted) is not { } grant || !grant.IsOwner(userId))
+                throw new HubException("WEBSITE_OWNER_REQUIRED");
+        }
+        catch (ApplicationProblemException) { throw new HubException("WEDDING_ACCESS_DENIED"); }
+        catch (FormatException) { throw new HubException("AUTHENTICATION_REQUIRED"); }
+    }
+
+    private static string CleanDisplayName(string? value)
+    {
+        var clean = new string((value ?? string.Empty).Where(character => !char.IsControl(character)).Take(40).ToArray()).Trim();
+        return string.IsNullOrWhiteSpace(clean) ? "Người chỉnh sửa" : clean;
+    }
+
+    private static string? CleanToken(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var clean = new string(value.Where(character => !char.IsControl(character)).Take(maxLength).ToArray()).Trim();
+        return clean.Length == 0 ? null : clean;
+    }
+
+    private static string? CleanFieldPath(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var clean = new string(value.Where(character => char.IsAsciiLetterOrDigit(character) || character is '.' or '_' or '-' or '[' or ']' or ':')
+            .Take(160).ToArray());
+        return clean.Length == 0 ? null : clean;
+    }
+
+    private static string CleanStatus(string? value) => value is "editing" or "idle" ? value : "viewing";
     private static T Lease<T>(Func<T> action)
     {
         try { return action(); }

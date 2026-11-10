@@ -538,7 +538,7 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnName("status");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAdd()
+                        .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at")
                         .HasDefaultValueSql("NOW()");
@@ -2907,7 +2907,7 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnName("title");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
-                        .ValueGeneratedOnAddOrUpdate()
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at")
                         .HasDefaultValueSql("NOW()");
@@ -3228,6 +3228,53 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Weddings.WeddingWebsiteVersion", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("DocumentJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("document_json");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("kind");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.Property<Guid>("WeddingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wedding_id");
+
+                    b.HasKey("Id")
+                        .HasName("wedding_website_versions_pkey");
+
+                    b.HasIndex("WeddingId", "CreatedAt")
+                        .HasDatabaseName("ix_wedding_website_versions_wedding_created");
+
+                    b.ToTable("wedding_website_versions", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_wedding_website_versions_kind", "kind IN ('BASELINE', 'AUTO_SAVE', 'PUBLISHED', 'RESTORED')");
+
+                            t.HasCheckConstraint("ck_wedding_website_versions_version", "version >= 0");
+                        });
+                });
+
             modelBuilder.Entity("InviteMe.Infrastructure.Identity.ApplicationRole", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3457,6 +3504,51 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.HasIndex("Status", "NextAttemptAt");
 
                     b.ToTable("account_confirmation_email_jobs", "inviteme");
+                });
+
+            modelBuilder.Entity("InviteMe.Infrastructure.Persistence.Adapters.StoryWishInteractionRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Name")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("StoryWishId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("VisitorKeyHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("StoryWishId", "VisitorKeyHash")
+                        .IsUnique()
+                        .HasFilter("\"Kind\" = 'LIKE'");
+
+                    b.HasIndex("StoryWishId", "Kind", "CreatedAt");
+
+                    b.ToTable("StoryWishInteractions", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("CK_StoryWishInteractions_Kind", "\"Kind\" IN ('LIKE', 'COMMENT')");
+
+                            t.HasCheckConstraint("CK_StoryWishInteractions_Payload", "(\"Kind\" = 'LIKE' AND \"VisitorKeyHash\" IS NOT NULL AND \"Name\" IS NULL AND \"Message\" IS NULL) OR (\"Kind\" = 'COMMENT' AND \"VisitorKeyHash\" IS NULL AND \"Name\" IS NOT NULL AND \"Message\" IS NOT NULL)");
+                        });
                 });
 
             modelBuilder.Entity("InviteMe.Infrastructure.Persistence.Adapters.StoryWishRow", b =>
@@ -4394,11 +4486,30 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_wedding_settings_wedding");
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Weddings.WeddingWebsiteVersion", b =>
+                {
+                    b.HasOne("InviteMe.Domain.Weddings.WeddingSettings", null)
+                        .WithMany()
+                        .HasForeignKey("WeddingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_wedding_website_versions_wedding_settings");
+                });
+
             modelBuilder.Entity("InviteMe.Infrastructure.Notifications.AccountConfirmationEmailJob", b =>
                 {
                     b.HasOne("InviteMe.Infrastructure.Identity.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("InviteMe.Infrastructure.Persistence.Adapters.StoryWishInteractionRow", b =>
+                {
+                    b.HasOne("InviteMe.Infrastructure.Persistence.Adapters.StoryWishRow", null)
+                        .WithMany()
+                        .HasForeignKey("StoryWishId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

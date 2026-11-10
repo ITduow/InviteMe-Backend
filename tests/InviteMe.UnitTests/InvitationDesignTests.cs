@@ -96,6 +96,8 @@ public sealed class InvitationDesignTests
         public Task<bool> ContainsAsync(Guid id, string key, CancellationToken ct) => Task.FromResult(registered && key == "known.png");
         public Task<UploadedWeddingMedia> AddAsync(Guid id, StoredWeddingImage image, CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<UploadedWeddingMedia>> ListAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
+        public Task<WeddingMediaDeleteResult> DeleteAsync(Guid weddingId, Guid mediaId,
+            Func<string, CancellationToken, Task> deleteStorage, CancellationToken ct) => throw new NotSupportedException();
     }
     private static JsonElement WithImage(string source)
     {
