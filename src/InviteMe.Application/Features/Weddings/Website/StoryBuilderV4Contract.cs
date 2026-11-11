@@ -28,7 +28,7 @@ public static class StoryBuilderV4Contract
         ["loveStory"] = ["timeline", "editorial"],
         ["events"] = ["cards", "minimal"], ["weddingParty"] = ["classic", "editorial"],
         ["gallery"] = ["grid", "masonry"],
-        ["rsvp"] = ["default"], ["wishes"] = ["default"], ["gift"] = ["default", "minimal"]
+        ["rsvp"] = ["default"], ["wishes"] = ["default", "fountain"], ["gift"] = ["default", "minimal"]
     };
 
     public static bool IsDocument(JsonElement document) =>
