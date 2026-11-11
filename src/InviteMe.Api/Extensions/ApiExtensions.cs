@@ -23,6 +23,11 @@ internal static class ApiExtensions
             options.AddPolicy("wedding-cover-upload", context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
                 context.User.FindFirst("sub")?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
                 _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+            // The website gallery uploads each selected image as a separate request. Keep its limit separate
+            // from cover uploads and allow one 30-image gallery batch without immediately tripping the limiter.
+            options.AddPolicy("wedding-media-upload", context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+                context.User.FindFirst("sub")?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+                _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions { PermitLimit = 40, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
             options.AddPolicy("AiThankYouGeneration", context => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
                 context.User.FindFirst("sub")?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
                 _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions

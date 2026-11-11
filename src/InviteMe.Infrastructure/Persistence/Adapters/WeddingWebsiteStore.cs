@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using InviteMe.Application.Features.Weddings.Setup;
 using InviteMe.Application.Features.Weddings.Website;
 using InviteMe.Domain.Audit;
+using InviteMe.Domain.Gifts;
 using InviteMe.Domain.Weddings;
 using Microsoft.EntityFrameworkCore;
 using static InviteMe.Infrastructure.Persistence.Adapters.PlanningPersistence;
@@ -14,6 +15,14 @@ public sealed class WeddingWebsiteStore(InviteMeDbContext db, IWeddingMediaStora
 {
     private const int MaxSavedVersions = 20;
     private static readonly TimeSpan AutoSnapshotInterval = TimeSpan.FromMinutes(5);
+
+    public async Task<bool> GiftAccountsBelongToWeddingAsync(Guid weddingId, IReadOnlyCollection<Guid> accountIds, CancellationToken ct)
+    {
+        if (accountIds.Count == 0) return true;
+        var found = await db.Set<PlanningGiftAccount>().AsNoTracking()
+            .CountAsync(account => account.WeddingId == weddingId && accountIds.Contains(account.Id), ct);
+        return found == accountIds.Distinct().Count();
+    }
 
     public async Task<WebsiteDto> GetAsync(Guid id, CancellationToken ct)
     {
@@ -240,10 +249,55 @@ public sealed class WeddingWebsiteStore(InviteMeDbContext db, IWeddingMediaStora
             var mainEvent = new WeddingEventDto("main", "Lễ cưới", null, row.MainEventAt, null, row.Timezone,
                 row.VenueName, row.VenueAddress, null, 0);
             StoryBuilderV4Contract.ResolveEventReferences(publicJson, [mainEvent, .. events]);
+            await ResolvePublicGiftAccounts(publicJson, row.Id, ct);
             publicJson = StoryBuilderV4Contract.PublicProjection(publicJson);
         }
         else publicJson.Remove("sourceDraft");
         return new(row.Slug, JsonDocument.Parse(publicJson.ToJsonString()).RootElement.Clone());
+    }
+
+    private async Task ResolvePublicGiftAccounts(JsonObject document, Guid weddingId, CancellationToken ct)
+    {
+        if (document["content"] is not JsonObject content || content["gift"] is not JsonObject gift ||
+            gift["selectedAccounts"] is not JsonArray selected) return;
+        if (selected.Count == 0)
+        {
+            gift.Remove("selectedAccounts");
+            return;
+        }
+        var selections = selected.OfType<JsonObject>().Select(item => new
+        {
+            Role = item["role"]?.GetValue<string>(),
+            AccountId = Guid.TryParse(item["accountId"]?.GetValue<string>(), out var id) ? id : Guid.Empty,
+        }).Where(item => item.AccountId != Guid.Empty && item.Role is "groom" or "bride").ToArray();
+        var accountIds = selections.Select(item => item.AccountId).Distinct().ToArray();
+        var accounts = await db.Set<PlanningGiftAccount>().AsNoTracking().Where(account => account.WeddingId == weddingId && accountIds.Contains(account.Id))
+            .Select(account => new { account.Id, account.BankBin, account.BankName, account.AccountName, account.AccountNumber, account.Label })
+            .ToDictionaryAsync(account => account.Id, ct);
+        var publicAccounts = new JsonArray();
+        foreach (var selection in selections)
+        {
+            if (!accounts.TryGetValue(selection.AccountId, out var account)) continue;
+            var roleLabel = selection.Role == "bride" ? "Cô dâu" : "Chú rể";
+            var displayLabel = gift[$"{selection.Role}Label"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(displayLabel)) displayLabel = account.Label;
+            if (string.IsNullOrWhiteSpace(displayLabel)) displayLabel = roleLabel;
+            publicAccounts.Add(new JsonObject
+            {
+                ["role"] = selection.Role,
+                ["displayLabel"] = displayLabel,
+                ["bankBin"] = account.BankBin,
+                ["bankName"] = account.BankName,
+                ["accountName"] = account.AccountName,
+                ["accountNumber"] = account.AccountNumber,
+                ["label"] = account.Label,
+            });
+        }
+        gift["publicAccounts"] = publicAccounts;
+        gift["accountsManaged"] = true;
+        gift.Remove("selectedAccounts");
+        foreach (var field in new[] { "groomBank", "groomHolder", "groomAccount", "brideBank", "brideHolder", "brideAccount" })
+            gift.Remove(field);
     }
 
     private static bool HasPreviousSlug(string? json, string slug)

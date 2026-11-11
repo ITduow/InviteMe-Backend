@@ -220,6 +220,8 @@ public sealed class WeddingWebsiteValidationTests
         }
         public Task<WebsiteDto> PublishAsync(Guid id, int expectedVersion, Guid actorId, CancellationToken ct) =>
             Task.FromResult(new WebsiteDto(expectedVersion + 1, null, "PUBLISHED", false, []));
+        public Task<bool> GiftAccountsBelongToWeddingAsync(Guid weddingId, IReadOnlyCollection<Guid> accountIds, CancellationToken ct) =>
+            Task.FromResult(accountIds.Count == 0);
         public Task<WebsiteDto> UnpublishAsync(Guid id, int expectedVersion, Guid actorId, CancellationToken ct) =>
             Task.FromResult(new WebsiteDto(expectedVersion + 1, null, "UNPUBLISHED", false, []));
         public Task<IReadOnlyList<WeddingWebsiteVersionDto>> ListVersionsAsync(Guid id, CancellationToken ct) =>
