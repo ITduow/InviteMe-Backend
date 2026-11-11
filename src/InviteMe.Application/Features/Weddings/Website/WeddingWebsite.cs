@@ -20,6 +20,7 @@ public interface IWeddingWebsiteStore
     Task<WebsiteDto> GetAsync(Guid id, CancellationToken ct);
     Task<WebsiteDto> SaveAsync(Guid id, SaveWebsite input, CancellationToken ct);
     Task<WebsiteDto> PublishAsync(Guid id, int expectedVersion, Guid actorId, CancellationToken ct);
+    Task<bool> GiftAccountsBelongToWeddingAsync(Guid weddingId, IReadOnlyCollection<Guid> accountIds, CancellationToken ct);
     Task<WebsiteDto> UnpublishAsync(Guid id, int expectedVersion, Guid actorId, CancellationToken ct);
     Task<IReadOnlyList<WeddingWebsiteVersionDto>> ListVersionsAsync(Guid id, CancellationToken ct);
     Task<WeddingWebsiteVersionDetailDto?> GetVersionAsync(Guid id, Guid versionId, CancellationToken ct);
@@ -56,6 +57,7 @@ public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAc
         await EnsureTemplateAvailable(input.Document, ct);
         if (!await ValidForSave(input.Document, ct))
             throw new ApplicationProblemException(ProblemKind.BadRequest, "WEBSITE_DOCUMENT_INVALID", "Website content is invalid.");
+        await ValidateGiftAccounts(id, input.Document, ct);
         await ValidateMedia(id, input.Document, ct);
         var result = await store.SaveAsync(id, input, ct);
         await changes.PublishAsync(id, new("WeddingWebsiteChanged", id, result.Version), ct);
@@ -72,6 +74,7 @@ public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAc
             await RequireTemplateEntitlement(id, doc, ct);
             await EnsureTemplateAvailable(doc, ct);
             if (!await ValidForSave(doc, ct)) throw new ApplicationProblemException(ProblemKind.BadRequest, "WEBSITE_DRAFT_INVALID", "Save valid website content before publishing.");
+            await ValidateGiftAccounts(id, doc, ct);
             await ValidateMedia(id, doc, ct);
         }
         var result = await store.PublishAsync(id, version, actor, ct);
@@ -113,6 +116,7 @@ public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAc
         await EnsureTemplateAvailable(snapshot.Document, ct);
         if (!await ValidForSave(snapshot.Document, ct))
             throw new ApplicationProblemException(ProblemKind.BadRequest, "WEBSITE_DRAFT_INVALID", "Phiên bản cũ không còn hợp lệ với mẫu website hiện tại.");
+        await ValidateGiftAccounts(id, snapshot.Document, ct);
         await ValidateMedia(id, snapshot.Document, ct);
         var result = await store.RestoreVersionAsync(id, versionId, expectedVersion, actor, ct);
         await changes.PublishAsync(id, new("WeddingWebsiteChanged", id, result.Version), ct);
@@ -176,6 +180,14 @@ public sealed class WeddingWebsiteHandler(IWeddingWebsiteStore store, IWeddingAc
         if (key.GetString() == "story-classic") return WeddingStoryDocumentValidator.Valid(doc);
         var template = await templates.GetPublishedForStoryAsync(key.GetString()!, ct);
         return template is not null && WeddingStoryDocumentValidator.Valid(doc, template.Config);
+    }
+
+    private async Task ValidateGiftAccounts(Guid weddingId, JsonElement document, CancellationToken ct)
+    {
+        var accountIds = StoryBuilderV4Contract.SelectedGiftAccountIds(document);
+        if (accountIds.Count > 0 && !await store.GiftAccountsBelongToWeddingAsync(weddingId, accountIds, ct))
+            throw new ApplicationProblemException(ProblemKind.BadRequest, "WEBSITE_GIFT_ACCOUNT_NOT_OWNED",
+                "Một tài khoản mừng cưới đã bị gỡ hoặc không thuộc đám cưới này. Hãy chọn lại tài khoản trước khi lưu.");
     }
 
     private async Task EnsureTemplateAvailable(JsonElement document, CancellationToken ct)

@@ -23,9 +23,10 @@ internal static class WeddingMediaEndpoints
             if (form.File is null) return Results.BadRequest(new { code = "MEDIA_FILE_REQUIRED" });
             await using var stream = form.File.OpenReadStream();
             return Results.Ok(await h.UploadAsync(weddingId, stream, form.File.Length, ct));
-        }).DisableAntiforgery().RequireRateLimiting("wedding-cover-upload")
+        }).DisableAntiforgery().RequireRateLimiting("wedding-media-upload")
             .WithMetadata(new RequestSizeLimitAttribute(InviteMe.Domain.Weddings.UploadLimits.MaxImageRequestBytes),
-                new RequestFormLimitsAttribute { MultipartBodyLengthLimit = InviteMe.Domain.Weddings.UploadLimits.MaxImageRequestBytes });
+                new RequestFormLimitsAttribute { MultipartBodyLengthLimit = InviteMe.Domain.Weddings.UploadLimits.MaxImageRequestBytes })
+            .Produces<UploadedWeddingMedia>(200).ProducesProblem(401).ProducesProblem(403).ProducesProblem(413).ProducesProblem(429);
         return endpoints;
     }
 }

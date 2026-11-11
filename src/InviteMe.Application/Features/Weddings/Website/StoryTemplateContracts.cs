@@ -31,8 +31,8 @@ public static class StoryTemplateContract
     private static readonly Dictionary<string, string[]> Variants = new(StringComparer.Ordinal)
     {
         ["hero"] = ["floral", "dark", "split", "editorial", "ceremonial"], ["couple"] = ["alternating", "two-columns", "editorial"],
-        ["countdown"] = ["classic", "banner", "inline"], ["loveStory"] = ["timeline", "editorial"],
-        ["events"] = ["cards", "minimal"], ["weddingParty"] = ["classic", "editorial"], ["gallery"] = ["grid", "masonry"], ["rsvp"] = ["default"],
+        ["countdown"] = ["classic", "banner", "inline"], ["loveStory"] = ["timeline", "editorial", "photo-journal"],
+        ["events"] = ["cards", "minimal"], ["weddingParty"] = ["classic", "editorial"], ["gallery"] = ["grid", "masonry", "featured", "flipbook"], ["rsvp"] = ["default"],
         ["wishes"] = ["default"], ["gift"] = ["default", "minimal"]
     };
     private static readonly HashSet<string> Fonts =

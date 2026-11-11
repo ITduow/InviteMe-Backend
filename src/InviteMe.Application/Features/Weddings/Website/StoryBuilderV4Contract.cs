@@ -25,9 +25,9 @@ public static class StoryBuilderV4Contract
         ["hero"] = ["floral", "dark", "split", "editorial", "ceremonial"],
         ["couple"] = ["alternating", "two-columns", "editorial"],
         ["countdown"] = ["classic", "banner", "inline"],
-        ["loveStory"] = ["timeline", "editorial"],
+        ["loveStory"] = ["timeline", "editorial", "photo-journal"],
         ["events"] = ["cards", "minimal"], ["weddingParty"] = ["classic", "editorial"],
-        ["gallery"] = ["grid", "masonry"],
+        ["gallery"] = ["grid", "masonry", "featured", "flipbook"],
         ["rsvp"] = ["default"], ["wishes"] = ["default", "fountain"], ["gift"] = ["default", "minimal"]
     };
 
@@ -190,10 +190,19 @@ public static class StoryBuilderV4Contract
                     "wedding.venueAddress" => data.VenueAddress,
                     _ => null
                 };
-                if (string.IsNullOrWhiteSpace(value)) continue;
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    if (target == "countdown.targetDate" && section["content"] is JsonObject countdownContent)
+                        countdownContent.Remove("targetDate");
+                    continue;
+                }
                 var content = section["content"] as JsonObject ?? (JsonObject)(section["content"] = new JsonObject());
                 if (target == "heroImageUrl") content["imageUrl"] = value;
-                else if (target == "countdown.targetDate") content["targetDate"] = value;
+                else if (target == "countdown.targetDate")
+                {
+                    content["targetDate"] = value;
+                    content["timeZoneId"] = data.TimeZoneId;
+                }
                 else if (target?.StartsWith("mainEvent.", StringComparison.Ordinal) == true)
                 {
                     var events = content["events"] as JsonArray;
@@ -254,6 +263,25 @@ public static class StoryBuilderV4Contract
         foreach (var page in pages.OfType<JsonObject>())
         foreach (var section in (page["sections"] as JsonArray ?? []).OfType<JsonObject>())
         {
+            if (section["type"]?.GetValue<string>() == "countdown" && section["content"] is JsonObject countdown &&
+                countdown["targetEventId"]?.GetValue<string>() is { Length: > 0 } targetEventId)
+            {
+                if (byId.TryGetValue(targetEventId, out var targetEvent))
+                {
+                    if (targetEvent.StartsAt is { } startsAt)
+                        countdown["targetDate"] = JsonValue.Create(startsAt.ToString("O"));
+                    else
+                        countdown.Remove("targetDate");
+                    if (!string.IsNullOrWhiteSpace(targetEvent.TimeZoneId))
+                        countdown["timeZoneId"] = targetEvent.TimeZoneId;
+                }
+                else
+                {
+                    countdown.Remove("targetDate");
+                    countdown.Remove("timeZoneId");
+                }
+                continue;
+            }
             if (section["type"]?.GetValue<string>() != "events" || section["content"] is not JsonObject content ||
                 content["eventIds"] is not JsonArray ids) continue;
             var resolved = new JsonArray();
@@ -321,9 +349,9 @@ public static class StoryBuilderV4Contract
         var common = new[] { "title", "intro" };
         var fields = type switch
         {
-            "hero" => common.Concat(["eyebrow", "subtitle", "ctaLabel", "imageUrl", "slides"]).ToArray(),
+            "hero" => common.Concat(["eyebrow", "subtitle", "ctaLabel", "imageUrl", "imageAlt", "imageFocus", "overlayStrength", "slides"]).ToArray(),
             "couple" => common.Concat(["groom", "bride"]).ToArray(),
-            "countdown" => common.Concat(["targetDate", "targetEventId"]).ToArray(),
+            "countdown" => common.Concat(["targetDate", "targetEventId", "timeZoneId", "showSeconds", "completedMessage"]).ToArray(),
             "loveStory" => common.Concat(["items"]).ToArray(),
             "events" => common.Concat(["events", "eventIds"]).ToArray(),
             "weddingParty" => common.Concat(["groom", "bride"]).ToArray(),
@@ -335,11 +363,16 @@ public static class StoryBuilderV4Contract
         };
         if (!OnlyFields(content, fields)) return false;
         if (!OptionalText(content, "title", 150) || !OptionalText(content, "intro", type == "couple" ? 1000 : 500) ||
-            !OptionalText(content, "eyebrow", 120) || !OptionalText(content, "subtitle", 500) || !OptionalText(content, "ctaLabel", 60) || !OptionalText(content, "submitLabel", 60) ||
+            !OptionalText(content, "eyebrow", 120) || !OptionalText(content, "subtitle", 500) || !OptionalText(content, "ctaLabel", 60) || !OptionalText(content, "imageAlt", 200) || !OptionalText(content, "submitLabel", 60) ||
             !OptionalText(content, "targetEventId", 100) || !OptionalDate(content, "targetDate") || !OptionalImage(content, "imageUrl")) return false;
+        if (type == "hero" && Field(content, "imageFocus", out var imageFocus) &&
+            (!OnlyFields(imageFocus, ["x", "y"]) || !Int(imageFocus, "x", 0, 100) || !Int(imageFocus, "y", 0, 100))) return false;
+        if (type == "hero" && Field(content, "overlayStrength", out var overlay) &&
+            (overlay.ValueKind != JsonValueKind.String || overlay.GetString() is not ("none" or "soft" or "strong"))) return false;
         if (type == "wishes" && (!OptionalBool(content, "allowLikes") || !OptionalBool(content, "allowComments") || !OptionalWishDisplayLimit(content, "displayLimit"))) return false;
         if (Field(content, "slides", out var slides) && (slides.ValueKind != JsonValueKind.Array || slides.GetArrayLength() > 3 || slides.EnumerateArray().Any(x => !ValidImageItem(x)))) return false;
-        if (Field(content, "images", out var images) && (images.ValueKind != JsonValueKind.Array || images.GetArrayLength() > 30 || images.EnumerateArray().Any(x => !ValidImageItem(x)))) return false;
+        if (type == "countdown" && (!OptionalText(content, "timeZoneId", 100) || !OptionalBool(content, "showSeconds") || !OptionalText(content, "completedMessage", 200))) return false;
+        if (Field(content, "images", out var images) && (images.ValueKind != JsonValueKind.Array || images.GetArrayLength() > 30 || images.EnumerateArray().Any(x => type == "gallery" ? !ValidGalleryImageItem(x) : !ValidImageItem(x)))) return false;
         if (Field(content, "items", out var items) && (items.ValueKind != JsonValueKind.Array || items.GetArrayLength() > 20 || items.EnumerateArray().Any(x => !ValidStoryItem(x)))) return false;
         if (Field(content, "events", out var events) && (events.ValueKind != JsonValueKind.Array || events.GetArrayLength() > 20 || events.EnumerateArray().Any(x => !ValidEvent(x)))) return false;
         if (Field(content, "eventIds", out var eventIds) && (eventIds.ValueKind != JsonValueKind.Array || eventIds.GetArrayLength() > 20 ||
@@ -403,8 +436,38 @@ public static class StoryBuilderV4Contract
     private static bool ValidImageItem(JsonElement value) => value.ValueKind == JsonValueKind.Object && OnlyFields(value, ["id", "imageUrl", "alt"]) &&
         Text(value, "id", 100, true) && Text(value, "imageUrl", 2048, true) && IsAllowedImage(GetText(value, "imageUrl")) && OptionalText(value, "alt", 200);
 
-    private static bool ValidGift(JsonElement value) => value.ValueKind == JsonValueKind.Object && OnlyFields(value, ["enabled", "groomBank", "groomHolder", "groomAccount", "brideBank", "brideHolder", "brideAccount"]) &&
-        Bool(value, "enabled") && new[] { "groomBank", "groomHolder", "groomAccount", "brideBank", "brideHolder", "brideAccount" }.All(x => OptionalText(value, x, 100));
+    private static bool ValidGalleryImageItem(JsonElement value) => value.ValueKind == JsonValueKind.Object && OnlyFields(value, ["id", "imageUrl", "alt", "caption"]) &&
+        Text(value, "id", 100, true) && Text(value, "imageUrl", 2048, true) && IsAllowedImage(GetText(value, "imageUrl")) &&
+        OptionalText(value, "alt", 200) && OptionalText(value, "caption", 200);
+
+    private static bool ValidGift(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Object ||
+            !OnlyFields(value, ["enabled", "groomBank", "groomHolder", "groomAccount", "brideBank", "brideHolder", "brideAccount", "groomLabel", "brideLabel", "selectedAccounts"]) ||
+            !Bool(value, "enabled") ||
+            !new[] { "groomBank", "groomHolder", "groomAccount", "brideBank", "brideHolder", "brideAccount", "groomLabel", "brideLabel" }.All(x => OptionalText(value, x, 100)))
+            return false;
+        if (!Field(value, "selectedAccounts", out var accounts)) return true;
+        if (accounts.ValueKind != JsonValueKind.Array || accounts.GetArrayLength() > 2) return false;
+        var roles = new HashSet<string>(StringComparer.Ordinal);
+        var ids = new HashSet<Guid>();
+        foreach (var account in accounts.EnumerateArray())
+        {
+            if (!OnlyFields(account, ["role", "accountId"]) || !Text(account, "role", 10, true) || !Text(account, "accountId", 36, true)) return false;
+            var role = GetText(account, "role");
+            if (role is not ("groom" or "bride") || !roles.Add(role) ||
+                !Guid.TryParse(GetText(account, "accountId"), out var id) || id == Guid.Empty || !ids.Add(id)) return false;
+        }
+        return true;
+    }
+
+    public static IReadOnlyList<Guid> SelectedGiftAccountIds(JsonElement document)
+    {
+        if (!IsDocument(document) || !Field(document, "content", out var content) || !Field(content, "gift", out var gift) ||
+            !Field(gift, "selectedAccounts", out var accounts) || accounts.ValueKind != JsonValueKind.Array) return [];
+        return accounts.EnumerateArray().Select(item => Guid.TryParse(GetText(item, "accountId"), out var id) ? id : Guid.Empty)
+            .Where(id => id != Guid.Empty).Distinct().ToArray();
+    }
     private static bool ValidSocial(JsonElement value) => value.ValueKind == JsonValueKind.Object && OnlyFields(value, ["facebook", "instagram"]) &&
         OptionalHttps(value, "facebook") && OptionalHttps(value, "instagram");
 
