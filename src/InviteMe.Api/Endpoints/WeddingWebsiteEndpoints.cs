@@ -58,6 +58,16 @@ internal static class WeddingWebsiteEndpoints
             .WithName("GetWeddingWebsiteVersion");
         group.MapPost("/versions/{versionId:guid}/restore", (Guid weddingId, Guid versionId, WebsiteVersion input, WeddingWebsiteHandler handler, CancellationToken ct) => handler.RestoreVersionAsync(weddingId, versionId, input.ExpectedVersion, ct))
             .WithName("RestoreWeddingWebsiteVersion");
+        group.MapDelete("/wishes/{wishId:guid}", async (Guid weddingId, Guid wishId, StoryWishHandler handler, CancellationToken ct) =>
+        {
+            await handler.DeleteWishAsync(weddingId, wishId, ct);
+            return Results.NoContent();
+        }).WithName("DeleteWeddingStoryWish");
+        group.MapDelete("/wishes/{wishId:guid}/comments/{commentId:guid}", async (Guid weddingId, Guid wishId, Guid commentId, StoryWishHandler handler, CancellationToken ct) =>
+        {
+            await handler.DeleteCommentAsync(weddingId, wishId, commentId, ct);
+            return Results.NoContent();
+        }).WithName("DeleteWeddingStoryWishComment");
         var events = endpoints.MapGroup("/api/weddings/{weddingId:guid}/events").RequireAuthorization().WithTags("Wedding Events");
         events.MapGet("", (Guid weddingId, WeddingEventHandler handler, CancellationToken ct) => handler.ListAsync(weddingId, ct))
             .WithName("ListWeddingEvents");

@@ -1,4 +1,5 @@
 using InviteMe.Application.Features.Weddings.Website;
+using InviteMe.Domain.Audit;
 using Microsoft.EntityFrameworkCore;
 
 namespace InviteMe.Infrastructure.Persistence.Adapters;
@@ -87,6 +88,34 @@ public sealed class StoryWishStore(InviteMeDbContext db) : IStoryWishStore
         db.StoryWishInteractions.Add(row);
         await db.SaveChangesAsync(ct);
         return new(row.Id, wishId, name, message, row.CreatedAt);
+    }
+
+    public async Task<bool> DeleteCommentAsync(Guid weddingId, Guid wishId, Guid commentId, Guid actorId, CancellationToken ct)
+    {
+        var comment = await (from interaction in db.StoryWishInteractions
+                              join wish in db.StoryWishes on interaction.StoryWishId equals wish.Id
+                              where wish.WeddingId == weddingId && wish.Id == wishId &&
+                                    interaction.Id == commentId && interaction.Kind == CommentKind
+                              select interaction).SingleOrDefaultAsync(ct);
+        if (comment is null) return false;
+
+        db.StoryWishInteractions.Remove(comment);
+        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "story_wish_interactions", commentId,
+            "STORY_WISH_COMMENT_DELETED", actorId));
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    public async Task<bool> DeleteWishAsync(Guid weddingId, Guid wishId, Guid actorId, CancellationToken ct)
+    {
+        var wish = await db.StoryWishes.SingleOrDefaultAsync(x => x.WeddingId == weddingId && x.Id == wishId, ct);
+        if (wish is null) return false;
+
+        db.StoryWishes.Remove(wish);
+        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "story_wishes", wishId,
+            "STORY_WISH_DELETED", actorId));
+        await db.SaveChangesAsync(ct);
+        return true;
     }
 
     public async Task<StoryWishLikeDto?> SetLikedAsync(string slug, Guid wishId, string visitorKeyHash, bool liked, CancellationToken ct)
