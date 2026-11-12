@@ -33,7 +33,8 @@ public static class StoryTemplateContract
         ["hero"] = ["floral", "dark", "split", "editorial", "ceremonial"], ["couple"] = ["alternating", "two-columns", "editorial"],
         ["countdown"] = ["classic", "banner", "inline"], ["loveStory"] = ["timeline", "editorial", "photo-journal"],
         ["events"] = ["cards", "minimal"], ["weddingParty"] = ["classic", "editorial"], ["gallery"] = ["grid", "masonry", "featured", "flipbook"], ["rsvp"] = ["default"],
-        ["wishes"] = ["default"], ["gift"] = ["default", "minimal"]
+        // Keep the template catalog aligned with the V4 renderer's current wishes layouts.
+        ["wishes"] = ["default", "fountain"], ["gift"] = ["default", "minimal"]
     };
     private static readonly HashSet<string> Fonts =
         ["Georgia", "Playfair Display", "Nunito", "Lora", "Cormorant Garamond", "Montserrat"];
@@ -81,15 +82,21 @@ public static class StoryTemplateContract
         if (section.DefaultContent is not { } content || content.ValueKind == JsonValueKind.Null) return true;
         var fields = section.Type switch
         {
-            "hero" => new[] { "title", "eyebrow", "subtitle" },
+            "hero" => new[] { "title", "eyebrow", "subtitle", "ctaLabel", "overlayStrength" },
+            "countdown" => new[] { "title", "intro", "showSeconds", "completedMessage" },
             "rsvp" => new[] { "title", "intro", "submitLabel" },
-            "couple" or "countdown" or "loveStory" or "events" or "weddingParty" or "gallery" or "wishes" or "gift" => new[] { "title", "intro" },
+            "wishes" => new[] { "title", "intro", "displayLimit", "allowLikes", "allowComments" },
+            "couple" or "loveStory" or "events" or "weddingParty" or "gallery" or "gift" => new[] { "title", "intro" },
             _ => []
         };
         return OnlyFields(content, fields) && OptionalText(content, "title", 150) &&
             OptionalText(content, "intro", section.Type == "couple" ? 1000 : 500) &&
             OptionalText(content, "eyebrow", 120) && OptionalText(content, "subtitle", 500) &&
-            OptionalText(content, "submitLabel", 60);
+            OptionalText(content, "submitLabel", 60) && OptionalText(content, "ctaLabel", 60) &&
+            OptionalText(content, "completedMessage", 200) &&
+            OptionalChoice(content, "overlayStrength", "none", "soft", "strong") &&
+            OptionalBoolean(content, "showSeconds") && OptionalBoolean(content, "allowLikes") &&
+            OptionalBoolean(content, "allowComments") && OptionalIntegerChoice(content, "displayLimit", 0, 3, 6, 9, 12);
     }
 
     private static bool ValidStyle(StorySectionStyle? style) => style is null ||
@@ -102,6 +109,15 @@ public static class StoryTemplateContract
 
     private static bool OptionalText(JsonElement obj, string name, int max) => !obj.TryGetProperty(name, out var value) ||
         value.ValueKind == JsonValueKind.String && value.GetString()!.Length <= max;
+
+    private static bool OptionalBoolean(JsonElement obj, string name) => !obj.TryGetProperty(name, out var value) ||
+        value.ValueKind is JsonValueKind.True or JsonValueKind.False;
+
+    private static bool OptionalChoice(JsonElement obj, string name, params string[] allowed) => !obj.TryGetProperty(name, out var value) ||
+        value.ValueKind == JsonValueKind.String && value.GetString() is { } text && allowed.Contains(text, StringComparer.Ordinal);
+
+    private static bool OptionalIntegerChoice(JsonElement obj, string name, params int[] allowed) => !obj.TryGetProperty(name, out var value) ||
+        value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number) && allowed.Contains(number);
 
     private static bool ValidColors(StoryThemeColors? c) => c is not null &&
         new[] { c.Primary, c.Background, c.Accent, c.Text }.All(x =>
