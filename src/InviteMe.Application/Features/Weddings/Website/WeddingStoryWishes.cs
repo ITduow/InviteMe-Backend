@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
 using InviteMe.Application.Common.Errors;
+using InviteMe.Application.Ports.Authentication;
+using InviteMe.Application.Ports.Authorization;
 
 namespace InviteMe.Application.Features.Weddings.Website;
 
@@ -18,10 +20,13 @@ public interface IStoryWishStore
     Task<StoryWishDto> AddAsync(string slug, string name, string message, CancellationToken ct);
     Task<StoryWishCommentPageDto?> ListCommentsAsync(string slug, Guid wishId, int skip, int take, CancellationToken ct);
     Task<StoryWishCommentDto?> AddCommentAsync(string slug, Guid wishId, string name, string message, CancellationToken ct);
+    Task<bool> DeleteWishAsync(Guid weddingId, Guid wishId, Guid actorId, CancellationToken ct);
+    Task<bool> DeleteCommentAsync(Guid weddingId, Guid wishId, Guid commentId, Guid actorId, CancellationToken ct);
     Task<StoryWishLikeDto?> SetLikedAsync(string slug, Guid wishId, string visitorKeyHash, bool liked, CancellationToken ct);
 }
 
-public sealed class StoryWishHandler(WeddingWebsiteHandler websites, IStoryWishStore store)
+public sealed class StoryWishHandler(WeddingWebsiteHandler websites, IStoryWishStore store,
+    IWeddingAccessReader access, ICurrentUser current)
 {
     public async Task<IReadOnlyList<StoryWishDto>> ListAsync(string slug, string? visitorKey, CancellationToken ct)
     {
@@ -54,6 +59,30 @@ public sealed class StoryWishHandler(WeddingWebsiteHandler websites, IStoryWishS
         EnsureInteractionEnabled(website.Document, "allowComments");
         var (name, message) = ValidateText(input.Name, input.Message, 500, "STORY_WISH_COMMENT_INVALID");
         return await store.AddCommentAsync(website.Slug, wishId, name, message, ct) ?? throw WishNotFound();
+    }
+
+    public async Task DeleteCommentAsync(Guid weddingId, Guid wishId, Guid commentId, CancellationToken ct)
+    {
+        var actor = current.UserId ?? throw new ApplicationProblemException(ProblemKind.Unauthenticated,
+            "AUTHENTICATION_REQUIRED", "Sign in to manage wedding wishes.");
+        if (await access.FindAsync(weddingId, actor, ct) is not { } grant || !grant.IsOwner(actor))
+            throw new ApplicationProblemException(ProblemKind.Forbidden, "WEDDING_ACCESS_DENIED",
+                "Only the wedding owner can remove a public comment.");
+        if (!await store.DeleteCommentAsync(weddingId, wishId, commentId, actor, ct))
+            throw new ApplicationProblemException(ProblemKind.NotFound, "STORY_WISH_COMMENT_NOT_FOUND",
+                "Không tìm thấy bình luận trong đám cưới này.");
+    }
+
+    public async Task DeleteWishAsync(Guid weddingId, Guid wishId, CancellationToken ct)
+    {
+        var actor = current.UserId ?? throw new ApplicationProblemException(ProblemKind.Unauthenticated,
+            "AUTHENTICATION_REQUIRED", "Sign in to manage wedding wishes.");
+        if (await access.FindAsync(weddingId, actor, ct) is not { } grant || !grant.IsOwner(actor))
+            throw new ApplicationProblemException(ProblemKind.Forbidden, "WEDDING_ACCESS_DENIED",
+                "Only the wedding owner can remove a public wish.");
+        if (!await store.DeleteWishAsync(weddingId, wishId, actor, ct))
+            throw new ApplicationProblemException(ProblemKind.NotFound, "STORY_WISH_NOT_FOUND",
+                "Không tìm thấy lời chúc trong đám cưới này.");
     }
 
     public async Task<StoryWishLikeDto> SetLikedAsync(string slug, Guid wishId, string? visitorKey, bool liked, CancellationToken ct)
