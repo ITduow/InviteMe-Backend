@@ -1,5 +1,6 @@
 using FluentValidation;
 using System.Text.Json;
+using System.Text;
 using System.Globalization;
 using InviteMe.Application.Common.Behaviors;
 using InviteMe.Application.Common.Errors;
@@ -7,6 +8,7 @@ using InviteMe.Application.Common.Models;
 using InviteMe.Application.Ports.AI;
 using InviteMe.Application.Ports.Authentication;
 using InviteMe.Application.Ports.Authorization;
+using InviteMe.Domain.Guests;
 using InviteMe.Domain.Weddings;
 using Regex = global::System.Text.RegularExpressions.Regex;
 
@@ -14,12 +16,18 @@ namespace InviteMe.Application.Features.Invitations.Messaging;
 
 // Tone is accepted only for older clients; generation no longer uses it.
 public sealed record GenerateInvitationDraft(string? AdditionalInstructions = null, string? Tone = null);
+public sealed record GenerateInvitationSmsDraft(int ExpectedVersion, string? AdditionalInstructions = null, IReadOnlyList<Guid>? GuestIds = null);
 // Tone remains optional for rolling compatibility with clients that still send it.
 public sealed record SaveInvitationDraft(string Subject, string Content, int ExpectedVersion, string? SmsContent = null, string? Tone = null);
 public sealed record InvitationDraftDto(Guid WeddingId, string Subject, string Content, int Version, bool UsedFallback,
-    string SmsContent, bool SmsUsedFallback);
+    string SmsContent, bool SmsUsedFallback, bool SmsCopyWasShortened = false, int SmsCopyLimit = 60);
 public sealed record InvitationPreviewDto(Guid GuestId, string RecipientName, string Subject, string Content, string SmsContent,
-    string RsvpLink, string QrLink, string EmailHtml, string EmailPlainText, string? WeddingImageUrl);
+    string RsvpLink, string QrLink, string EmailHtml, string EmailPlainText, string? WeddingImageUrl,
+    string? SmsEncoding = null, int SmsUnits = 0, int SmsSegments = 0, bool SmsCopyWasShortened = false);
+public sealed record PreviewInvitationSmsRecipients(IReadOnlyList<Guid> GuestIds);
+public sealed record InvitationSmsFitIssue(Guid GuestId, string RecipientName, string Code);
+public sealed record InvitationSmsPreflightDto(int RecipientCount, int RecommendedCopyLimit, int MaximumSegments, int ShortenedCount,
+    int UnsendableCount, IReadOnlyList<InvitationSmsFitIssue> Issues, int AdditionalIssueCount);
 public sealed record InvitationTestSendDto(Guid GuestId);
 public sealed record QueueInvitationBatch(IReadOnlyList<Guid>? GuestIds, InviteMe.Domain.Guests.PlanningGroupKind? Group, IReadOnlyList<string> Channels,
     string? Subject = null, string? Content = null, string? SmsContent = null);
@@ -30,7 +38,8 @@ public sealed record InvitationSendBatchDto(Guid Id, string Status, int TotalCou
     int PendingCount, DateTimeOffset CreatedAt, IReadOnlyList<InvitationSendJobDto> Jobs,
     int AcceptedCount = 0, int DeliveredCount = 0, int UnknownCount = 0, int SimulatedCount = 0);
 
-public sealed record InvitationRecipient(Guid Id, string RecipientName, string? Email, string? Phone, string? Token, string CoupleNames = "");
+public sealed record InvitationRecipient(Guid Id, string RecipientName, string? Email, string? Phone, string? Token,
+    string CoupleNames = "", PlanningGroupKind? Group = null);
 public sealed record InvitationBatchWriteResult(Guid BatchId, bool Replayed);
 public sealed record InvitationMessagingLinks(string FrontendUrl, string PublicApiUrl);
 public sealed record InvitationEmailPreview(string Html, string PlainText, string? ImageUrl);
@@ -52,8 +61,11 @@ public interface IInvitationMessagingStore
     Task<InvitationDraftDto?> GetDraftAsync(Guid weddingId, CancellationToken ct);
     Task<InvitationDraftDto> SaveDraftAsync(Guid weddingId, Guid actorId, SaveInvitationDraft input,
         bool usedFallback, bool smsUsedFallback, CancellationToken ct);
+    Task<InvitationDraftDto> SaveSmsDraftAsync(Guid weddingId, Guid actorId, int expectedVersion,
+        string smsContent, bool smsUsedFallback, CancellationToken ct);
     Task<InvitationWeddingContext?> WeddingContextAsync(Guid weddingId, CancellationToken ct);
     Task<InvitationRecipient?> FindRecipientAsync(Guid weddingId, Guid guestId, CancellationToken ct);
+    Task<IReadOnlyList<InvitationRecipient>> FindRecipientsAsync(Guid weddingId, IReadOnlyList<Guid> guestIds, CancellationToken ct);
     Task<InvitationBatchWriteResult> QueueAsync(Guid weddingId, Guid actorId, string idempotencyKey,
         QueueInvitationBatch input, InvitationDraftDto draft, string frontendUrl, string publicApiUrl, CancellationToken ct);
     Task<InvitationSendBatchDto> BatchAsync(Guid weddingId, Guid batchId, CancellationToken ct);
@@ -73,6 +85,26 @@ public sealed class GenerateInvitationDraftValidator : AbstractValidator<Generat
     public GenerateInvitationDraftValidator()
     {
         RuleFor(x => x.AdditionalInstructions).MaximumLength(500);
+    }
+}
+
+public sealed class GenerateInvitationSmsDraftValidator : AbstractValidator<GenerateInvitationSmsDraft>
+{
+    public GenerateInvitationSmsDraftValidator()
+    {
+        RuleFor(x => x.ExpectedVersion).GreaterThanOrEqualTo(0);
+        RuleFor(x => x.AdditionalInstructions).MaximumLength(500);
+        RuleFor(x => x.GuestIds).Must(ids => ids is null ||
+            (ids.Count is > 0 and <= MessageRecipientLimits.Maximum && ids.All(id => id != Guid.Empty) && ids.Distinct().Count() == ids.Count));
+    }
+}
+
+public sealed class PreviewInvitationSmsRecipientsValidator : AbstractValidator<PreviewInvitationSmsRecipients>
+{
+    public PreviewInvitationSmsRecipientsValidator()
+    {
+        RuleFor(x => x.GuestIds).NotNull().Must(ids => ids is { Count: > 0 } &&
+            ids.Count <= MessageRecipientLimits.Maximum && ids.All(id => id != Guid.Empty) && ids.Distinct().Count() == ids.Count);
     }
 }
 
@@ -110,12 +142,20 @@ public sealed class QueueInvitationBatchValidator : AbstractValidator<QueueInvit
 
 public static class InvitationMessageTemplate
 {
+    public const int MaxSmsSegments = 3;
+    // Maximum UTF-16 units in three concatenated UCS-2 SMS parts.
     public const int MaxSmsCodeUnits = 201;
-    public const int MaxSmsCopyCodeUnits = 40;
+    // Maximum editable shared SMS copy before recipient-specific envelope checks.
+    public const int MaxSmsCopyCodeUnits = 60;
+    // AI-generated invitation copy is intentionally much shorter; personal facts and RSVP are added separately.
+    public const int MaxAiSmsCopyCodeUnits = 20;
 
-    public static string DefaultSms() => "Mời bạn dự lễ cưới cùng chúng mình.";
+    // Starter copy shown before the Couple generates or writes a channel-specific SMS.
+    // Legacy drafts containing only "Thân mời" are still recognized by the renderer below.
+    public static string DefaultSms() => "Rất mong được đón bạn trong ngày vui.";
 
-    public static bool IsSmsLengthSupported(string renderedContent) => renderedContent.Length <= MaxSmsCodeUnits;
+    public static bool IsSmsLengthSupported(string renderedContent) =>
+        SmsSegmentCounter.CountSegments(renderedContent) <= MaxSmsSegments;
 
     public static string CleanLegacyCopy(string? copy)
     {
@@ -142,37 +182,125 @@ public static class InvitationMessageTemplate
         return value.Trim(' ', '\r', '\n', ',', ':', ';', '-', '—');
     }
 
+    // Compatibility overload for the older format used by existing saved drafts.
+    // New preview and delivery flows use the wedding-aware overload below.
     public static string RenderSms(string copy, string guestName, string rsvpLink)
     {
-        var cleanCopy = CleanLegacyCopy(copy);
-        var body = string.IsNullOrWhiteSpace(cleanCopy) ? DefaultSms() : cleanCopy;
-        body = Regex.Replace(body, @"\s+", " ", global::System.Text.RegularExpressions.RegexOptions.CultureInvariant);
-        var greeting = $"Chào {guestName}, ";
-        var link = $" RSVP: {rsvpLink}";
-        var available = MaxSmsCodeUnits - greeting.Length - link.Length;
-        // Keep the guest's identity and the complete RSVP URL. The existing send guard
-        // rejects metadata that cannot fit even with the shortest invitation copy.
-        if (available <= 0) return $"{greeting}{DefaultSms()}{link}";
-        body = ShortenSmsCopy(body, Math.Min(MaxSmsCopyCodeUnits, available));
-        return $"{greeting}{body}{link}";
+        var body = CleanLegacyCopy(copy);
+        if (string.IsNullOrWhiteSpace(body)) body = "Mời bạn dự lễ cưới cùng chúng mình.";
+        var name = CleanSmsValue(guestName);
+        if (!Uri.TryCreate(rsvpLink, UriKind.Absolute, out var link) ||
+            (link.Scheme != Uri.UriSchemeHttp && link.Scheme != Uri.UriSchemeHttps) ||
+            !string.IsNullOrEmpty(link.UserInfo) || rsvpLink.Any(char.IsWhiteSpace))
+            throw new ApplicationProblemException(ProblemKind.BadRequest, "INVITATION_LINK_INVALID",
+                "The personal invitation link is invalid. Reload the guest invitation link before previewing or sending.");
+        return $"Chào {name}, {body} RSVP: {link.AbsoluteUri}";
     }
 
-    private static string ShortenSmsCopy(string value, int limit)
+    public static string RenderSms(string copy, string guestName, string coupleNames,
+        DateTimeOffset? eventDateTime, string? timeZoneId, string rsvpLink, string? weddingTitle = null)
     {
-        if (value.Length <= limit) return value;
-        // Work in text elements so Vietnamese combining marks and emoji stay intact.
-        var elements = StringInfo.GetTextElementEnumerator(value);
-        var end = 0;
-        while (elements.MoveNext())
+        var (invitation, rsvpSuffix) = SmsEnvelope(guestName, coupleNames, eventDateTime, timeZoneId, rsvpLink, weddingTitle);
+        var maxCopyUnits = MaxSmsCopyUnits(invitation, rsvpSuffix);
+        if (maxCopyUnits < 0)
+            throw new ApplicationProblemException(ProblemKind.BusinessRule, "SMS_CONTENT_TOO_LONG",
+                "Guest and wedding details plus the personal RSVP link exceed the three-part SMS limit.");
+        var sendableBody = LimitSmsCopy(EffectiveSmsCopy(copy), maxCopyUnits);
+        if (string.IsNullOrWhiteSpace(sendableBody)) return invitation + rsvpSuffix;
+        return $"{invitation}. {sendableBody.TrimEnd('.', '!', '?', ' ', ',', ';', ':', '—', '-')}{rsvpSuffix}";
+    }
+
+    public static int MaxSmsCopyUnitsForRecipient(string guestName, string coupleNames, DateTimeOffset? eventDateTime,
+        string? timeZoneId, string rsvpLink, string? weddingTitle = null)
+    {
+        var (invitation, rsvpSuffix) = SmsEnvelope(guestName, coupleNames, eventDateTime, timeZoneId, rsvpLink, weddingTitle);
+        return MaxSmsCopyUnits(invitation, rsvpSuffix);
+    }
+
+    public static string EffectiveSmsCopy(string? copy)
+    {
+        var body = NormalizeSmsCopy(copy);
+        return IsLegacySmsLead(body) || string.IsNullOrWhiteSpace(body) ? DefaultSms() : body;
+    }
+
+    private static int MaxSmsCopyUnits(string invitation, string rsvpSuffix)
+    {
+        var fixedContent = invitation + rsvpSuffix;
+        if (!IsSmsLengthSupported(fixedContent)) return -1;
+        // Use the conservative UCS-2 capacity so a shared Vietnamese copy fits every recipient.
+        return Math.Max(0, Math.Min(MaxSmsCopyCodeUnits,
+            MaxSmsCodeUnits - invitation.Length - 2 - rsvpSuffix.Length));
+    }
+
+    private static (string Invitation, string RsvpSuffix) SmsEnvelope(string guestName, string coupleNames,
+        DateTimeOffset? eventDateTime, string? timeZoneId, string rsvpLink, string? weddingTitle)
+    {
+        var guest = CleanSmsValue(guestName);
+        var couple = CleanSmsValue(coupleNames);
+        var title = CleanSmsValue(weddingTitle);
+        if (!Uri.TryCreate(rsvpLink, UriKind.Absolute, out var link) ||
+            (link.Scheme != Uri.UriSchemeHttp && link.Scheme != Uri.UriSchemeHttps) ||
+            !string.IsNullOrEmpty(link.UserInfo) || rsvpLink.Any(char.IsWhiteSpace))
+            throw new ApplicationProblemException(ProblemKind.BadRequest, "INVITATION_LINK_INVALID",
+                "The personal invitation link is invalid. Reload the guest invitation link before previewing or sending.");
+
+        if (string.IsNullOrWhiteSpace(title)) title = couple;
+        var invitation = guest.Length > 0 ? $"Thân mời {guest}" : "Thân mời bạn";
+        invitation += title.Length > 0 ? $" đến dự {title}" : " đến chung vui";
+        if (eventDateTime is { } eventAt)
         {
-            var next = elements.ElementIndex + elements.GetTextElement().Length;
-            if (next > limit - 1) break;
-            end = next;
+            try
+            {
+                var zone = TimeZoneInfo.FindSystemTimeZoneById(string.IsNullOrWhiteSpace(timeZoneId) ? "Asia/Ho_Chi_Minh" : timeZoneId);
+                eventAt = TimeZoneInfo.ConvertTime(eventAt, zone);
+            }
+            catch (TimeZoneNotFoundException) { }
+            catch (InvalidTimeZoneException) { }
+            invitation += $" ngày {eventAt.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}";
         }
-        var shortened = value[..end];
-        var wordEnd = shortened.LastIndexOf(' ');
-        if (wordEnd > 0) shortened = shortened[..wordEnd];
-        return shortened.TrimEnd(' ', ',', ':', ';') + "…";
+        return (invitation, $". RSVP: {link.AbsoluteUri}");
+    }
+
+    public static string NormalizeSmsCopy(string? copy) => CleanLegacyCopy(copy).Trim();
+
+    public static string LimitSmsCopy(string? copy) => LimitSmsCopy(copy, MaxSmsCopyCodeUnits);
+
+    public static string LimitSmsCopy(string? copy, int maximumUnits)
+    {
+        var value = NormalizeSmsCopy(copy);
+        if (maximumUnits <= 0) return "";
+        if (value.Length <= maximumUnits) return value;
+
+        var prefix = new StringBuilder(maximumUnits - 1);
+        var units = 0;
+        foreach (var rune in value.EnumerateRunes())
+        {
+            if (units + rune.Utf16SequenceLength > maximumUnits - 1) break;
+            prefix.Append(rune.ToString());
+            units += rune.Utf16SequenceLength;
+        }
+
+        var shortened = prefix.ToString();
+        var lastWordBoundary = shortened.LastIndexOf(' ');
+        if (lastWordBoundary > 0) shortened = shortened[..lastWordBoundary];
+        return shortened.TrimEnd(' ', ',', ':', ';', '-', '—', '.', '!', '?') + "…";
+    }
+
+    public static bool IsLegacySmsLead(string? copy)
+    {
+        var clean = CleanSmsValue(copy);
+        return clean.Equals("Thân mời", StringComparison.OrdinalIgnoreCase) ||
+            clean.Equals("Trân trọng kính mời", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool IsSmsStarterCopy(string? copy) => IsLegacySmsLead(copy) ||
+        string.Equals(NormalizeSmsCopy(copy), DefaultSms(), StringComparison.Ordinal);
+
+    private static string CleanSmsValue(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "";
+        return Regex.Replace(new string(value.Select(c => char.IsControl(c) ? ' ' : c).ToArray()), @"\s+", " ",
+            global::System.Text.RegularExpressions.RegexOptions.CultureInvariant).Trim();
     }
 
     public static string PersonalizeSubject(string template, string guestName, string coupleNames)
@@ -205,6 +333,8 @@ public static class InvitationMessageTemplate
 public sealed class InvitationMessagingHandler(
     IInvitationMessagingStore store, IWeddingPermissionService permissions, ICurrentUser currentUser,
     IAiTextGenerator ai, RequestValidation<GenerateInvitationDraft> generateValidation,
+    RequestValidation<GenerateInvitationSmsDraft> generateSmsValidation,
+    RequestValidation<PreviewInvitationSmsRecipients> smsPreflightValidation,
     RequestValidation<SaveInvitationDraft> saveValidation, RequestValidation<QueueInvitationBatch> batchValidation,
     InvitationMessagingLinks links, IInvitationChannelSender channels, IAccountStore accounts, IInvitationDesignStore designs)
 {
@@ -224,11 +354,15 @@ public sealed class InvitationMessagingHandler(
         await generateValidation.ValidateAsync(input, ct);
         var weddingContext = await store.WeddingContextAsync(weddingId, ct)
             ?? throw new ApplicationProblemException(ProblemKind.NotFound, "WEDDING_NOT_FOUND", "Wedding setup is unavailable.");
+        var current = await store.GetDraftAsync(weddingId, ct);
         var emailContent = InvitationMessageTemplate.Default();
-        var smsContent = InvitationMessageTemplate.DefaultSms();
+        var smsContent = current?.SmsContent ?? InvitationMessageTemplate.DefaultSms();
         var subject = "Lời mời ngày vui";
         var emailFallback = true;
-        var smsFallback = true;
+        // A not-yet-generated SMS starter is not an AI fallback. Preserve a real fallback flag
+        // only when the stored copy is not one of the old greeting-only starter values.
+        var smsFallback = current?.SmsUsedFallback == true &&
+            !InvitationMessageTemplate.IsLegacySmsLead(current.SmsContent);
         try
         {
             var facts = JsonSerializer.Serialize(new
@@ -248,21 +382,137 @@ public sealed class InvitationMessagingHandler(
                 emailContent = emailElement.GetString()!.Trim();
                 emailFallback = false;
             }
-            if (root.TryGetProperty("smsContent", out var smsElement) && smsElement.ValueKind == JsonValueKind.String &&
-                InvitationEmailRenderer.IsSafeGeneratedCopy(smsElement.GetString()) &&
-                smsElement.GetString()!.Trim().Length <= InvitationMessageTemplate.MaxSmsCopyCodeUnits)
-            {
-                smsContent = smsElement.GetString()!.Trim();
-                smsFallback = false;
-            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (ApplicationProblemException) { }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException) { }
 
-        var current = await store.GetDraftAsync(weddingId, ct);
         return await store.SaveDraftAsync(weddingId, actor,
             new(subject, emailContent, current?.Version ?? 0, smsContent), emailFallback, smsFallback, ct);
+    }
+
+    public async Task<InvitationDraftDto> GenerateSmsAsync(Guid weddingId, GenerateInvitationSmsDraft input, CancellationToken ct)
+    {
+        var actor = Actor;
+        var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.INVITATION_SEND, ct);
+        await generateSmsValidation.ValidateAsync(input, ct);
+        var weddingContext = await store.WeddingContextAsync(weddingId, ct)
+            ?? throw new ApplicationProblemException(ProblemKind.NotFound, "WEDDING_NOT_FOUND", "Wedding setup is unavailable.");
+
+        var copyLimit = InvitationMessageTemplate.MaxAiSmsCopyCodeUnits;
+        if (input.GuestIds is { Count: > 0 } guestIds)
+        {
+            var recipients = await store.FindRecipientsAsync(weddingId, guestIds, ct);
+            if (recipients.Count != guestIds.Count || recipients.Any(x => !scope.IsWeddingWide &&
+                    (x.Group is null || !scope.GroupIds.Contains(x.Group.Value))))
+                throw new ApplicationProblemException(ProblemKind.NotFound, "GUEST_NOT_FOUND", "One or more selected guests are unavailable in this wedding.");
+
+            var limits = new List<int>(recipients.Count);
+            foreach (var recipient in recipients)
+            {
+                if (string.IsNullOrWhiteSpace(recipient.Phone)) continue;
+                if (recipient.Token is not { Length: 64 })
+                    throw new ApplicationProblemException(ProblemKind.BusinessRule, "INVITATION_LINK_INVALID",
+                        "A selected guest does not have a valid invitation link. Reload the guest list before generating SMS.");
+                var (rsvp, _) = Links(recipient.Token);
+                var available = InvitationMessageTemplate.MaxSmsCopyUnitsForRecipient(recipient.RecipientName,
+                    weddingContext.CoupleNames, weddingContext.EventDateTime, weddingContext.TimeZoneId, rsvp,
+                    weddingContext.WeddingTitle);
+                if (available < 0)
+                    throw new ApplicationProblemException(ProblemKind.BusinessRule, "SMS_RECIPIENT_DETAILS_TOO_LONG",
+                        "A selected guest's name, wedding details and RSVP link already exceed the three-part SMS limit.");
+                limits.Add(available);
+            }
+            if (limits.Count > 0) copyLimit = Math.Min(copyLimit, limits.Min());
+            if (copyLimit < 15)
+                throw new ApplicationProblemException(ProblemKind.BusinessRule, "SMS_COPY_BUDGET_TOO_SMALL",
+                    "The selected guests' details and RSVP links leave too little room for a useful shared SMS invitation. Shorten the wedding title or select fewer guests.");
+        }
+
+        var facts = JsonSerializer.Serialize(new
+        {
+            // Keep recipient and wedding facts out of the model context. The renderer adds
+            // verified names, date, and the personal RSVP link after generating the shared copy.
+            maxSmsCopyUtf16Units = copyLimit
+        });
+        var generated = await ai.GenerateAsync(new("", "vi", input.AdditionalInstructions, "WEDDING_INVITATION_SMS", facts), ct);
+        var normalizedSms = InvitationMessageTemplate.NormalizeSmsCopy(generated.Text);
+        if (!InvitationEmailRenderer.IsSafeGeneratedCopy(normalizedSms))
+            throw new ApplicationProblemException(ProblemKind.BadGateway, "AI_SMS_COPY_INVALID",
+                "AI returned SMS text that cannot be used safely. Try generating again or edit the draft manually.");
+        var rawSms = InvitationMessageTemplate.LimitSmsCopy(normalizedSms, copyLimit);
+
+        var saved = await store.SaveSmsDraftAsync(weddingId, actor, input.ExpectedVersion, rawSms,
+            smsUsedFallback: false, ct);
+        return saved with { SmsCopyWasShortened = rawSms.Length < normalizedSms.Length, SmsCopyLimit = copyLimit };
+    }
+
+    public async Task<InvitationSmsPreflightDto> PreviewSmsRecipientsAsync(Guid weddingId,
+        PreviewInvitationSmsRecipients input, CancellationToken ct)
+    {
+        var scope = await permissions.RequireScopeAsync(weddingId, WeddingPermission.INVITATION_SEND, ct);
+        await smsPreflightValidation.ValidateAsync(input, ct);
+        var recipients = await store.FindRecipientsAsync(weddingId, input.GuestIds, ct);
+        if (recipients.Count != input.GuestIds.Count || recipients.Any(x => !scope.IsWeddingWide &&
+                (x.Group is null || !scope.GroupIds.Contains(x.Group.Value))))
+            throw new ApplicationProblemException(ProblemKind.NotFound, "GUEST_NOT_FOUND", "One or more selected guests are unavailable in this wedding.");
+
+        var draft = await store.GetDraftAsync(weddingId, ct)
+            ?? throw new ApplicationProblemException(ProblemKind.NotFound, "INVITATION_DRAFT_NOT_FOUND", "Save or generate a draft first.");
+        var weddingContext = await store.WeddingContextAsync(weddingId, ct)
+            ?? throw new ApplicationProblemException(ProblemKind.NotFound, "WEDDING_NOT_FOUND", "Wedding setup is unavailable.");
+
+        var shortenedCount = 0;
+        var unsendableCount = 0;
+        var maximumSegments = 0;
+        int? recommendedCopyLimit = null;
+        var issues = new List<InvitationSmsFitIssue>();
+        foreach (var recipient in recipients)
+        {
+            string? issueCode = null;
+            var shortened = false;
+            var segments = 0;
+            if (string.IsNullOrWhiteSpace(recipient.Phone))
+                issueCode = "SMS_CONTACT_REQUIRED";
+            else if (recipient.Token is not { Length: 64 })
+                issueCode = "INVITATION_LINK_INVALID";
+            else
+            {
+                var (rsvp, _) = Links(recipient.Token);
+                var available = InvitationMessageTemplate.MaxSmsCopyUnitsForRecipient(recipient.RecipientName,
+                    weddingContext.CoupleNames, weddingContext.EventDateTime, weddingContext.TimeZoneId, rsvp,
+                    weddingContext.WeddingTitle);
+                recommendedCopyLimit = recommendedCopyLimit is null
+                    ? Math.Max(available, 0)
+                    : Math.Min(recommendedCopyLimit.Value, Math.Max(available, 0));
+                if (available < 0) issueCode = "SMS_RECIPIENT_DETAILS_TOO_LONG";
+                else
+                {
+                    var effective = InvitationMessageTemplate.EffectiveSmsCopy(draft.SmsContent);
+                    var sendableCopy = InvitationMessageTemplate.LimitSmsCopy(effective, available);
+                    shortened = !string.Equals(effective, sendableCopy, StringComparison.Ordinal);
+                    var rendered = InvitationMessageTemplate.RenderSms(draft.SmsContent, recipient.RecipientName,
+                        weddingContext.CoupleNames, weddingContext.EventDateTime, weddingContext.TimeZoneId, rsvp,
+                        weddingContext.WeddingTitle);
+                    segments = SmsSegmentCounter.CountSegments(rendered);
+                    maximumSegments = Math.Max(maximumSegments, segments);
+                    if (segments > InvitationMessageTemplate.MaxSmsSegments) issueCode = "SMS_CONTENT_TOO_LONG";
+                }
+            }
+            if (shortened)
+            {
+                shortenedCount++;
+                issueCode ??= "SMS_COPY_WILL_BE_SHORTENED";
+            }
+            if (issueCode is not null) unsendableCount++;
+            if (shortened || issueCode is not null)
+                issues.Add(new(recipient.Id, recipient.RecipientName, issueCode ?? "SMS_COPY_WILL_BE_SHORTENED"));
+        }
+
+        const int issueLimit = 20;
+        return new(recipients.Count, recommendedCopyLimit ?? InvitationMessageTemplate.MaxSmsCopyCodeUnits,
+            maximumSegments, shortenedCount, unsendableCount,
+            issues.Take(issueLimit).ToArray(), Math.Max(0, issues.Count - issueLimit));
     }
 
     public async Task<InvitationDraftDto> SaveDraftAsync(Guid weddingId, SaveInvitationDraft input, CancellationToken ct)
@@ -286,9 +536,19 @@ public sealed class InvitationMessagingHandler(
         var email = InvitationEmailRenderer.Render(weddingId, weddingContext.CoupleNames, guest.RecipientName, draft.Content,
             weddingContext.EventDateTime, weddingContext.VenueName, weddingContext.VenueAddress, weddingContext.TimeZoneId,
             weddingContext.CoverImageUrl, links.PublicApiUrl, rsvp, qr);
+        var renderedSms = InvitationMessageTemplate.RenderSms(draft.SmsContent, guest.RecipientName,
+            weddingContext.CoupleNames, weddingContext.EventDateTime, weddingContext.TimeZoneId, rsvp,
+            weddingContext.WeddingTitle);
+        var availableSmsCopy = InvitationMessageTemplate.MaxSmsCopyUnitsForRecipient(guest.RecipientName,
+            weddingContext.CoupleNames, weddingContext.EventDateTime, weddingContext.TimeZoneId, rsvp,
+            weddingContext.WeddingTitle);
+        var effectiveSmsCopy = InvitationMessageTemplate.EffectiveSmsCopy(draft.SmsContent);
+        var smsCopyWasShortened = availableSmsCopy >= 0 &&
+            !string.Equals(effectiveSmsCopy, InvitationMessageTemplate.LimitSmsCopy(effectiveSmsCopy, availableSmsCopy), StringComparison.Ordinal);
+        var smsLength = SmsSegmentCounter.Measure(renderedSms);
         return new(guest.Id, guest.RecipientName, subject, InvitationMessageTemplate.CleanLegacyCopy(draft.Content),
-            InvitationMessageTemplate.RenderSms(draft.SmsContent, guest.RecipientName, rsvp), rsvp, qr,
-            email.Html, email.PlainText, email.ImageUrl);
+            renderedSms, rsvp, qr, email.Html, email.PlainText, email.ImageUrl,
+            smsLength.Encoding, smsLength.Units, smsLength.Segments, smsCopyWasShortened);
     }
 
     public async Task<InvitationSendBatchDto> QueueAsync(Guid weddingId, string? idempotencyKey, QueueInvitationBatch input, CancellationToken ct)

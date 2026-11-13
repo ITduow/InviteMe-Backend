@@ -31,9 +31,13 @@ public static class SmsSegmentCounter
     private const string GsmBasic = "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
     private const string GsmExtension = "\f^{}\\[~]|€";
 
-    public static int CountSegments(string value)
+    public sealed record SmsLength(string Encoding, int Units, int Segments);
+
+    public static int CountSegments(string value) => Measure(value).Segments;
+
+    public static SmsLength Measure(string value)
     {
-        if (string.IsNullOrEmpty(value)) return 0;
+        if (string.IsNullOrEmpty(value)) return new("GSM-7", 0, 0);
         var gsmUnits = 0;
         foreach (var rune in value.EnumerateRunes())
         {
@@ -46,9 +50,10 @@ public static class SmsSegmentCounter
                 break;
             }
         }
-        if (gsmUnits >= 0) return gsmUnits <= 160 ? 1 : (gsmUnits + 152) / 153;
+        if (gsmUnits >= 0)
+            return new("GSM-7", gsmUnits, gsmUnits <= 160 ? 1 : (gsmUnits + 152) / 153);
 
         var unicodeUnits = value.Length;
-        return unicodeUnits <= 70 ? 1 : (unicodeUnits + 66) / 67;
+        return new("UCS-2", unicodeUnits, unicodeUnits <= 70 ? 1 : (unicodeUnits + 66) / 67);
     }
 }

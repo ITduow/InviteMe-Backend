@@ -12,7 +12,8 @@ public sealed record InvitationWeddingContext(
     string? VenueName,
     string? VenueAddress,
     string TimeZoneId,
-    string? CoverImageUrl);
+    string? CoverImageUrl,
+    string? WeddingTitle = null);
 
 public sealed record RenderedInvitationEmail(string Html, string PlainText, string? ImageUrl);
 
