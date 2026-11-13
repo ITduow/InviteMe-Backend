@@ -99,10 +99,25 @@ public sealed class InvitationMessagingApiTests
         Assert.False(draft.SmsUsedFallback);
         Assert.DoesNotContain("{{", draft.Content);
         Assert.DoesNotContain("QR", draft.Content, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("{{", draft.SmsContent);
+        Assert.Equal(InvitationMessageTemplate.DefaultSms(), draft.SmsContent);
         var personalised = await owner.PutAsJsonAsync(path + "/draft", new SaveInvitationDraft(
             "Thiệp mời", draft.Content, draft.Version, draft.SmsContent));
         Assert.Equal(HttpStatusCode.OK, personalised.StatusCode);
+        var savedBeforeSmsGeneration = (await personalised.Content.ReadFromJsonAsync<InvitationDraftDto>())!;
+        ai.SmsText = "Rất mong được đón bạn trong ngày vui.";
+        var smsGenerated = await owner.PostAsJsonAsync(path + "/draft/generate-sms",
+            new GenerateInvitationSmsDraft(savedBeforeSmsGeneration.Version));
+        Assert.Equal(HttpStatusCode.OK, smsGenerated.StatusCode);
+        Assert.Equal("WEDDING_INVITATION_SMS", ai.LastRequest!.Purpose);
+        using var smsAiContext = System.Text.Json.JsonDocument.Parse(ai.LastRequest.Context!);
+        Assert.Equal("Minh & Lan", smsAiContext.RootElement.GetProperty("weddingTitle").GetString());
+        Assert.Equal("Minh & Lan", smsAiContext.RootElement.GetProperty("coupleNames").GetString());
+        Assert.Equal("Nhà hàng Hoa Sen", smsAiContext.RootElement.GetProperty("venueName").GetString());
+        draft = (await smsGenerated.Content.ReadFromJsonAsync<InvitationDraftDto>())!;
+        Assert.Equal(savedBeforeSmsGeneration.Subject, draft.Subject);
+        Assert.Equal(savedBeforeSmsGeneration.Content, draft.Content);
+        Assert.Equal("Rất mong được đón bạn trong ngày vui.", draft.SmsContent);
+        Assert.False(draft.SmsUsedFallback);
         var preview = await owner.PostAsync(path + "/preview/" + guestId, null);
         Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
         var previewBody = await preview.Content.ReadFromJsonAsync<InvitationPreviewDto>();
@@ -116,7 +131,13 @@ public sealed class InvitationMessagingApiTests
         Assert.Contains("Xác nhận tham dự", previewHtml);
         Assert.Contains("Nguyễn Văn An", previewBody.SmsContent);
         Assert.True(InvitationMessageTemplate.IsSmsLengthSupported(previewBody.SmsContent));
-        Assert.EndsWith($" RSVP: {previewBody.RsvpLink}", previewBody.SmsContent);
+        Assert.Contains("Minh & Lan", previewBody.SmsContent);
+        Assert.Contains("01/11/2026", previewBody.SmsContent);
+        Assert.StartsWith("Thân mời Nguyễn Văn An đến dự Minh & Lan ngày 01/11/2026. Rất mong được đón bạn trong ngày vui.", previewBody.SmsContent);
+        Assert.EndsWith($"RSVP: {previewBody.RsvpLink}", previewBody.SmsContent);
+        Assert.Equal("UCS-2", previewBody.SmsEncoding);
+        Assert.Equal(SmsSegmentCounter.Measure(previewBody.SmsContent).Units, previewBody.SmsUnits);
+        Assert.Equal(SmsSegmentCounter.Measure(previewBody.SmsContent).Segments, previewBody.SmsSegments);
         Assert.DoesNotContain("/qr?", previewBody.SmsContent);
         Assert.Contains("/invite/", previewBody.RsvpLink);
         Assert.Contains("/qr?format=png", previewBody.QrLink);
@@ -142,7 +163,10 @@ public sealed class InvitationMessagingApiTests
         var smsJob = Assert.Single(queuedJobs, x => x.Channel == "SMS");
         var emailJob = Assert.Single(queuedJobs, x => x.Channel == "EMAIL");
         Assert.Equal("Thiệp mời — Minh & Lan mời Nguyễn Văn An", emailJob.Subject);
-        Assert.Equal(InvitationMessageTemplate.RenderSms(draft.SmsContent, "Nguyễn Văn An", previewBody.RsvpLink), smsJob.Content);
+        Assert.Equal(InvitationMessageTemplate.RenderSms(draft.SmsContent, "Nguyễn Văn An", "Minh & Lan",
+            new DateTimeOffset(2026, 11, 1, 10, 0, 0, TimeSpan.FromHours(7)), "Asia/Ho_Chi_Minh",
+            previewBody.RsvpLink, wedding.Title), smsJob.Content);
+        Assert.Equal(previewBody.SmsContent, smsJob.Content);
         Assert.Null(smsJob.EmailHtmlContent);
         Assert.Null(smsJob.EmailPlainTextContent);
         Assert.DoesNotContain("/qr?", smsJob.Content);
@@ -229,24 +253,44 @@ public sealed class InvitationMessagingApiTests
         Assert.Equal(HttpStatusCode.Accepted, wholeGroupResponse.StatusCode);
         Assert.Equal(181, (await wholeGroupResponse.Content.ReadFromJsonAsync<InvitationSendBatchDto>())!.TotalCount);
 
+        var smsBeforeEmailRegeneration = draft.SmsContent;
         ai.Text = System.Text.Json.JsonSerializer.Serialize(new
         {
-            emailContent = draft.Content,
-            smsContent = new string('a', InvitationMessageTemplate.MaxSmsCopyCodeUnits + 1)
+            emailContent = "Chúng mình mong được gặp bạn trong ngày vui.",
+            smsContent = "This field is ignored by the email-only generation request."
         });
-        var longSmsResponse = await owner.PostAsJsonAsync(path + "/draft/generate", new GenerateInvitationDraft());
+        var emailRegenerated = await owner.PostAsJsonAsync(path + "/draft/generate", new GenerateInvitationDraft());
+        Assert.Equal(HttpStatusCode.OK, emailRegenerated.StatusCode);
+        var emailDraft = (await emailRegenerated.Content.ReadFromJsonAsync<InvitationDraftDto>())!;
+        Assert.False(emailDraft.UsedFallback);
+        Assert.Equal(smsBeforeEmailRegeneration, emailDraft.SmsContent);
+        Assert.False(emailDraft.SmsUsedFallback);
+
+        ai.SmsText = new string('a', 25);
+        var longSmsResponse = await owner.PostAsJsonAsync(path + "/draft/generate-sms",
+            new GenerateInvitationSmsDraft(emailDraft.Version));
         Assert.Equal(HttpStatusCode.OK, longSmsResponse.StatusCode);
-        var shortSmsDraft = (await longSmsResponse.Content.ReadFromJsonAsync<InvitationDraftDto>())!;
-        Assert.False(shortSmsDraft.UsedFallback);
-        Assert.True(shortSmsDraft.SmsUsedFallback);
-        Assert.Equal(InvitationMessageTemplate.DefaultSms(), shortSmsDraft.SmsContent);
+        var generatedSmsDraft = (await longSmsResponse.Content.ReadFromJsonAsync<InvitationDraftDto>())!;
+        Assert.Equal("WEDDING_INVITATION_SMS", ai.LastRequest!.Purpose);
+        Assert.Equal(InvitationMessageTemplate.LimitSmsCopy(ai.SmsText, InvitationMessageTemplate.MaxAiSmsCopyCodeUnits), generatedSmsDraft.SmsContent);
+        Assert.Equal(InvitationMessageTemplate.MaxAiSmsCopyCodeUnits, generatedSmsDraft.SmsContent.Length);
+        Assert.False(generatedSmsDraft.SmsUsedFallback);
+
+        ai.SmsText = "<p>unsafe generated SMS</p>";
+        var invalidSmsResponse = await owner.PostAsJsonAsync(path + "/draft/generate-sms",
+            new GenerateInvitationSmsDraft(generatedSmsDraft.Version));
+        Assert.Equal(HttpStatusCode.BadGateway, invalidSmsResponse.StatusCode);
+        var unchangedSms = (await owner.GetFromJsonAsync<InvitationDraftDto>(path + "/draft"))!;
+        Assert.Equal(generatedSmsDraft.Version, unchangedSms.Version);
+        Assert.Equal(generatedSmsDraft.SmsContent, unchangedSms.SmsContent);
+        Assert.False(unchangedSms.SmsUsedFallback);
 
         ai.Text = "not valid JSON";
         var fallbackResponse = await owner.PostAsJsonAsync(path + "/draft/generate", new GenerateInvitationDraft());
         Assert.Equal(HttpStatusCode.OK, fallbackResponse.StatusCode);
         var fallback = (await fallbackResponse.Content.ReadFromJsonAsync<InvitationDraftDto>())!;
         Assert.True(fallback.UsedFallback);
-        Assert.True(fallback.SmsUsedFallback);
+        Assert.False(fallback.SmsUsedFallback);
         Assert.True(InvitationEmailRenderer.IsSafeGeneratedCopy(fallback.Content));
         Assert.True(InvitationEmailRenderer.IsSafeGeneratedCopy(fallback.SmsContent));
 
@@ -294,6 +338,13 @@ public sealed class InvitationMessagingApiTests
         using var overLimit = await SendWithQuota("quota-new-request");
         Assert.Equal(HttpStatusCode.Forbidden, overLimit.StatusCode);
         Assert.Equal(jobsBeforeQuota + 2, await db.InvitationSendJobs.CountAsync());
+
+        var guestToArchive = await db.Set<PlanningGuest>().AsNoTracking().SingleAsync(x => x.Id == guestId);
+        var archive = await owner.DeleteAsync(
+            guestsPath + $"/guests/{guestId}?expectedVersion={guestToArchive.Version}");
+        Assert.Equal(HttpStatusCode.OK, archive.StatusCode);
+        var revokedGuestPreview = await owner.PostAsync(path + "/preview/" + guestId, null);
+        Assert.Equal(HttpStatusCode.NotFound, revokedGuestPreview.StatusCode);
     });
 
     private sealed class InvitationAi : IAiTextGenerator
@@ -301,11 +352,16 @@ public sealed class InvitationMessagingApiTests
         public AiTextRequest? LastRequest { get; private set; }
         public List<AiTextRequest> Requests { get; } = [];
         public string Text { get; set; } = """{"emailContent":"Chúng mình rất vui được mời bạn đến chung vui trong ngày đặc biệt này.","smsContent":"Chúng mình mong được đón bạn."}""";
+        public string SmsText { get; set; } = "Trân trọng kính mời";
         public Task<AiTextResult> GenerateAsync(AiTextRequest request, CancellationToken ct)
         {
             LastRequest = request;
             Requests.Add(request);
-            return Task.FromResult(new AiTextResult(Text, "test-model"));
+            return Task.FromResult(new AiTextResult(request.Purpose switch
+            {
+                "WEDDING_INVITATION_SMS" => SmsText,
+                _ => Text
+            }, "test-model"));
         }
     }
 

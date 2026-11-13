@@ -37,7 +37,8 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
             .Select(x => new { x.MainEventAt, x.VenueName, x.VenueAddress, x.Timezone }).SingleOrDefaultAsync(ct);
         var coupleNames = CoupleNames(wedding.Title, wedding.WebsiteJson);
         return new(coupleNames, eventInfo?.MainEventAt, eventInfo?.VenueName, eventInfo?.VenueAddress,
-            string.IsNullOrWhiteSpace(eventInfo?.Timezone) ? "Asia/Ho_Chi_Minh" : eventInfo.Timezone, wedding.CoverImageUrl);
+            string.IsNullOrWhiteSpace(eventInfo?.Timezone) ? "Asia/Ho_Chi_Minh" : eventInfo.Timezone,
+            wedding.CoverImageUrl, wedding.Title);
     }
 
     public async Task<InvitationDraftDto> SaveDraftAsync(Guid weddingId, Guid actorId, SaveInvitationDraft input,
@@ -52,7 +53,7 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
         var isNew = draft is null;
         if (draft is null)
         {
-            draft = new InvitationDraft { WeddingId = weddingId, Version = 0, SmsContent = InvitationMessageTemplate.DefaultSms(), SmsUsedFallback = true };
+            draft = new InvitationDraft { WeddingId = weddingId, Version = 0, SmsContent = InvitationMessageTemplate.DefaultSms(), SmsUsedFallback = false };
             db.InvitationDrafts.Add(draft);
         }
         draft.Subject = input.Subject.Trim();
@@ -65,7 +66,7 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
         else if (isNew)
         {
             draft.SmsContent = InvitationMessageTemplate.DefaultSms();
-            draft.SmsUsedFallback = true;
+            draft.SmsUsedFallback = false;
         }
         draft.Version++;
         draft.UsedFallback = usedFallback;
@@ -78,11 +79,63 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
         return Dto(draft);
     }
 
+    public async Task<InvitationDraftDto> SaveSmsDraftAsync(Guid weddingId, Guid actorId, int expectedVersion,
+        string smsContent, bool smsUsedFallback, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await LockWedding(weddingId, ct);
+        var draft = await db.InvitationDrafts.SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
+        var version = draft?.Version ?? 0;
+        if (version != expectedVersion)
+            throw new ApplicationProblemException(ProblemKind.Conflict, "CONCURRENCY_CONFLICT", "Invitation draft changed. Reload it before saving the SMS suggestion.");
+
+        if (draft is null)
+        {
+            draft = new InvitationDraft
+            {
+                WeddingId = weddingId,
+                Subject = "Lời mời ngày vui",
+                Content = InvitationMessageTemplate.Default(),
+                SmsContent = smsContent.Trim(),
+                Tone = "WARM",
+                Version = 0,
+                UsedFallback = true,
+                SmsUsedFallback = smsUsedFallback
+            };
+            db.InvitationDrafts.Add(draft);
+        }
+        else
+        {
+            draft.SmsContent = smsContent.Trim();
+            draft.SmsUsedFallback = smsUsedFallback;
+        }
+
+        draft.Version++;
+        draft.UpdatedBy = actorId;
+        draft.UpdatedAt = clock.GetUtcNow();
+        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "invitation_drafts", weddingId, "INVITATION_SMS_DRAFT_GENERATED", actorId,
+            metadata: JsonSerializer.Serialize(new { draft.Version, draft.SmsUsedFallback })));
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return Dto(draft);
+    }
+
     public async Task<InvitationRecipient?> FindRecipientAsync(Guid weddingId, Guid guestId, CancellationToken ct)
     {
         var guest = await db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.Id == guestId && x.ArchivedAt == null)
             .Select(x => new InvitationRecipient(x.Id, x.RecipientName, x.Email, x.Phone, x.InvitationToken)).SingleOrDefaultAsync(ct);
         return guest;
+    }
+
+    public async Task<IReadOnlyList<InvitationRecipient>> FindRecipientsAsync(Guid weddingId,
+        IReadOnlyList<Guid> guestIds, CancellationToken ct)
+    {
+        var ids = guestIds.Distinct().ToArray();
+        return await db.Set<PlanningGuest>().AsNoTracking()
+            .Where(x => x.WeddingId == weddingId && x.ArchivedAt == null && ids.Contains(x.Id))
+            .Select(x => new InvitationRecipient(x.Id, x.RecipientName, x.Email, x.Phone, x.InvitationToken,
+                "", x.Group))
+            .ToListAsync(ct);
     }
 
     public async Task<InvitationBatchWriteResult> QueueAsync(Guid weddingId, Guid actorId, string idempotencyKey,
@@ -171,12 +224,28 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
                         weddingContext.EventDateTime, weddingContext.VenueName, weddingContext.VenueAddress, weddingContext.TimeZoneId,
                         weddingContext.CoverImageUrl, publicApiUrl, rsvp, qr)
                     : null;
+                if (channel == "SMS")
+                {
+                    var availableCopyUnits = InvitationMessageTemplate.MaxSmsCopyUnitsForRecipient(
+                        guest.RecipientName, weddingContext.CoupleNames, weddingContext.EventDateTime,
+                        weddingContext.TimeZoneId, rsvp, weddingContext.WeddingTitle);
+                    if (availableCopyUnits < 0)
+                        throw new ApplicationProblemException(ProblemKind.BusinessRule, "SMS_RECIPIENT_DETAILS_TOO_LONG",
+                            "A selected guest's name, wedding details and RSVP link already exceed the three-part SMS limit.");
+
+                    var effectiveCopy = InvitationMessageTemplate.EffectiveSmsCopy(channelContent);
+                    var sendableCopy = InvitationMessageTemplate.LimitSmsCopy(effectiveCopy, availableCopyUnits);
+                    if (!string.Equals(effectiveCopy, sendableCopy, StringComparison.Ordinal))
+                        throw new ApplicationProblemException(ProblemKind.BusinessRule, "SMS_COPY_WILL_BE_SHORTENED",
+                            "The invitation copy does not fit every selected recipient. Shorten or regenerate the SMS before sending.");
+                }
                 var rendered = channel == "EMAIL"
                     ? emailContent
-                    : InvitationMessageTemplate.RenderSms(channelContent, guest.RecipientName, rsvp);
+                    : InvitationMessageTemplate.RenderSms(channelContent, guest.RecipientName, weddingContext.CoupleNames,
+                        weddingContext.EventDateTime, weddingContext.TimeZoneId, rsvp, weddingContext.WeddingTitle);
                 if (channel == "SMS" && SmsSegmentCounter.CountSegments(rendered) > 3)
                     throw new ApplicationProblemException(ProblemKind.BusinessRule, "SMS_CONTENT_TOO_LONG",
-                        "SMS content must fit within 3 concatenated Unicode messages (201 UTF-16 code units). Remove extra text or links.");
+                        "The personalized SMS exceeds the three-part GSM-7/UCS-2 limit. Shorten the invitation copy; the personal link cannot be shortened automatically.");
                 db.InvitationSendJobs.Add(new InvitationSendJob
                 {
                     Id = Guid.NewGuid(), BatchId = batch.Id, WeddingId = weddingId, PlanningGuestId = guest.Id,
@@ -210,9 +279,12 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
         var unknown = jobs.Count(x => x.Status is "UNKNOWN" or "REVIEW_REQUIRED");
         var failed = jobs.Count(x => x.Status == "FAILED");
         var pending = jobs.Count(x => x.Status is "PENDING" or "SENDING");
-        var status = pending + accepted > 0 ? "PENDING" : unknown > 0 ? "NEEDS_REVIEW" :
-            failed == jobs.Count ? "FAILED" : failed > 0 ? "PARTIAL_FAILED" :
-            simulated == jobs.Count ? "SIMULATED" : simulated > 0 ? "COMPLETED" : "SENT";
+        // ACCEPTED means the provider accepted the SMS request, but there is no carrier
+        // delivery result yet. Keep it distinct from jobs still waiting in our own queue.
+        var status = pending > 0 ? "PENDING" : unknown > 0 ? "NEEDS_REVIEW" :
+            failed == jobs.Count ? "FAILED" : failed > 0 ? "PARTIAL_FAILED" : accepted > 0 ? "ACCEPTED" :
+            simulated == jobs.Count ? "SIMULATED" : simulated > 0 ? "COMPLETED" :
+            delivered == jobs.Count ? "DELIVERED" : "SENT";
         return new(batch.Id, status, jobs.Count, sent, failed, pending, batch.CreatedAt, jobs,
             accepted, delivered, unknown, simulated);
     }
@@ -359,7 +431,8 @@ public sealed class InvitationMessagingStore(InviteMeDbContext db, TimeProvider 
 
     private static InvitationDraftDto Dto(InvitationDraft x) => new(x.WeddingId, x.Subject,
         InvitationMessageTemplate.CleanLegacyCopy(x.Content), x.Version,
-        x.UsedFallback, InvitationMessageTemplate.CleanLegacyCopy(x.SmsContent), x.SmsUsedFallback);
+        x.UsedFallback, InvitationMessageTemplate.CleanLegacyCopy(x.SmsContent),
+        x.SmsUsedFallback && !InvitationMessageTemplate.IsSmsStarterCopy(x.SmsContent));
 
     private static string NormalizeSmsPhone(string? value)
     {

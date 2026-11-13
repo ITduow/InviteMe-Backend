@@ -19,6 +19,18 @@ internal static class InvitationMessagingEndpoints
             Results.Ok(await handler.GenerateAsync(weddingId, input, ct)))
             .WithName("GenerateInvitationMessageDraft").Produces<InvitationDraftDto>().ProducesValidationProblem()
             .ProducesProblem(403).ProducesProblem(429).ProducesProblem(502).ProducesProblem(503).ProducesProblem(504);
+        group.MapPost("/draft/generate-sms", async (Guid weddingId, GenerateInvitationSmsDraft input, InvitationMessagingHandler handler, CancellationToken ct) =>
+            Results.Ok(await handler.GenerateSmsAsync(weddingId, input, ct)))
+            .WithName("GenerateInvitationSmsDraft").Produces<InvitationDraftDto>().ProducesValidationProblem()
+            .ProducesProblem(403).ProducesProblem(404).ProducesProblem(409).ProducesProblem(422).ProducesProblem(429).ProducesProblem(502).ProducesProblem(503).ProducesProblem(504);
+        group.MapPost("/sms-preflight", async (Guid weddingId, PreviewInvitationSmsRecipients input,
+            InvitationMessagingHandler handler, HttpContext http, CancellationToken ct) =>
+        {
+            http.Response.Headers.CacheControl = "no-store";
+            return Results.Ok(await handler.PreviewSmsRecipientsAsync(weddingId, input, ct));
+        })
+            .WithName("PreviewInvitationSmsRecipients").Produces<InvitationSmsPreflightDto>().ProducesValidationProblem()
+            .ProducesProblem(403).ProducesProblem(404).ProducesProblem(422);
         group.MapPut("/draft", async (Guid weddingId, SaveInvitationDraft input, InvitationMessagingHandler handler, CancellationToken ct) =>
             Results.Ok(await handler.SaveDraftAsync(weddingId, input, ct)))
             .WithName("SaveInvitationMessageDraft").Produces<InvitationDraftDto>().ProducesValidationProblem().ProducesProblem(403).ProducesProblem(409);

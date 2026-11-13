@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using InviteMe.Application.Features.Invitations.Messaging;
+using InviteMe.Application.Common.Errors;
 using InviteMe.Infrastructure.Notifications;
 using Microsoft.Extensions.Options;
 
@@ -146,42 +147,91 @@ public sealed class InvitationMessagingTests
     public void Sms_template_respects_three_concatenated_unicode_message_limit()
     {
         Assert.True(InvitationEmailRenderer.IsSafeGeneratedCopy(InvitationMessageTemplate.DefaultSms()));
-        Assert.True(InvitationMessageTemplate.DefaultSms().Length <= InvitationMessageTemplate.MaxSmsCopyCodeUnits);
-        Assert.True(InvitationMessageTemplate.IsSmsLengthSupported(new string('a', InvitationMessageTemplate.MaxSmsCodeUnits)));
-        Assert.False(InvitationMessageTemplate.IsSmsLengthSupported(new string('a', InvitationMessageTemplate.MaxSmsCodeUnits + 1)));
+        Assert.False(InvitationMessageTemplate.IsLegacySmsLead(InvitationMessageTemplate.DefaultSms()));
+        Assert.True(InvitationMessageTemplate.IsLegacySmsLead("Thân mời"));
+        Assert.True(InvitationMessageTemplate.IsSmsStarterCopy(InvitationMessageTemplate.DefaultSms()));
+        Assert.True(InvitationMessageTemplate.IsSmsStarterCopy("Thân mời"));
+        Assert.False(InvitationMessageTemplate.IsSmsStarterCopy("Mời bạn đến chung vui cùng chúng mình."));
+        var longGeneratedCopy = InvitationMessageTemplate.LimitSmsCopy(new string('ế', 121));
+        Assert.Equal(InvitationMessageTemplate.MaxSmsCopyCodeUnits, longGeneratedCopy.Length);
+        Assert.EndsWith("…", longGeneratedCopy);
+        Assert.Equal(1, SmsSegmentCounter.CountSegments(new string('a', 160)));
+        Assert.Equal(2, SmsSegmentCounter.CountSegments(new string('a', 161)));
+        Assert.Equal(1, SmsSegmentCounter.CountSegments(new string('ế', 70)));
+        Assert.Equal(2, SmsSegmentCounter.CountSegments(new string('ế', 71)));
+        Assert.True(InvitationMessageTemplate.IsSmsLengthSupported(new string('a', 459)));
+        Assert.False(InvitationMessageTemplate.IsSmsLengthSupported(new string('a', 460)));
+        Assert.True(InvitationMessageTemplate.IsSmsLengthSupported(new string('ế', 201)));
+        Assert.False(InvitationMessageTemplate.IsSmsLengthSupported(new string('ế', 202)));
     }
 
     [Fact]
-    public void Sms_shortens_existing_long_copy_and_keeps_the_entire_personal_rsvp_link()
+    public void Sms_personalization_uses_verified_names_date_and_complete_personal_link()
     {
-        const string guest = "Huỳnh Tấn Dương";
+        const string guest = "Nguyễn Tuất Đạt";
+        const string couple = "Minh Anh & Hoàng Nam";
         var rsvp = "https://www.inviteme.asia/invite/" + new string('a', 64);
-        var sms = InvitationMessageTemplate.RenderSms(
-            "Chúng tôi rất hạnh phúc chia sẻ ngày đặc biệt của mình và mong được đón bạn đến tham dự lễ cưới.", guest, rsvp);
+        var sms = InvitationMessageTemplate.RenderSms("Thân mời", guest, couple,
+            new DateTimeOffset(2026, 12, 20, 10, 0, 0, TimeSpan.FromHours(7)), "Asia/Ho_Chi_Minh", rsvp,
+            "Đám cưới Minh Anh & Hoàng Nam");
 
-        Assert.StartsWith($"Chào {guest}, ", sms);
-        Assert.EndsWith($" RSVP: {rsvp}", sms);
+        Assert.StartsWith($"Thân mời {guest} đến dự Đám cưới Minh Anh & Hoàng Nam ngày 20/12/2026.", sms);
+        Assert.EndsWith($"RSVP: {rsvp}", sms);
         Assert.True(InvitationMessageTemplate.IsSmsLengthSupported(sms));
-        var body = sms[($"Chào {guest}, ".Length)..^($" RSVP: {rsvp}".Length)];
-        Assert.True(body.Length <= InvitationMessageTemplate.MaxSmsCopyCodeUnits);
-        Assert.EndsWith("…", body);
         Assert.Equal(1, sms.Split(rsvp, StringSplitOptions.None).Length - 1);
     }
 
     [Fact]
-    public void Sms_budget_includes_the_actual_guest_name_and_link_and_preserves_unicode_text_elements()
+    public void Full_sms_body_remains_editable_copy_and_renderer_adds_guest_and_link_once()
+    {
+        const string copy = "Rất mong được gặp bạn trong ngày vui.";
+        const string guest = "Nguyễn Tuất Đạt";
+        var rsvp = "https://www.inviteme.asia/invite/" + new string('a', 64);
+        var sms = InvitationMessageTemplate.RenderSms(copy, guest, "Minh & Lan",
+            new DateTimeOffset(2026, 12, 20, 10, 0, 0, TimeSpan.FromHours(7)), "Asia/Ho_Chi_Minh", rsvp,
+            "Đám cưới Minh & Lan");
+
+        Assert.StartsWith($"Thân mời {guest} đến dự Đám cưới Minh & Lan ngày 20/12/2026.", sms);
+        Assert.EndsWith($"RSVP: {rsvp}", sms);
+        Assert.Equal(1, sms.Split(rsvp, StringSplitOptions.None).Length - 1);
+        Assert.True(InvitationMessageTemplate.IsSmsLengthSupported(sms));
+    }
+
+    [Fact]
+    public void Sms_without_optional_wedding_facts_does_not_invent_them_or_truncate_the_link()
     {
         const string guest = "Nguyễn An";
-        const string emoji = "👩‍❤️‍👩";
         var rsvp = "https://invite.test/" + new string('b', 140);
-        var copy = string.Concat(Enumerable.Repeat(emoji, 12));
-        var sms = InvitationMessageTemplate.RenderSms(copy, guest, rsvp);
-        var body = sms[($"Chào {guest}, ".Length)..^($" RSVP: {rsvp}".Length)];
+        var sms = InvitationMessageTemplate.RenderSms("Thân mời", guest, "", null, null, rsvp);
 
+        Assert.StartsWith($"Thân mời {guest} đến chung vui", sms);
+        Assert.EndsWith(rsvp, sms);
+        Assert.DoesNotContain("20/12/2026", sms);
+        Assert.DoesNotContain("cùng ", sms);
         Assert.True(InvitationMessageTemplate.IsSmsLengthSupported(sms));
-        Assert.EndsWith($" RSVP: {rsvp}", sms);
-        Assert.EndsWith("…", body);
-        Assert.Equal("", body[..^1].Replace(emoji, "", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Sms_with_missing_guest_name_does_not_add_extra_spacing_or_guess_a_greeting()
+    {
+        var rsvp = "https://invite.test/" + new string('c', 64);
+        var sms = InvitationMessageTemplate.RenderSms("Thân mời", " ", "Minh & Lan", null, null, rsvp);
+
+        Assert.Equal($"Thân mời bạn đến dự Minh & Lan. Rất mong được đón bạn trong ngày vui. RSVP: {rsvp}", sms);
+    }
+
+    [Fact]
+    public void Sms_over_limit_is_not_truncated_and_invalid_links_are_rejected()
+    {
+        var hugeGuestName = new string('Đ', 130);
+        var rsvp = "https://www.inviteme.asia/invite/" + new string('x', 64);
+        var tooLong = Assert.Throws<ApplicationProblemException>(() => InvitationMessageTemplate.RenderSms("Thân mời", hugeGuestName,
+            "Minh & Lan", new DateTimeOffset(2026, 12, 20, 10, 0, 0, TimeSpan.FromHours(7)),
+            "Asia/Ho_Chi_Minh", rsvp));
+        Assert.Equal("SMS_CONTENT_TOO_LONG", tooLong.Code);
+        var error = Assert.Throws<ApplicationProblemException>(() => InvitationMessageTemplate.RenderSms(
+            "Thân mời", "An", "Minh & Lan", null, null, "javascript:alert(1)"));
+        Assert.Equal("INVITATION_LINK_INVALID", error.Code);
     }
 
     [Fact]
@@ -196,9 +246,9 @@ public sealed class InvitationMessagingTests
     public void Sms_keeps_the_over_limit_guard_when_guest_metadata_cannot_fit()
     {
         var rsvp = "https://www.inviteme.asia/invite/" + new string('a', 64);
-        var sms = InvitationMessageTemplate.RenderSms(InvitationMessageTemplate.DefaultSms(), new string('N', 210), rsvp);
-        Assert.False(InvitationMessageTemplate.IsSmsLengthSupported(sms));
-        Assert.EndsWith($" RSVP: {rsvp}", sms);
+        var error = Assert.Throws<ApplicationProblemException>(() => InvitationMessageTemplate.RenderSms(
+            InvitationMessageTemplate.DefaultSms(), new string('N', 210), "Minh & Lan", null, null, rsvp));
+        Assert.Equal("SMS_CONTENT_TOO_LONG", error.Code);
     }
 
     [Fact]
