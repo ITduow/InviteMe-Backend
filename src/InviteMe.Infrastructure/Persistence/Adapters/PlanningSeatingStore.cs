@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Data;
 using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Application.Features.Seating.Planning;
@@ -87,7 +88,37 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         // Admission stays reserved until commit so an expiring lease cannot be reassigned mid-write.
         using var write = leases.BeginWrite(weddingId, user.UserId ?? throw new InvalidOperationException("Authenticated user required."),
             input.DragToken, affected, input.Action is "UPDATE_TABLE" or "DELETE_TABLE" ? input.TableId : null);
-        if (input.Action == "MOVE_TABLE_SLOT")
+        if (input.Action == "UPDATE_CANVAS_LAYOUT")
+        {
+            if (scopeIds is not null) throw Rule("SEATING_LAYOUT_REQUIRES_WEDDING_SCOPE", "Layout requires wedding-wide access.");
+            var canvas = ValidateCanvas(input.CanvasLayout!, allTables.Select(t => t.Id.ToString()).ToHashSet());
+            var changes = allTables.Where(t => canvas.Tables.TryGetValue(t.Id.ToString(), out var position)
+                && position.Side is not null && position.Side != t.Side).ToArray();
+            var occupied = allTables.Except(changes).Select(t => (t.Side, t.Row, t.Column)).ToHashSet();
+            foreach (var moving in changes)
+            {
+                moving.Side = null;
+                moving.Row = null;
+                moving.Column = null;
+            }
+            if (changes.Length > 0) await db.SaveChangesAsync(ct);
+            foreach (var moving in changes)
+            {
+                var side = canvas.Tables[moving.Id.ToString()].Side!;
+                var width = side == "BRIDE" ? plan.BrideTablesPerRow : plan.GroomTablesPerRow;
+                var index = Enumerable.Range(0, 100 * width).FirstOrDefault(
+                    n => occupied.Add((side, n / width + 1, n % width + 1)), -1);
+                if (index < 0) throw Rule("INVALID_TABLE_SLOT", "No slot is available in the destination zone.");
+                moving.Side = side;
+                moving.Row = index / width + 1;
+                moving.Column = index % width + 1;
+            }
+            plan.CanvasLayout = JsonSerializer.SerializeToDocument(canvas with
+            {
+                Tables = canvas.Tables.ToDictionary(pair => pair.Key, pair => pair.Value with { Side = null })
+            });
+        }
+        else if (input.Action == "MOVE_TABLE_SLOT")
         {
             if (table!.Side is null || table.Row is null || table.Column is null) throw Rule("TABLE_LAYOUT_REQUIRED", "Assign legacy table layout first.");
             var width = table.Side == "BRIDE" ? plan.BrideTablesPerRow : plan.GroomTablesPerRow;
@@ -147,6 +178,8 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
                 // Remove seats, not guests/places: they return to the unassigned queue.
                 db.RemoveRange(await assigned.ToListAsync(ct));
                 db.Remove(table!);
+                if (ReadCanvas(plan) is { } canvas && canvas.Tables.Remove(table!.Id.ToString()))
+                    plan.CanvasLayout = JsonSerializer.SerializeToDocument(canvas);
             }
             else { table!.Name = input.Name!.Trim(); table.Capacity = input.Capacity!.Value; if (input.Group.HasValue) table.Group = input.Group; }
         }
@@ -238,14 +271,59 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         plan.PositionPriority = proposal.PositionPriority.ToArray();
         plan.BrideTablesPerRow = rows.Bride; plan.GroomTablesPerRow = rows.Groom; plan.Version++;
         var ids = proposal.Tables.ToDictionary(t => t.Code, _ => Guid.NewGuid());
-        db.AddRange(proposal.Tables.Select(t => new PlanningTable { Id = ids[t.Code], WeddingId = weddingId,
+        if (input.CanvasLayout is { } canvas)
+        {
+            ValidateCanvas(canvas, ids.Keys.ToHashSet());
+            plan.CanvasLayout = JsonSerializer.SerializeToDocument(canvas with
+            {
+                Tables = canvas.Tables.ToDictionary(pair => ids[pair.Key].ToString(), pair => pair.Value with { Side = null })
+            });
+        }
+        var occupiedSlots = proposal.Tables.Select(t => (t.Side, t.Row, t.Column)).ToHashSet();
+        var generatedTables = proposal.Tables.Select(t => new PlanningTable { Id = ids[t.Code], WeddingId = weddingId,
             Name = input.Draft?.Tables?.Single(d => d.Code == t.Code).Name.Trim() ?? t.Code,
-            Capacity = t.Capacity, Group = t.Group, Side = t.Side, Row = t.Row, Column = t.Column }));
+            Capacity = t.Capacity, Group = t.Group, Side = t.Side, Row = t.Row, Column = t.Column }).ToArray();
+        foreach (var t in proposal.Tables)
+        {
+            if (input.CanvasLayout?.Tables.GetValueOrDefault(t.Code)?.Side is not { } side || side == t.Side) continue;
+            var width = side == "BRIDE" ? rows.Bride : rows.Groom;
+            var slot = Enumerable.Range(0, 100 * width).FirstOrDefault(
+                n => occupiedSlots.Add((side, n / width + 1, n % width + 1)), -1);
+            if (slot < 0) throw Rule("INVALID_TABLE_SLOT", "No slot is available in the destination zone.");
+            occupiedSlots.Remove((t.Side, t.Row, t.Column));
+            var table = generatedTables.Single(table => table.Id == ids[t.Code]);
+            table.Side = side; table.Row = slot / width + 1; table.Column = slot % width + 1;
+        }
+        db.AddRange(generatedTables);
         db.AddRange(proposal.Assignments.Select(a => new PlanningSeatAssignment { PlaceId = a.PlaceId, TableId = ids[a.TableCode], SeatNumber = a.SeatNumber }));
         await db.SaveChangesAsync(ct);
         var result = await Snapshot(weddingId, ct);
         await tx.CommitAsync(ct);
         return result;
+    }
+
+    private static CanvasLayout? ReadCanvas(PlanningSeatingPlan? plan) =>
+        plan?.CanvasLayout?.Deserialize<CanvasLayout>();
+
+    private static CanvasLayout ValidateCanvas(CanvasLayout canvas, HashSet<string> tableIds)
+    {
+        static bool Coordinate(double value) => double.IsFinite(value) && Math.Abs(value) <= 1000000;
+        static bool Point(double x, double y) => Coordinate(x) && Coordinate(y);
+        if (canvas.Stage is null || !Point(canvas.Stage.X, canvas.Stage.Y) ||
+            canvas.Tables is null || canvas.Tables.Count > tableIds.Count ||
+            canvas.Tables.Any(entry => !tableIds.Contains(entry.Key) || entry.Value is null ||
+                !Point(entry.Value.X, entry.Value.Y) || entry.Value.Side is not (null or "BRIDE" or "GROOM") ||
+                (entry.Value.OutsideZone && entry.Value.Side is not null)) ||
+            canvas.Zones is null || canvas.Zones.Count != 2 ||
+            canvas.Zones.Any(entry => entry.Key is not ("BRIDE" or "GROOM") || entry.Value is null ||
+                !Point(entry.Value.X, entry.Value.Y) || entry.Value.Width <= 0 || entry.Value.Height <= 0 ||
+                !Point(entry.Value.Width, entry.Value.Height)) ||
+            canvas.Objects is null || canvas.Objects.Length > 200 ||
+            canvas.Objects.Any(item => item is null || string.IsNullOrWhiteSpace(item.Id) || item.Id.Length > 100 ||
+                item.Type is not ("danceFloor" or "giftTable" or "entrance") || !Point(item.X, item.Y)) ||
+            canvas.Objects.Select(item => item.Id).Distinct().Count() != canvas.Objects.Length)
+            throw Rule("INVALID_CANVAS_LAYOUT", "Canvas layout is invalid.");
+        return canvas;
     }
 
     private async Task<PlanningSeatingDto> Snapshot(Guid weddingId, CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope = null)
@@ -270,6 +348,6 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
             join t in db.Set<PlanningTable>() on a.TableId equals t.Id where t.WeddingId == weddingId && (scopeIds == null || t.Group != null && scopeIds.Contains(t.Group.Value))
             select new PlanningAssignmentDto(a.PlaceId, a.TableId, a.SeatNumber)).ToListAsync(ct);
         var layout = await db.Set<PlanningSeatingPlan>().AsNoTracking().SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
-        return new(weddingId, version, tables, guests, places, assignments, layout?.BrideTablesPerRow ?? 2, layout?.GroomTablesPerRow ?? 2, layout?.PositionPriority ?? SeatingPlanner.DefaultPositionPriority);
+        return new(weddingId, version, tables, guests, places, assignments, layout?.BrideTablesPerRow ?? 2, layout?.GroomTablesPerRow ?? 2, layout?.PositionPriority ?? SeatingPlanner.DefaultPositionPriority, groupScope is null ? ReadCanvas(layout) : null);
     }
 }

@@ -5,6 +5,7 @@ namespace InviteMe.Domain.Seating;
 public sealed class PlanningSeatingPlan
 {
     public Guid WeddingId { get; set; }
+    public System.Text.Json.JsonDocument? CanvasLayout { get; set; }
     public int Version { get; set; }
     public int BrideTablesPerRow { get; set; } = 2;
     public int GroomTablesPerRow { get; set; } = 2;

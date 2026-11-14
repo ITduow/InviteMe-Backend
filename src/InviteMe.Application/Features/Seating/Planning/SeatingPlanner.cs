@@ -1,12 +1,13 @@
 using InviteMe.Application.Common.Errors;
 using InviteMe.Domain.Guests;
+using InviteMe.Domain.Seating;
 
 namespace InviteMe.Application.Features.Seating.Planning;
 
 public sealed record SeatingRows(int Bride = 2, int Groom = 2);
 public sealed record GenerateSeating(int ExpectedVersion, int TableCapacity = 10, SeatingRows? TablesPerRow = null,
     string? SourceFingerprint = null, string? AlgorithmVersion = null, SeatingGenerationDraft? Draft = null,
-    IReadOnlyList<PlanningGroupKind>? PositionPriority = null);
+    IReadOnlyList<PlanningGroupKind>? PositionPriority = null, CanvasLayout? CanvasLayout = null);
 public sealed record SeatingDraftTable(string Code, string Name, string Side, int Row, int Column, int Capacity);
 public sealed record SeatingGenerationDraft(IReadOnlyList<SeatingDraftTable>? Tables, IReadOnlyList<GeneratedAssignment>? Assignments);
 public sealed record GeneratedTable(string Code, string Side, int Row, int Column, int Capacity, PlanningGroupKind? Group, IReadOnlyList<Guid> GuestIds);
