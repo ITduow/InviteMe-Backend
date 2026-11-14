@@ -1,4 +1,5 @@
 using FluentValidation;
+using InviteMe.Domain.Seating;
 using InviteMe.Application.Common.Behaviors;
 using InviteMe.Application.Features.Guests.Planning;
 using InviteMe.Application.Ports.Authorization;
@@ -10,11 +11,11 @@ public sealed record PlanningTableDto(Guid Id, string Name, int Capacity, Invite
 public sealed record PlanningAssignmentDto(Guid PlaceId, Guid TableId, int SeatNumber);
 public sealed record PlanningSeatingPlace(Guid Id, Guid GuestId, int Position, PlanningPersonDto? Person);
 public sealed record PlanningSeatingDto(Guid WeddingId, int Version, IReadOnlyList<PlanningTableDto> Tables,
-    IReadOnlyList<PlanningGuestDto> Guests, IReadOnlyList<PlanningSeatingPlace> Places, IReadOnlyList<PlanningAssignmentDto> Assignments, int BrideTablesPerRow = 2, int GroomTablesPerRow = 2);
+    IReadOnlyList<PlanningGuestDto> Guests, IReadOnlyList<PlanningSeatingPlace> Places, IReadOnlyList<PlanningAssignmentDto> Assignments, int BrideTablesPerRow = 2, int GroomTablesPerRow = 2, IReadOnlyList<InviteMe.Domain.Guests.PlanningGroupKind>? PositionPriority = null, CanvasLayout? CanvasLayout = null);
 public sealed record ChangePlanningSeating(int ExpectedVersion, string Action, Guid? TableId = null,
     string? Name = null, int? Capacity = null, IReadOnlyList<Guid>? PlaceIds = null, int? SeatNumber = null,
     int? TableCount = null,
-    Guid? DragToken = null, InviteMe.Domain.Guests.PlanningGroupKind? Group = null, int? TargetRow = null, int? TargetColumn = null, int? BrideTablesPerRow = null, int? GroomTablesPerRow = null, string? Side = null, int? Row = null, int? Column = null);
+    Guid? DragToken = null, InviteMe.Domain.Guests.PlanningGroupKind? Group = null, int? TargetRow = null, int? TargetColumn = null, int? BrideTablesPerRow = null, int? GroomTablesPerRow = null, string? Side = null, int? Row = null, int? Column = null, CanvasLayout? CanvasLayout = null);
 
 public interface IPlanningSeatingStore
 {
@@ -39,7 +40,8 @@ public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePla
             RuleFor(x => x.GroomTablesPerRow).NotNull().InclusiveBetween(1, 4);
         });
         RuleFor(x => x.ExpectedVersion).GreaterThanOrEqualTo(0);
-        RuleFor(x => x.Action).Must(x => x is "CREATE_TABLE" or "CREATE_TABLES" or "UPDATE_TABLE" or "DELETE_TABLE" or "MOVE_PLACES" or "MOVE_TABLE_SLOT" or "UPDATE_LAYOUT");
+        RuleFor(x => x.Action).Must(x => x is "CREATE_TABLE" or "CREATE_TABLES" or "UPDATE_TABLE" or "DELETE_TABLE" or "MOVE_PLACES" or "MOVE_TABLE_SLOT" or "UPDATE_LAYOUT" or "UPDATE_CANVAS_LAYOUT");
+        RuleFor(x => x).Must(x => (x.Action == "UPDATE_CANVAS_LAYOUT") == (x.CanvasLayout is not null));
         RuleFor(x => x.TableId).NotEqual(Guid.Empty).When(x => x.TableId.HasValue);
         RuleFor(x => x).Must(x => x.Side is null || x.Action is "UPDATE_TABLE" or "CREATE_TABLE" or "CREATE_TABLES");
         RuleFor(x => x.Side).Must(x => x is null or "BRIDE" or "GROOM");
@@ -81,7 +83,7 @@ public sealed class PlanningSeatingHandler(IPlanningSeatingStore store, IWedding
         if (!viewScope.IsWeddingWide && (editScope.IsWeddingWide || !editScope.GroupIds.IsSubsetOf(viewScope.GroupIds)))
             throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.Forbidden, "SEATING_SCOPE_MISMATCH", "Seating edit scope must be contained in the assigned view scope.");
         var groupScope = editScope.IsWeddingWide ? null : editScope.GroupIds;
-        if (groupScope is not null && input.Action is "MOVE_TABLE_SLOT" or "UPDATE_LAYOUT")
+        if (groupScope is not null && input.Action is "MOVE_TABLE_SLOT" or "UPDATE_LAYOUT" or "UPDATE_CANVAS_LAYOUT")
             throw new InviteMe.Application.Common.Errors.ApplicationProblemException(InviteMe.Application.Common.Errors.ProblemKind.Forbidden, "SEATING_SUGGESTION_REQUIRES_WEDDING_SCOPE", "Automatic seating suggestions require wedding-wide seating access.");
         await validation.ValidateAsync(input, ct);
         if (input.Action is "CREATE_TABLE" or "CREATE_TABLES")

@@ -1,11 +1,15 @@
+using InviteMe.Domain.Guests;
+
 namespace InviteMe.Domain.Seating;
 
 public sealed class PlanningSeatingPlan
 {
     public Guid WeddingId { get; set; }
+    public System.Text.Json.JsonDocument? CanvasLayout { get; set; }
     public int Version { get; set; }
     public int BrideTablesPerRow { get; set; } = 2;
     public int GroomTablesPerRow { get; set; } = 2;
+    public PlanningGroupKind[]? PositionPriority { get; set; }
     // Guest07: when set, guests can see their table on the invitation page. Publishing never freezes the plan.
     public DateTimeOffset? PublishedAt { get; set; }
     public Guid? PublishedBy { get; set; }

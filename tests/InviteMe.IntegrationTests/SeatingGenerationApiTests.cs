@@ -53,12 +53,15 @@ public sealed class SeatingGenerationApiTests
             for(var i=2;i<=7;i++) db.Add(new PlanningPlace { Id=Guid.NewGuid(), GuestId=g.Id, Position=i }); }
         await db.SaveChangesAsync();
         var url=$"/api/weddings/{wedding.Id}/guest-planning/seating-plan";
-        var response=await client.PostAsJsonAsync(url+"/generate-preview",new GenerateSeating(0));
+        var priority = SeatingPlanner.DefaultPositionPriority.Reverse().ToArray();
+        var response=await client.PostAsJsonAsync(url+"/generate-preview",new GenerateSeating(0, PositionPriority: priority));
         Assert.Equal(HttpStatusCode.OK,response.StatusCode);
         var preview=(await response.Content.ReadFromJsonAsync<SeatingGenerationPreview>())!;
+        Assert.Equal(priority, preview.PositionPriority);
+        Assert.Empty(await db.Set<PlanningSeatingPlan>().ToListAsync());
         Assert.Equal(2,preview.Tables.Count); Assert.Equal(14,preview.Assignments.Count);
         Assert.Empty(await db.Set<PlanningTable>().ToListAsync());
-        var stale= new GenerateSeating(0,SourceFingerprint:new string('0',64),AlgorithmVersion:preview.AlgorithmVersion);
+        var stale= new GenerateSeating(0,SourceFingerprint:new string('0',64),AlgorithmVersion:preview.AlgorithmVersion,PositionPriority:priority);
         Assert.Equal(HttpStatusCode.Conflict,(await client.PostAsJsonAsync(url+"/generate-apply",stale)).StatusCode);
         Assert.Empty(await db.Set<PlanningTable>().ToListAsync());
         var draftTables = preview.Tables.Select(t => new SeatingDraftTable(t.Code,
@@ -82,23 +85,26 @@ public sealed class SeatingGenerationApiTests
         Assert.Single(race,r=>r.StatusCode==HttpStatusCode.OK); Assert.Single(race,r=>r.StatusCode==HttpStatusCode.Conflict);
         var plan=(await client.GetFromJsonAsync<PlanningSeatingDto>(url))!;
         Assert.Equal(13, plan.Assignments.Count);
+        Assert.Equal(priority, plan.PositionPriority);
         Assert.All(plan.Tables, t => { Assert.StartsWith("Bản nháp ", t.Name); Assert.Equal(8, t.Capacity); });
         var before=plan.Assignments.OrderBy(a=>a.PlaceId).ToArray();
-        var first=plan.Tables.Single(t=>t.Column==1); var second=plan.Tables.Single(t=>t.Column==2);
-        var swap=await client.PatchAsJsonAsync(url,new ChangePlanningSeating(plan.Version,"MOVE_TABLE_SLOT",first.Id,TargetRow:second.Row,TargetColumn:second.Column));
+        var first=plan.Tables.Single(t=>t.Side=="GROOM" && t.Column==1);
+        var swap=await client.PatchAsJsonAsync(url,new ChangePlanningSeating(plan.Version,"MOVE_TABLE_SLOT",first.Id,TargetRow:1,TargetColumn:2));
         Assert.Equal(HttpStatusCode.OK,swap.StatusCode);
         plan=(await swap.Content.ReadFromJsonAsync<PlanningSeatingDto>())!;
         Assert.Equal(before,plan.Assignments.OrderBy(a=>a.PlaceId));
         Assert.Equal(2,plan.Tables.Single(t=>t.Id==first.Id).Column);
-        Assert.Equal(1,plan.Tables.Single(t=>t.Id==second.Id).Column);
+
         var invalid=await client.PatchAsJsonAsync(url,new ChangePlanningSeating(plan.Version,"MOVE_TABLE_SLOT",first.Id,TargetRow:1,TargetColumn:3));
         Assert.Equal(HttpStatusCode.UnprocessableEntity,invalid.StatusCode);
-        var oldVersion=plan.Version;
         var bride=await PlanningTestData.Guests(db,wedding.Id,"CONFIRMED","Bride");
         bride[0].Side="BRIDE"; await db.SaveChangesAsync();
         var bridePlace=await db.Set<PlanningPlace>().SingleAsync(p=>p.GuestId==bride[0].Id);
-        Assert.Equal(HttpStatusCode.UnprocessableEntity,(await client.PatchAsJsonAsync(url,new ChangePlanningSeating(plan.Version,"MOVE_PLACES",first.Id,PlaceIds:[bridePlace.Id]))).StatusCode);
-        Assert.Equal(oldVersion,(await client.GetFromJsonAsync<PlanningSeatingDto>(url))!.Version);
+        var move=await client.PatchAsJsonAsync(url,new ChangePlanningSeating(plan.Version,"MOVE_PLACES",first.Id,PlaceIds:[bridePlace.Id]));
+        Assert.Equal(HttpStatusCode.OK,move.StatusCode);
+        plan=(await move.Content.ReadFromJsonAsync<PlanningSeatingDto>())!;
+        Assert.Contains(plan.Assignments, a=>a.PlaceId==bridePlace.Id && a.TableId==first.Id);
+        before=plan.Assignments.OrderBy(a=>a.PlaceId).ToArray();
         var reflow=await client.PatchAsJsonAsync(url,new ChangePlanningSeating(plan.Version,"UPDATE_LAYOUT",BrideTablesPerRow:1,GroomTablesPerRow:1));
         Assert.Equal(HttpStatusCode.OK,reflow.StatusCode);
         plan=(await reflow.Content.ReadFromJsonAsync<PlanningSeatingDto>())!;

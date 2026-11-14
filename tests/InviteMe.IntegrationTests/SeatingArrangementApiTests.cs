@@ -14,7 +14,7 @@ public sealed class SeatingArrangementApiTests
         using var owner=await CoHostPermissionTests.SignIn(factory,"arrange-owner");
         var wedding=await CoHostPermissionTests.CreateWedding(db,owner,"arrange-existing");
         var guests=await PlanningTestData.Guests(db,wedding.Id,"DECLINED","A","B");
-        guests[0].Side=guests[1].Side="GROOM";
+        guests[0].Side="BRIDE"; guests[1].Side="MUTUAL";
         guests[0].Group=PlanningGroupKind.RELATIVES;guests[1].Group=PlanningGroupKind.FRIENDS;
         guests[0].ExpectedPeople=3;guests[1].ExpectedPeople=2;
         db.AddRange(new PlanningPlace{Id=Guid.NewGuid(),GuestId=guests[0].Id,Position=2},new PlanningPlace{Id=Guid.NewGuid(),GuestId=guests[0].Id,Position=3},new PlanningPlace{Id=Guid.NewGuid(),GuestId=guests[1].Id,Position=2});

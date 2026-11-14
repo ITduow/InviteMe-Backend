@@ -54,18 +54,18 @@ public sealed class SeatingArrangementTests
     }
 
     [Fact]
-    public void UnknownSidesAndLegacyTablesAreReportedRatherThanInferred()
+    public void LegacyTablesRequirePositionsButSharedGuestsCanBeSeated()
     {
         var source=Source(1,(2,PlanningGroupKind.OTHER));
-        source=source with {Tables=[source.Tables[0] with {Side=null,Row=null,Column=null}]};
-        var legacy=SeatingArranger.Preview(source,new(0));Assert.Equal(0,legacy.NewlyAssignedCount);Assert.Contains("TABLES_NEED_POSITIONS",legacy.Warnings);
+        var legacySource=source with {Tables=[source.Tables[0] with {Side=null,Row=null,Column=null}]};
+        var legacy=SeatingArranger.Preview(legacySource,new(0));Assert.Equal(0,legacy.NewlyAssignedCount);Assert.Contains("TABLES_NEED_POSITIONS",legacy.Warnings);
         Assert.Equal("NO_TABLE_FITS",Assert.Single(legacy.Unassigned).Code);
         source=source with {Guests=[source.Guests[0] with {Side="MUTUAL"}]};
-        Assert.Equal("SIDE_REQUIRED",Assert.Single(SeatingArranger.Preview(source,new(0)).Unassigned).Code);
+        Assert.Equal(2, SeatingArranger.Preview(source,new(0)).NewlyAssignedCount);
     }
 
     [Fact]
-    public void OppositeSidesAndExistingManualSplitsAreNeverChanged()
+    public void ExistingManualSplitsStayFixedAndOppositeSidesCanBeSeated()
     {
         var source=Source(2,(3,PlanningGroupKind.RELATIVES));
         var first=new PlanningAssignmentDto(source.Places[0].Id,source.Tables[0].Id,1);
@@ -73,6 +73,6 @@ public sealed class SeatingArrangementTests
         var result=SeatingArranger.Preview(source with {Assignments=[first,second]},new(0));
         Assert.Equal("PARTY_ALREADY_SPLIT",Assert.Single(result.Unassigned).Code);Assert.Contains(first,result.Assignments);Assert.Contains(second,result.Assignments);
         var bride=source with {Guests=[source.Guests[0] with {Side="BRIDE"}]};
-        Assert.Equal(0,SeatingArranger.Preview(bride,new(0)).NewlyAssignedCount);
+        Assert.Equal(3,SeatingArranger.Preview(bride,new(0)).NewlyAssignedCount);
     }
 }
