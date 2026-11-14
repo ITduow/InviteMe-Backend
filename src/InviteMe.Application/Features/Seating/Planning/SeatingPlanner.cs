@@ -18,10 +18,10 @@ public sealed record SeatingGenerationPreview(int SourceVersion, string SourceFi
     IReadOnlyList<GeneratedAssignment> Assignments, IReadOnlyList<string> Warnings,
     IReadOnlyList<PlanningGroupKind> PositionPriority);
 
-// Pure, deterministic packing. Search limits bound both table-count proof and affinity refinement.
+// Deterministic best-fit decreasing within each guest side and relationship group.
 public static class SeatingPlanner
 {
-    public const string AlgorithmVersion = "party-bfd-search-v2";
+    public const string AlgorithmVersion = "strict-group-bfd-v1";
     public static IReadOnlyList<PlanningGroupKind> DefaultPositionPriority { get; } = Array.AsReadOnly(new[]
     {
         PlanningGroupKind.FAMILY, PlanningGroupKind.VIP, PlanningGroupKind.RELATIVES, PlanningGroupKind.PARTNERS,
@@ -36,7 +36,21 @@ public static class SeatingPlanner
         return priority;
     }
 
-    private sealed record Party(Guid Id, PlanningGroupKind Group, PlanningSeatingPlace[] Places);
+    private sealed record Party(Guid Id, string Side, PlanningGroupKind Group, PlanningSeatingPlace[] Places);
+
+    private sealed class PackedTable(string side, PlanningGroupKind group)
+    {
+        public string Side { get; } = side;
+        public PlanningGroupKind Group { get; } = group;
+        public List<Party> Parties { get; } = [];
+        public int Used { get; private set; }
+
+        public void Add(Party party)
+        {
+            Parties.Add(party);
+            Used += party.Places.Length;
+        }
+    }
     private static ApplicationProblemException Invalid(string code, string message) => new(ProblemKind.BusinessRule, code, message);
     public static SeatingGenerationPreview ValidateDraft(PlanningSeatingDto source, GenerateSeating input)
     {
@@ -71,7 +85,7 @@ public static class SeatingPlanner
             new(generated.SelectMany(t => t.GuestIds).Distinct().Count(), draft.Assignments.Count, generated.Length,
                 generated.Sum(t => t.Capacity) - draft.Assignments.Count), generated, draft.Assignments, [], ResolvePriority(source, input));
     }
-    public static SeatingGenerationPreview Generate(PlanningSeatingDto source, GenerateSeating input, int nodeLimit = 100000)
+    public static SeatingGenerationPreview Generate(PlanningSeatingDto source, GenerateSeating input)
     {
         var rows = input.TablesPerRow ?? new();
         if (input.ExpectedVersion != source.Version) throw new ApplicationProblemException(ProblemKind.Conflict, "CONCURRENCY_CONFLICT", "Refresh seating data.");
@@ -80,100 +94,71 @@ public static class SeatingPlanner
         if (source.Tables.Count != 0 || source.Assignments.Count != 0) throw Invalid("SEATING_ALREADY_EXISTS", "Generate only before creating tables.");
         if (source.Places.Count == 0) throw Invalid("NO_PLACES", "Import guests before generating tables.");
         var guests = source.Guests.ToDictionary(g => g.Id);
-        var invitations = source.Places.GroupBy(p => p.GuestId).ToArray();
-        var parties = invitations.SelectMany(invitation =>
-            invitation.OrderBy(p => p.Position).ThenBy(p => p.Id).Chunk(input.TableCapacity)
-                .Select(places => new Party(invitation.Key, guests[invitation.Key].Group, places)))
-            .OrderByDescending(p => p.Places.Length).ThenBy(p => p.Id).ToArray();
+        var parties = source.Places.GroupBy(place => place.GuestId)
+            .Select(invitation =>
+            {
+                var guest = guests[invitation.Key];
+                return new Party(guest.Id, guest.Side, guest.Group,
+                    invitation.OrderBy(place => place.Position).ThenBy(place => place.Id).ToArray());
+            })
+            .OrderByDescending(party => party.Places.Length).ThenBy(party => party.Id).ToArray();
+
+        var oversized = parties.Where(party => party.Places.Length > input.TableCapacity).ToArray();
+        if (oversized.Length > 0)
+        {
+            var names = string.Join(", ", oversized.Select(party =>
+                $"{guests[party.Id].RecipientName} ({party.Places.Length} suất)"));
+            throw Invalid("PARTY_TOO_LARGE", $"Lời mời vượt sức chứa {input.TableCapacity} ghế: {names}.");
+        }
+
         var priority = ResolvePriority(source, input);
         var ranks = priority.Select((group, rank) => (group, rank)).ToDictionary(x => x.group, x => x.rank);
-        var tables = new List<GeneratedTable>(); var assignments = new List<GeneratedAssignment>();
-        var proven = true;
-        var bins = new List<List<Party>>();
-        int Used(List<Party> b) => b.Sum(p => p.Places.Length);
-        foreach (var party in parties)
+        var packed = new List<PackedTable>();
+        foreach (var group in parties.GroupBy(party => (party.Side, party.Group)))
         {
-            var bin = bins.Where(b => Used(b) + party.Places.Length <= input.TableCapacity).OrderByDescending(Used).FirstOrDefault();
-            if (bin is null) { bin = []; bins.Add(bin); } bin.Add(party);
-        }
-        var lower = (parties.Sum(p => p.Places.Length) + input.TableCapacity - 1) / input.TableCapacity;
-        // Exact bounded feasibility search, skipping interchangeable occupancy states.
-        for (var count = lower; count < bins.Count; count++)
-        {
-            var trial = Enumerable.Range(0, count).Select(_ => new List<Party>()).ToList();
-            var nodes = 0; var exhausted = false;
-            bool Pack(int index)
+            var groupTables = new List<PackedTable>();
+            foreach (var party in group)
             {
-                if (++nodes > nodeLimit) { exhausted = true; return false; }
-                if (index == parties.Length) return true;
-                var seen = new HashSet<int>();
-                foreach (var b in trial.OrderByDescending(Used))
+                var table = groupTables.Where(t => t.Used + party.Places.Length <= input.TableCapacity)
+                    .OrderByDescending(t => t.Used).FirstOrDefault();
+                if (table is null)
                 {
-                    var used = Used(b);
-                    if (!seen.Add(used) || used + parties[index].Places.Length > input.TableCapacity) continue;
-                    b.Add(parties[index]); if (Pack(index + 1)) return true; b.RemoveAt(b.Count - 1);
-                    if (exhausted) return false;
+                    table = new PackedTable(group.Key.Side, group.Key.Group);
+                    groupTables.Add(table);
                 }
-                return false;
+                table.Add(party);
             }
-            if (Pack(0)) { bins = trial; break; }
-            if (exhausted) { proven = false; break; }
+            packed.AddRange(groupTables);
         }
-        // Explore group-aware alternatives within the chosen table count. OTHER is never affinity.
-        int Score(List<List<Party>> candidate) => candidate.Sum(b => b.Select(p => p.Group == PlanningGroupKind.OTHER ? p.Id.ToString() : p.Group.ToString()).Distinct().Count() - 1);
-        var bestScore = Score(bins);
-        var affinityOrder = parties.OrderBy(p => ranks[p.Group]).ThenByDescending(p => p.Places.Length).ThenBy(p => p.Id).ToArray();
-        var alternative = bins.Select(_ => new List<Party>()).ToList(); var affinityNodes = 0;
-        void Improve(int index)
-        {
-            if (++affinityNodes > nodeLimit || bestScore == 0) return;
-            if (index == affinityOrder.Length)
-            {
-                var score = Score(alternative);
-                if (score < bestScore) { bestScore = score; bins = alternative.Select(b => b.ToList()).ToList(); }
-                return;
-            }
-            var seen = new HashSet<string>();
-            foreach (var b in alternative)
-            {
-                var key = string.Join(',', b.Select(p => p.Places[0].Id).Order());
-                if (!seen.Add(key) || Used(b) + affinityOrder[index].Places.Length > input.TableCapacity) continue;
-                b.Add(affinityOrder[index]); Improve(index + 1); b.RemoveAt(b.Count - 1);
-            }
-        }
-        Improve(0);
 
-        // Order the packed tables by the number of seats for each group, highest priority first.
-        if (bins.Count > 100) throw Invalid("TABLE_LIMIT", "Maximum 100 tables.");
-        bins.Sort((left, right) =>
+        if (packed.Count > 100) throw Invalid("TABLE_LIMIT", "Maximum 100 tables.");
+
+        var slots = (from row in Enumerable.Range(1, 100)
+                     from distance in Enumerable.Range(0, Math.Max(rows.Bride, rows.Groom))
+                     from side in new[] { "BRIDE", "GROOM" }
+                     let width = side == "BRIDE" ? rows.Bride : rows.Groom
+                     where distance < width
+                     select (Side: side, Row: row, Column: side == "BRIDE" ? width - distance : distance + 1)).ToArray();
+        var occupied = new HashSet<(string Side, int Row, int Column)>();
+        var tableNumbers = new Dictionary<string, int> { ["BRIDE"] = 0, ["GROOM"] = 0 };
+        var tables = new List<GeneratedTable>();
+        var assignments = new List<GeneratedAssignment>();
+
+        // Reserve each house's slots before placing shared and unspecified guest tables.
+        foreach (var table in packed.OrderBy(t => t.Side is "BRIDE" or "GROOM" ? 0 : 1)
+                     .ThenBy(t => ranks[t.Group]).ThenByDescending(t => t.Used))
         {
-            foreach (var group in priority)
-            {
-                var difference = right.Where(p => p.Group == group).Sum(p => p.Places.Length)
-                    .CompareTo(left.Where(p => p.Group == group).Sum(p => p.Places.Length));
-                if (difference != 0) return difference;
-            }
-            return left[0].Id.CompareTo(right[0].Id);
-        });
-        var slots = from row in Enumerable.Range(1, 100)
-                    from distance in Enumerable.Range(0, Math.Max(rows.Bride, rows.Groom))
-                    from side in new[] { "BRIDE", "GROOM" }
-                    let width = side == "BRIDE" ? rows.Bride : rows.Groom
-                    where distance < width
-                    select (Side: side, Row: row, Column: side == "BRIDE" ? width - distance : distance + 1);
-        var brideCount = 0;
-        var groomCount = 0;
-        foreach (var (bin, slot) in bins.Zip(slots))
-        {
-            var code = slot.Side == "BRIDE" ? $"G{++brideCount:00}" : $"T{++groomCount:00}";
-            var groups = bin.Select(p => p.Group).Distinct().ToArray();
+            var slot = slots.First(slot => (table.Side is not ("BRIDE" or "GROOM") || slot.Side == table.Side)
+                && occupied.Add(slot));
+            var code = $"{(slot.Side == "BRIDE" ? "G" : "T")}{++tableNumbers[slot.Side]:00}";
             tables.Add(new(code, slot.Side, slot.Row, slot.Column, input.TableCapacity,
-                groups.Length == 1 ? groups[0] : null, bin.Select(p => p.Id).Distinct().ToArray()));
-            assignments.AddRange(bin.OrderBy(p => ranks[p.Group]).SelectMany(p => p.Places)
-                .Select((p, seat) => new GeneratedAssignment(p.Id, code, seat + 1)));
+                table.Group, table.Parties.Select(party => party.Id).ToArray()));
+            assignments.AddRange(table.Parties.SelectMany(party => party.Places)
+                .Select((place, index) => new GeneratedAssignment(place.Id, code, index + 1)));
         }
-        return new(source.Version, SeatingSnapshot.Fingerprint(source), AlgorithmVersion, proven ? "PROVEN_OPTIMAL" : "FEASIBLE_NOT_PROVEN",
-            new(invitations.Length, assignments.Count, tables.Count, tables.Count * input.TableCapacity - assignments.Count), tables, assignments,
-            ["Initial planning includes all places, including declined guests.", "Mixed-group tables are managed with wedding-wide access."], priority);
+
+        return new(source.Version, SeatingSnapshot.Fingerprint(source), AlgorithmVersion, "FEASIBLE_NOT_PROVEN",
+            new(parties.Length, assignments.Count, tables.Count, tables.Count * input.TableCapacity - assignments.Count),
+            tables, assignments, ["Initial planning includes all places, including declined guests."], priority);
     }
 }

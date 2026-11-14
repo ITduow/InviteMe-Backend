@@ -88,7 +88,7 @@ public sealed class SeatingGenerationApiTests
         Assert.Equal(priority, plan.PositionPriority);
         Assert.All(plan.Tables, t => { Assert.StartsWith("Bản nháp ", t.Name); Assert.Equal(8, t.Capacity); });
         var before=plan.Assignments.OrderBy(a=>a.PlaceId).ToArray();
-        var first=plan.Tables.Single(t=>t.Side=="GROOM");
+        var first=plan.Tables.Single(t=>t.Side=="GROOM" && t.Column==1);
         var swap=await client.PatchAsJsonAsync(url,new ChangePlanningSeating(plan.Version,"MOVE_TABLE_SLOT",first.Id,TargetRow:1,TargetColumn:2));
         Assert.Equal(HttpStatusCode.OK,swap.StatusCode);
         plan=(await swap.Content.ReadFromJsonAsync<PlanningSeatingDto>())!;
