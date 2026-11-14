@@ -10,13 +10,17 @@ public enum PlanningGroupKind
     COLLEAGUES,
     PARTNERS,
     NEIGHBORS,
-    OTHER
+    OTHER,
+    FAMILY,
+    VIP
 }
 
 public static class PlanningGroupKindNames
 {
     public static string Vietnamese(this PlanningGroupKind group) => group switch
     {
+        PlanningGroupKind.FAMILY => "Gia đình",
+        PlanningGroupKind.VIP => "Khách quan trọng",
         PlanningGroupKind.RELATIVES => "Họ hàng",
         PlanningGroupKind.FRIENDS => "Bạn bè",
         PlanningGroupKind.COLLEAGUES => "Đồng nghiệp",

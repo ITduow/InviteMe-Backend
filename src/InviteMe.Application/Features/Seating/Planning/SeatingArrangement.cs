@@ -13,8 +13,8 @@ public sealed record SeatingArrangementPreview(int SourceVersion, string SourceF
 // The bounded search improves a deterministic greedy baseline; it never adds or moves tables.
 public static class SeatingArranger
 {
-    public const string AlgorithmVersion = "existing-party-pack-v1";
-    private sealed record Party(Guid Id, string Side, string GroupKey, PlanningSeatingPlace[] Pending, Guid? PinnedTable);
+    public const string AlgorithmVersion = "existing-party-pack-v2";
+    private sealed record Party(Guid Id, PlanningGroupKind Group, string GroupKey, PlanningSeatingPlace[] Pending, Guid? PinnedTable);
 
     public static SeatingArrangementPreview Preview(PlanningSeatingDto source, ArrangeSeating input, int nodeLimit = 100000)
     {
@@ -28,10 +28,12 @@ public static class SeatingArranger
         string Key(Guid placeId) => places.TryGetValue(placeId, out var place) && guests.TryGetValue(place.GuestId, out var guest)
             ? guest.Group == PlanningGroupKind.OTHER ? $"unknown:{guest.Id}" : guest.Group.ToString()
             : $"unknown:{placeId}";
+        var priority = source.PositionPriority ?? SeatingPlanner.DefaultPositionPriority;
+        var ranks = priority.Select((group, rank) => (group, rank)).ToDictionary(x => x.group, x => x.rank);
         var tables = source.Tables.Where(t => t.Side is "BRIDE" or "GROOM" && t.Row.HasValue && t.Column.HasValue)
-            .Where(t => !source.Assignments.Where(a => a.TableId == t.Id).Any(a =>
-                places.TryGetValue(a.PlaceId, out var place) && guests.TryGetValue(place.GuestId, out var guest) && guest.Side != t.Side))
-            .OrderBy(t => t.Side, StringComparer.Ordinal).ThenBy(t => t.Row).ThenBy(t => t.Column).ThenBy(t => t.Id).ToArray();
+            .OrderBy(t => t.Row)
+            .ThenBy(t => t.Side == "BRIDE" ? source.BrideTablesPerRow - t.Column : t.Column - 1)
+            .ThenBy(t => t.Side, StringComparer.Ordinal).ThenBy(t => t.Id).ToArray();
         var used = tables.Select(t => source.Assignments.Count(a => a.TableId == t.Id)).ToArray();
         var groups = tables.Select(t => source.Assignments.Where(a => a.TableId == t.Id).Select(a => Key(a.PlaceId))
             .GroupBy(key => key).ToDictionary(g => g.Key, g => g.Count())).ToArray();
@@ -43,16 +45,16 @@ public static class SeatingArranger
             if (pending.Length == 0) continue;
             var guest = guests[all.Key];
             var pinned = source.Assignments.Where(a => all.Any(p => p.Id == a.PlaceId)).Select(a => a.TableId).Distinct().ToArray();
-            var code = guest.Side is not ("BRIDE" or "GROOM") ? "SIDE_REQUIRED" : pinned.Length > 1 ? "PARTY_ALREADY_SPLIT" : null;
+            var code = pinned.Length > 1 ? "PARTY_ALREADY_SPLIT" : null;
             if (code is not null) { rejected.Add(new(all.Key, pending.Select(p => p.Id).ToArray(), code)); continue; }
-            parties.Add(new(all.Key, guest.Side, Key(pending[0].Id), pending, pinned.Length == 1 ? pinned[0] : null));
+            parties.Add(new(all.Key, guest.Group, Key(pending[0].Id), pending, pinned.Length == 1 ? pinned[0] : null));
         }
-        var ordered = parties.OrderByDescending(p => p.PinnedTable.HasValue).ThenByDescending(p => p.Pending.Length)
+        var ordered = parties.OrderByDescending(p => p.PinnedTable.HasValue).ThenBy(p => ranks[p.Group]).ThenByDescending(p => p.Pending.Length)
             .ThenBy(p => p.GroupKey, StringComparer.Ordinal).ThenBy(p => p.Id).ToArray();
         var choices = Enumerable.Repeat(-1, ordered.Length).ToArray();
         int Penalty() => groups.Sum(g => Math.Max(0, g.Count - 1));
         int[] Candidates(Party party) => Enumerable.Range(0, tables.Length)
-            .Where(i => tables[i].Side == party.Side && (party.PinnedTable is null || tables[i].Id == party.PinnedTable)
+            .Where(i => (party.PinnedTable is null || tables[i].Id == party.PinnedTable)
                 && tables[i].Capacity - used[i] >= party.Pending.Length)
             .OrderBy(i => groups[i].Count == 0 || groups[i].ContainsKey(party.GroupKey) ? 0 : 1)
             .ThenBy(i => tables[i].Capacity - used[i]).ThenBy(i => i).ToArray();

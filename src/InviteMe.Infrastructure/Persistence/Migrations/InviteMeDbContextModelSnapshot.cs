@@ -2533,6 +2533,9 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasDefaultValue(2);
 
+                    b.PrimitiveCollection<string[]>("PositionPriority")
+                        .HasColumnType("text[]");
+
                     b.Property<DateTimeOffset?>("PublishedAt")
                         .HasColumnType("timestamp with time zone");
 

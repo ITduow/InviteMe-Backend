@@ -12,6 +12,7 @@ public sealed class PlanningSeatingConfiguration : IEntityTypeConfiguration<Plan
     public void Configure(EntityTypeBuilder<PlanningSeatingPlan> b)
     {
         b.ToTable("planning_seating_plans", t => t.HasCheckConstraint("ck_seating_layout_width", "\"BrideTablesPerRow\" BETWEEN 1 AND 4 AND \"GroomTablesPerRow\" BETWEEN 1 AND 4")); b.HasKey(x => x.WeddingId);
+        b.PrimitiveCollection(x => x.PositionPriority).ElementType().HasConversion<string>();
         b.Property(x => x.Version).IsConcurrencyToken();
         b.Property(x => x.BrideTablesPerRow).HasDefaultValue(2);
         b.Property(x => x.GroomTablesPerRow).HasDefaultValue(2);

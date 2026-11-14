@@ -10,7 +10,7 @@ public sealed record PlanningTableDto(Guid Id, string Name, int Capacity, Invite
 public sealed record PlanningAssignmentDto(Guid PlaceId, Guid TableId, int SeatNumber);
 public sealed record PlanningSeatingPlace(Guid Id, Guid GuestId, int Position, PlanningPersonDto? Person);
 public sealed record PlanningSeatingDto(Guid WeddingId, int Version, IReadOnlyList<PlanningTableDto> Tables,
-    IReadOnlyList<PlanningGuestDto> Guests, IReadOnlyList<PlanningSeatingPlace> Places, IReadOnlyList<PlanningAssignmentDto> Assignments, int BrideTablesPerRow = 2, int GroomTablesPerRow = 2);
+    IReadOnlyList<PlanningGuestDto> Guests, IReadOnlyList<PlanningSeatingPlace> Places, IReadOnlyList<PlanningAssignmentDto> Assignments, int BrideTablesPerRow = 2, int GroomTablesPerRow = 2, IReadOnlyList<InviteMe.Domain.Guests.PlanningGroupKind>? PositionPriority = null);
 public sealed record ChangePlanningSeating(int ExpectedVersion, string Action, Guid? TableId = null,
     string? Name = null, int? Capacity = null, IReadOnlyList<Guid>? PlaceIds = null, int? SeatNumber = null,
     int? TableCount = null,

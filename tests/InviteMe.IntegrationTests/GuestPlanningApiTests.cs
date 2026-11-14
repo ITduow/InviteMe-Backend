@@ -24,8 +24,10 @@ public sealed class GuestPlanningApiTests
         var path = $"/api/weddings/{wedding.Id}/guest-planning";
         var groupScope = await owner.GetFromJsonAsync<PlanningGroupList>(path + "/groups");
         Assert.True(groupScope!.IsWeddingWide);
+        Assert.Contains(PlanningGroupKind.FAMILY, groupScope.Items);
+        Assert.Contains(PlanningGroupKind.VIP, groupScope.Items);
         var key = Guid.NewGuid();
-        var input = new CreatePlanningGuest("Nguyễn Thị Mai", "Cô", 3, "BRIDE", PlanningGroupKind.OTHER,
+        var input = new CreatePlanningGuest("Nguyễn Thị Mai", "Cô", 3, "BRIDE", PlanningGroupKind.FAMILY,
             "0900123456", "Dị ứng đậu phộng", "mai@example.test");
 
         async Task<HttpResponseMessage> Create(CreatePlanningGuest body)
@@ -39,6 +41,7 @@ public sealed class GuestPlanningApiTests
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         var guest = (await created.Content.ReadFromJsonAsync<PlanningGuestDto>())!;
         Assert.Equal("mai@example.test", guest.Email);
+        Assert.Equal(PlanningGroupKind.FAMILY, guest.Group);
         Assert.Equal(3, guest.ExpectedPeople);
         Assert.NotNull(guest.InvitationPath);
         Assert.Equal(3, await db.Set<PlanningPlace>().CountAsync(x => x.GuestId == guest.Id));
@@ -49,6 +52,15 @@ public sealed class GuestPlanningApiTests
         Assert.Equal(guest.Id, (await replay.Content.ReadFromJsonAsync<PlanningGuestDto>())!.Id);
         Assert.Equal(HttpStatusCode.Conflict, (await Create(input with { RecipientName = "Khách khác" })).StatusCode);
         Assert.Equal(1, await db.Set<PlanningGuest>().CountAsync(x => x.WeddingId == wedding.Id));
+
+        var updated = await owner.PutAsJsonAsync(path + $"/guests/{guest.Id}",
+            new UpdatePlanningGuest(guest.Version, guest.RecipientName, input.Honorific, "BRIDE", PlanningGroupKind.VIP,
+                input.Phone, input.Note, input.Email));
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+        var updatedDetail = await owner.GetFromJsonAsync<JsonElement>(path + $"/guests/{guest.Id}");
+        Assert.Equal("VIP", updatedDetail.GetProperty("group").GetString());
+        Assert.Equal("PENDING", updatedDetail.GetProperty("places")[0].GetProperty("person").GetProperty("attendanceStatus").GetString());
+        guest = guest with { Version = updatedDetail.GetProperty("version").GetInt32() };
 
         var planPath = path + "/seating-plan";
         var plan = await owner.GetFromJsonAsync<PlanningSeatingDto>(planPath);
@@ -209,7 +221,7 @@ public sealed class GuestPlanningApiTests
             request.Headers.Add("Idempotency-Key", key.ToString());
             return await owner.SendCheckedImportAsync(request);
         }
-        var group = PlanningGroupKind.RELATIVES;
+        var group = PlanningGroupKind.FAMILY;
         var good = new PlanningRow(2, "Nguyễn Văn An", "Bác", 4, "BRIDE", group,
             Phone: "0900123456", Email: " an@example.com ");
         var badContact = await Import(new([good, new(7, "Nam", Phone: "abc", Email: "invalid")]), Guid.NewGuid());
@@ -221,7 +233,7 @@ public sealed class GuestPlanningApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.StatusCode);
         Assert.Equal(0, await db.Set<PlanningGuest>().CountAsync());
         var key = Guid.NewGuid();
-        var body = new PlanningImport([good, new(3, "Trần Thị Hoa", ExpectedPeople: 2, Group: PlanningGroupKind.RELATIVES)]);
+        var body = new PlanningImport([good, new(3, "Trần Thị Hoa", ExpectedPeople: 2, Group: PlanningGroupKind.VIP)]);
         var response = await Import(body, key);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var result = (await response.Content.ReadFromJsonAsync<PlanningImportResult>())!;
@@ -238,6 +250,7 @@ public sealed class GuestPlanningApiTests
             .OrderBy(x => x.Id).Select(x => x.InvitationToken).ToArrayAsync());
         Assert.Equal(2, await db.Set<PlanningGuest>().CountAsync());
         Assert.Equal(2, await db.Set<PlanningParticipant>().CountAsync());
+        Assert.All(await db.Set<PlanningParticipant>().ToListAsync(), person => Assert.Equal("PENDING", person.AttendanceStatus));
         Assert.Equal(6, await db.Set<PlanningPlace>().CountAsync());
         Assert.Equal(HttpStatusCode.Conflict, (await Import(new([good]), key)).StatusCode);
         var detail = await owner.GetFromJsonAsync<JsonElement>(path + "/guests/" + result.Items[0].GuestId);
