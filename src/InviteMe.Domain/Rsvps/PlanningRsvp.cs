@@ -142,17 +142,24 @@ public sealed class PlanningRsvpLock
 public sealed class PlanningRsvpSettings
 {
     public const int MaxPlusOneLimit = 20, MaxPartySize = 50;
+    public const string CheckInRequired = "REQUIRED", CheckInOptional = "OPTIONAL";
     public Guid WeddingId { get; private set; }
     public int PlusOneLimit { get; private set; }
     public int Version { get; private set; }
     /// <summary>Guest05: send the automatic reminders 3 days and 1 day before the RSVP deadline (on by default).</summary>
     public bool AutoRemindersEnabled { get; private set; } = true;
+    public string RsvpCheckInPolicy { get; private set; } = CheckInRequired;
+    public bool AllowWalkIns { get; private set; }
     public static PlanningRsvpSettings Create(Guid weddingId) => new() { WeddingId = weddingId };
     public void SetAutoReminders(bool enabled) => AutoRemindersEnabled = enabled;
-    public void Update(int plusOneLimit)
+    public void Update(int plusOneLimit, string rsvpCheckInPolicy, bool allowWalkIns)
     {
         if (plusOneLimit is < 0 or > MaxPlusOneLimit) throw new ArgumentOutOfRangeException(nameof(plusOneLimit));
-        PlusOneLimit = plusOneLimit; Version++;
+        if (rsvpCheckInPolicy is not (CheckInRequired or CheckInOptional)) throw new ArgumentOutOfRangeException(nameof(rsvpCheckInPolicy));
+        PlusOneLimit = plusOneLimit;
+        RsvpCheckInPolicy = rsvpCheckInPolicy;
+        AllowWalkIns = allowWalkIns;
+        Version++;
     }
 
     /// <summary>Threshold ("ngưỡng") of one invitation: the people invited on it + the wedding plus-one limit.</summary>

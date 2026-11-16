@@ -83,13 +83,19 @@ public sealed class RsvpHandler(IRsvpStore store, IWeddingPermissionService perm
     }
 
     public async Task<RsvpSettingsDto> SettingsAsync(Guid weddingId, CancellationToken ct)
-    { await permissions.RequireWeddingWideAsync(weddingId, WeddingPermission.RSVP_VIEW, ct); return await store.SettingsAsync(weddingId, ct); }
+    {
+        if (!await permissions.HasPermissionAsync(weddingId, WeddingPermission.RSVP_VIEW, ct))
+            await permissions.RequireWeddingWideAsync(weddingId, WeddingPermission.CHECKIN_MANAGE, ct);
+        return await store.SettingsAsync(weddingId, ct);
+    }
 
     public async Task<RsvpSettingsDto> SaveSettingsAsync(Guid weddingId, SaveRsvpSettings input, CancellationToken ct)
     {
         await permissions.RequireWeddingWideAsync(weddingId, WeddingPermission.GUEST_EDIT, ct);
         await settingsValidation.ValidateAsync(input, ct);
-        var result = await store.SaveSettingsAsync(weddingId, input, ct);
+        var actor = user.UserId ?? throw new InviteMe.Application.Common.Errors.ApplicationProblemException(
+            InviteMe.Application.Common.Errors.ProblemKind.Unauthenticated, "AUTHENTICATION_REQUIRED", "Authentication is required.");
+        var result = await store.SaveSettingsAsync(weddingId, input, actor, ct);
         await changes.PublishAsync(weddingId, new(RsvpSettingsChanged, weddingId, result.Version), ct);
         return result;
     }

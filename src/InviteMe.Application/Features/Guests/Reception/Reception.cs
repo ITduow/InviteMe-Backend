@@ -20,29 +20,29 @@ namespace InviteMe.Application.Features.Guests.Reception;
 public sealed record ReceptionSearchQuery(string Q);
 /// <summary>One invitation found at the counter. Contact details are never returned, only what reception needs.</summary>
 public sealed record ReceptionGuestDto(Guid GuestId, string RecipientName, string? Honorific, string Side, int Places, int CheckedIn,
-    IReadOnlyList<string> Tables, IReadOnlyList<ReceptionSeatDto> Seats);
+    string RsvpCheckInPolicy, bool AllowWalkIns, IReadOnlyList<string> Tables, IReadOnlyList<ReceptionSeatDto> Seats);
 
 /// <summary>
 /// Confirm arrival of places of one invitation: Code (scanned QR link or token) or GuestId (found by search), not both.
-/// ExceptionReason is required when a place to check in is UNUSED (the guest answered they would not come).
+/// The BE always validates the latest per-place RSVP and wedding policy inside the write transaction.
 /// </summary>
-public sealed record CheckInGuests(string? Code, Guid? GuestId, IReadOnlyList<Guid> PlaceIds, string? ExceptionReason = null);
+public sealed record CheckInGuests(string? Code, Guid? GuestId, IReadOnlyList<Guid> PlaceIds);
 public static class CheckInOutcome
 {
     public const string CheckedIn = "CHECKED_IN", AlreadyCheckedIn = "ALREADY_CHECKED_IN";
 }
 /// <summary>
 /// Result per requested place. Result: CHECKED_IN (now) or ALREADY_CHECKED_IN (earlier; nothing is counted twice).
-/// Kind: INVITED, or WALK_IN for a place added at the counter.
+/// Kind describes the source; CheckInMethod describes normal check-in vs counter verification.
 /// </summary>
 public sealed record CheckInPlaceResult(Guid PlaceId, int Position, string? PersonName, string Status, string? Table, int? SeatNumber,
-    string Result, DateTimeOffset CheckedInAt, string Kind);
+    string Result, DateTimeOffset CheckedInAt, string Kind, string? CheckInMethod, string? OriginalRsvpStatus);
 public sealed record CheckInResultDto(Guid GuestId, string RecipientName, string? Honorific, IReadOnlyList<CheckInPlaceResult> Places);
 
 /// <summary>
-/// Walk-in at the counter, checked in at once. GuestId: extra people of that invitation. Otherwise RecipientName creates a new
-/// invitation for someone not on the list (People counts the recipient; Honorific and Side describe it). Names fill the other
-/// people in order; a missing name becomes "Người đi cùng {position}". Over the wedding capacity, OverrideReason is required.
+/// Adds companion places to an existing invitation when GuestId is set, or creates a genuinely uninvited walk-in when it is null.
+/// People includes the recipient for a new walk-in. Each new place is checked in with the same transaction. Capacity is never
+/// overridden; the retained OverrideReason field is accepted for older clients but does not bypass the capacity limit.
 /// </summary>
 public sealed record AddWalkIn(Guid? GuestId, string? RecipientName, int People, string? Honorific = null, string? Side = null,
     IReadOnlyList<string>? Names = null, string? OverrideReason = null);
@@ -58,14 +58,15 @@ public sealed record VoidCheckInResultDto(Guid GuestId, Guid PlaceId, DateTimeOf
 /// by their RSVP status (confirmed, without RSVP, exception = had said no).
 /// </summary>
 public sealed record CheckInSummaryDto(int ExpectedPlaces, int CheckedIn, int CheckedInConfirmed, int CheckedInWithoutRsvp,
-    int CheckedInExceptions, int CheckedInWalkIns, IReadOnlyList<CheckInSideStats> BySide);
+    int CheckedInExceptions, int CheckedInWalkIns, IReadOnlyList<CheckInSideStats> BySide,
+    int CheckedInCounterVerified = 0, int CheckedInInvitedCompanions = 0, int CheckedInUnassigned = 0);
 public sealed record CheckInSideStats(string Side, int ExpectedPlaces, int CheckedIn);
 
 public sealed record ReceptionGuest(Guid GuestId, string RecipientName, string? Honorific);
 public sealed record ReceptionCandidate(Guid GuestId, string RecipientName, string? Honorific, string Side, string? Phone,
     IReadOnlyList<string> PeopleNames, int Places, int CheckedIn, IReadOnlyList<string> Tables);
-public sealed record CheckInPlace(Guid PlaceId, Guid? ParticipantId, string Status, string? Table, string? ExceptionReason);
-public sealed record CheckInPlaceStats(string Side, string Status, bool CheckedIn, bool WalkIn);
+public sealed record CheckInPlaceStats(string Side, string Status, bool CheckedIn, bool WalkIn, string? Kind,
+    string? CheckInMethod, string? OriginalRsvpStatus, bool Assigned, bool HasLegacyReason);
 public sealed record WalkInOutcome(Guid GuestId, string RecipientName, string? Honorific, IReadOnlyList<Guid> PlaceIds, bool NewGuest,
     bool OverCapacity, bool Replayed = false);
 public sealed record VoidedCheckIn(Guid GuestId, DateTimeOffset VoidedAt);
@@ -77,7 +78,7 @@ public interface IReceptionStore
     Task<IReadOnlyList<ReceptionCandidate>> CandidatesAsync(Guid weddingId, CancellationToken ct);
     Task<IReadOnlyList<ReceptionCandidate>> CandidatesScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope) => CandidatesAsync(weddingId, ct);
     // Inserts the missing check-ins (existing ones are kept) with one audit row each; returns the places checked in now.
-    Task<IReadOnlyCollection<Guid>> CheckInAsync(Guid weddingId, Guid guestId, IReadOnlyList<CheckInPlace> places, Guid actor, CancellationToken ct);
+    Task<IReadOnlyCollection<Guid>> CheckInAsync(Guid weddingId, Guid guestId, IReadOnlyList<Guid> placeIds, Guid actor, CancellationToken ct);
     Task<IReadOnlyList<CheckInPlaceStats>> PlaceStatsAsync(Guid weddingId, CancellationToken ct);
     Task<IReadOnlyList<CheckInPlaceStats>> PlaceStatsScopedAsync(Guid weddingId, CancellationToken ct, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope) => PlaceStatsAsync(weddingId, ct);
     Task<Guid?> FindGuestIdByPlaceAsync(Guid weddingId, Guid placeId, CancellationToken ct) => Task.FromResult<Guid?>(null);
@@ -126,7 +127,6 @@ public sealed class CheckInGuestsValidator : AbstractValidator<CheckInGuests>
             .WithMessage("Scan the guest QR or paste the invitation link / token.");
         RuleFor(x => x.PlaceIds).NotNull().Must(x => x is { Count: >= 1 and <= 50 } && x.Distinct().Count() == x.Count)
             .WithMessage("Choose 1 to 50 different places.");
-        RuleFor(x => x.ExceptionReason).Must(x => PlanningText.Valid(x, 500)).WithMessage("Reason is at most 500 characters.");
     }
 }
 
@@ -140,6 +140,7 @@ public sealed partial class ReceptionHandler(IReceptionStore store, IGuestAccess
     public async Task<IReadOnlyList<ReceptionGuestDto>> SearchAsync(Guid weddingId, ReceptionSearchQuery query, CancellationToken ct)
     {
         await permissions.RequireAsync(weddingId, WeddingPermission.CHECKIN_MANAGE, ct);
+        await plans.RequireFeatureAsync(weddingId, InviteMe.Application.Features.Billing.PlanFeature.Checkin, ct);
         await searchValidation.ValidateAsync(query, ct);
         var text = Fold(query.Q);
         var digits = NonDigits().Replace(query.Q, "");
@@ -150,12 +151,13 @@ public sealed partial class ReceptionHandler(IReceptionStore store, IGuestAccess
             .OrderBy(x => x.RecipientName, StringComparer.Create(CultureInfo.GetCultureInfo("vi-VN"), true))
             .Take(SearchLimit)
             .ToList();
+        var policy = await access.CheckInPolicyAsync(weddingId, ct);
         var result = new List<ReceptionGuestDto>(candidates.Count);
         foreach (var candidate in candidates)
         {
             ct.ThrowIfCancellationRequested();
             result.Add(new ReceptionGuestDto(candidate.GuestId, candidate.RecipientName, candidate.Honorific,
-                candidate.Side, candidate.Places, candidate.CheckedIn, candidate.Tables,
+                candidate.Side, candidate.Places, candidate.CheckedIn, policy.RsvpCheckInPolicy, policy.AllowWalkIns, candidate.Tables,
                 await access.SeatsAsync(candidate.GuestId, ct)));
         }
         return result;
@@ -168,30 +170,20 @@ public sealed partial class ReceptionHandler(IReceptionStore store, IGuestAccess
         await checkInValidation.ValidateAsync(input, ct);
         var actor = Actor();
         var guest = await Guest(weddingId, input, ct);
-        var seats = await access.SeatsAsync(guest.GuestId, ct);
-        var requested = input.PlaceIds.Select(id => seats.SingleOrDefault(s => s.PlaceId == id)).ToList();
-        if (requested.Any(x => x is null))
-            throw new ApplicationProblemException(ProblemKind.BusinessRule, "PLACE_NOT_IN_INVITATION", "Some places do not belong to this invitation.");
-        var reason = string.IsNullOrWhiteSpace(input.ExceptionReason) ? null : PlanningText.Clean(input.ExceptionReason);
-        var exceptions = requested.Where(x => x!.CheckedInAt is null && x.Status == RsvpPlaceStatus.Unused).ToList();
-        if (exceptions.Count > 0 && reason is null)
-            throw new ApplicationProblemException(ProblemKind.BusinessRule, "CHECKIN_EXCEPTION_REASON_REQUIRED",
-                "Khách đã báo không tham dự cho suất này. Nhập lý do để check-in ngoại lệ.");
-
-        var inserted = await store.CheckInAsync(weddingId, guest.GuestId, requested.Select(x => new CheckInPlace(x!.PlaceId, x.ParticipantId,
-            x.Status, x.Table, x.Status == RsvpPlaceStatus.Unused ? reason : null)).ToList(), actor, ct);
+        var inserted = await store.CheckInAsync(weddingId, guest.GuestId, input.PlaceIds, actor, ct);
         if (inserted.Count > 0) await changes.PublishAsync(weddingId, new("GuestCheckedIn", guest.GuestId), ct);
 
         var after = (await access.SeatsAsync(guest.GuestId, ct)).ToDictionary(x => x.PlaceId);
         return new(guest.GuestId, guest.RecipientName, guest.Honorific, input.PlaceIds.Select(id => after[id]).Select(x => new CheckInPlaceResult(
             x.PlaceId, x.Position, x.PersonName, x.Status, x.Table, x.SeatNumber,
-            inserted.Contains(x.PlaceId) ? CheckInOutcome.CheckedIn : CheckInOutcome.AlreadyCheckedIn, x.CheckedInAt!.Value, x.CheckInKind!)).ToList());
+            inserted.Contains(x.PlaceId) ? CheckInOutcome.CheckedIn : CheckInOutcome.AlreadyCheckedIn, x.CheckedInAt!.Value,
+            x.CheckInKind!, x.CheckInMethod, x.OriginalRsvpStatus)).ToList());
     }
 
-    // Walk-ins need CHECKIN_MANAGE (explicit grant), stay within the wedding capacity unless a reason is given, and are audited.
+    // A new, uninvited guest needs WALK_IN_MANAGE. Adding a companion to an existing invitation uses CHECKIN_MANAGE.
     public async Task<WalkInResultDto> WalkInAsync(Guid weddingId, string? idempotencyKey, AddWalkIn input, CancellationToken ct)
     {
-        await permissions.RequireAsync(weddingId, WeddingPermission.CHECKIN_MANAGE, ct);
+        await permissions.RequireAsync(weddingId, input.GuestId is null ? WeddingPermission.WALK_IN_MANAGE : WeddingPermission.CHECKIN_MANAGE, ct);
         await plans.RequireFeatureAsync(weddingId, InviteMe.Application.Features.Billing.PlanFeature.Checkin, ct);
         if (!Guid.TryParse(idempotencyKey, out var key) || key == Guid.Empty)
             throw new ValidationException([new("Idempotency-Key", "Idempotency-Key must be a non-empty UUID.")]);
@@ -206,12 +198,13 @@ public sealed partial class ReceptionHandler(IReceptionStore store, IGuestAccess
         return new(outcome.GuestId, outcome.RecipientName, outcome.Honorific, outcome.NewGuest, outcome.OverCapacity, seats
             .Where(x => outcome.PlaceIds.Contains(x.PlaceId) && x.CheckedInAt is not null)
             .Select(x => new CheckInPlaceResult(x.PlaceId, x.Position, x.PersonName, x.Status, x.Table, x.SeatNumber, CheckInOutcome.CheckedIn,
-                x.CheckedInAt!.Value, x.CheckInKind!)).ToList());
+                x.CheckedInAt!.Value, x.CheckInKind!, x.CheckInMethod, x.OriginalRsvpStatus)).ToList());
     }
 
     public async Task<VoidCheckInResultDto> VoidAsync(Guid weddingId, Guid placeId, VoidCheckIn input, CancellationToken ct)
     {
         await permissions.RequireAsync(weddingId, WeddingPermission.CHECKIN_MANAGE, ct);
+        await plans.RequireFeatureAsync(weddingId, InviteMe.Application.Features.Billing.PlanFeature.Checkin, ct);
         await voidValidation.ValidateAsync(input, ct);
         var guestId = await store.FindGuestIdByPlaceAsync(weddingId, placeId, ct);
         if (guestId is null) throw new ApplicationProblemException(ProblemKind.NotFound, "CHECK_IN_NOT_FOUND", "This place is not checked in.");
@@ -224,16 +217,24 @@ public sealed partial class ReceptionHandler(IReceptionStore store, IGuestAccess
     // Reception and the couple's dashboard (RSVP_VIEW) both read the actual attendance.
     public async Task<CheckInSummaryDto> SummaryAsync(Guid weddingId, CancellationToken ct)
     {
+        await plans.RequireFeatureAsync(weddingId, InviteMe.Application.Features.Billing.PlanFeature.Checkin, ct);
         var permission = await permissions.HasPermissionAsync(weddingId, WeddingPermission.CHECKIN_MANAGE, ct)
             ? WeddingPermission.CHECKIN_MANAGE : WeddingPermission.RSVP_VIEW;
         var scope = await permissions.RequireScopeAsync(weddingId, permission, ct);
         var places = await store.PlaceStatsScopedAsync(weddingId, ct, scope.IsWeddingWide ? null : scope.GroupIds);
         int Expected(IEnumerable<CheckInPlaceStats> x) => x.Count(p => !p.WalkIn && p.Status == RsvpPlaceStatus.Used);
         int Arrived(IEnumerable<CheckInPlaceStats> x) => x.Count(p => p.CheckedIn);
-        int Invited(string status) => places.Count(p => p.CheckedIn && !p.WalkIn && p.Status == status);
-        return new(Expected(places), Arrived(places), Invited(RsvpPlaceStatus.Used), Invited(RsvpPlaceStatus.Pending),
-            Invited(RsvpPlaceStatus.Unused), places.Count(p => p.CheckedIn && p.WalkIn),
-            places.GroupBy(x => x.Side).OrderBy(x => x.Key, StringComparer.Ordinal).Select(x => new CheckInSideStats(x.Key, Expected(x), Arrived(x))).ToList());
+        int Snapshot(string status, string legacyStatus) => places.Count(p => p.CheckedIn && !p.WalkIn &&
+            (p.OriginalRsvpStatus == status || p.OriginalRsvpStatus is null && p.Status == legacyStatus));
+        return new(Expected(places), Arrived(places), Snapshot("ATTENDING", RsvpPlaceStatus.Used),
+            places.Count(p => p.CheckedIn && !p.WalkIn && (p.OriginalRsvpStatus is "MAYBE" or "NOT_RESPONDED" ||
+                p.OriginalRsvpStatus is null && p.Status == RsvpPlaceStatus.Pending)),
+            places.Count(p => p.CheckedIn && !p.WalkIn && (p.OriginalRsvpStatus == "DECLINED" || p.HasLegacyReason)),
+            places.Count(p => p.CheckedIn && p.WalkIn),
+            places.GroupBy(x => x.Side).OrderBy(x => x.Key, StringComparer.Ordinal).Select(x => new CheckInSideStats(x.Key, Expected(x), Arrived(x))).ToList(),
+            places.Count(p => p.CheckedIn && p.CheckInMethod == InviteMe.Domain.CheckIn.PlanningCheckInMethod.CounterVerified),
+            places.Count(p => p.CheckedIn && p.Kind == InviteMe.Domain.CheckIn.PlanningCheckInKind.InvitedCompanion),
+            places.Count(p => p.CheckedIn && !p.Assigned));
     }
 
     private Guid Actor() => user.UserId

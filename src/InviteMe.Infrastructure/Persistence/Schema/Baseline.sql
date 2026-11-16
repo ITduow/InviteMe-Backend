@@ -1725,6 +1725,7 @@ VALUES
     ('SEATING_VIEW',       'View seating chart',        'WEDDING'),
     ('SEATING_EDIT',       'Edit seating chart',        'WEDDING'),
     ('CHECKIN_MANAGE',     'Manage event check-in',     'WEDDING'),
+    ('WALK_IN_MANAGE',     'Manage walk-in guests',    'WEDDING'),
     ('GIFT_VIEW',          'View gifts',                'WEDDING'),
     ('GIFT_EDIT',          'Manage gifts',              'WEDDING'),
     ('ANALYTICS_VIEW',     'View analytics',            'WEDDING'),

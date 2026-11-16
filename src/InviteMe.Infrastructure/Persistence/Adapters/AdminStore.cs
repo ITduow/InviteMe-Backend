@@ -424,10 +424,11 @@ public sealed class AdminStore(InviteMeDbContext db, UserManager<ApplicationUser
     private static AdminAccessControlDto BuildAccessControl(IReadOnlyList<Permission> platform, IReadOnlySet<Guid> granted)
     {
         var weddingPermissions = Enum.GetNames<WeddingPermission>().Order(StringComparer.Ordinal).ToArray();
-        var coHostPermissions = new[] { "GUEST_VIEW", "GUEST_EDIT", "RSVP_VIEW", "SEATING_VIEW", "SEATING_EDIT", "CHECKIN_MANAGE", "GIFT_RECORD" };
+        var coHostPermissions = new[] { "GUEST_VIEW", "GUEST_EDIT", "RSVP_VIEW", "SEATING_VIEW", "SEATING_EDIT", "CHECKIN_MANAGE", "WALK_IN_MANAGE", "GIFT_RECORD" };
         var permissionDtos = platform.Select(x => new AdminPermissionDto(x.Code, x.Name, x.Scope, x.Description, true))
             .Concat(weddingPermissions.Select(x => new AdminPermissionDto(x, x.Replace('_', ' '), "WEDDING",
                 x == "CHECKIN_MANAGE" ? "Wedding-wide check-in permission; group scope is not applied."
+                : x == "WALK_IN_MANAGE" ? "Wedding-wide permission to add genuinely uninvited guests, when walk-ins are enabled."
                 : x == "GIFT_RECORD" ? "Wedding-wide: records cash envelopes and presents at the reception; never sees gift totals."
                 : "Granted by the wedding owner with wedding-wide or guest-group scope.", coHostPermissions.Contains(x, StringComparer.Ordinal))))
             .ToArray();

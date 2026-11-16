@@ -19,7 +19,7 @@ public interface IRsvpStore
     Task<RsvpWriteResult> ResolveRequestAsync(Guid weddingId, Guid requestId, Guid actor, bool approve, CancellationToken ct);
     Task<LockRsvpsResult> LockAsync(Guid weddingId, Guid actor, LockRsvps input, CancellationToken ct);
     Task<RsvpSettingsDto> SettingsAsync(Guid weddingId, CancellationToken ct);
-    Task<RsvpSettingsDto> SaveSettingsAsync(Guid weddingId, SaveRsvpSettings input, CancellationToken ct);
+    Task<RsvpSettingsDto> SaveSettingsAsync(Guid weddingId, SaveRsvpSettings input, Guid actor, CancellationToken ct);
     /// <summary>
     /// Read model for the Couple06 dashboard: every planning guest with its RSVP and people. groupScope = the groups a
     /// group-limited co-host may see; null = the whole wedding.

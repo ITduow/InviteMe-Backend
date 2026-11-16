@@ -12,14 +12,22 @@ public sealed class PlanningCheckIn
     public Guid? ParticipantId { get; set; }
     public DateTimeOffset CheckedInAt { get; set; }
     public Guid CheckedInBy { get; set; }
-    // Required when the place was UNUSED in RSVP (the guest said they would not come but came anyway),
-    // or when a walk-in went over the wedding capacity.
+    // Kept for historical rows and legacy capacity notes. New check-in flows never use it to bypass a declined RSVP.
     public string? ExceptionReason { get; set; }
-    // INVITED: a reserved place of the invitation. WALK_IN: a place added at the counter for someone not on the list.
+    // Source of the attendee, independent from how RSVP was handled.
     public string Kind { get; set; } = PlanningCheckInKind.Invited;
+    // Nullable for legacy rows whose exact handling method cannot be reconstructed safely.
+    public string? CheckInMethod { get; set; }
+    // Immutable RSVP state observed at check-in time; NOT_RESPONDED and MAYBE remain distinct.
+    public string? OriginalRsvpStatus { get; set; }
 }
 
 public static class PlanningCheckInKind
 {
-    public const string Invited = "INVITED", WalkIn = "WALK_IN";
+    public const string Invited = "INVITED", InvitedCompanion = "INVITED_COMPANION", WalkIn = "WALK_IN";
+}
+
+public static class PlanningCheckInMethod
+{
+    public const string Normal = "NORMAL", CounterVerified = "COUNTER_VERIFIED";
 }
