@@ -4,6 +4,7 @@ using InviteMe.Application.Common.Models;
 using InviteMe.Application.Features.Rsvps;
 using InviteMe.Application.Ports.Rsvps;
 using InviteMe.Domain.Audit;
+using InviteMe.Domain.CheckIn;
 using InviteMe.Domain.Guests;
 using InviteMe.Domain.Rsvps;
 using InviteMe.Domain.Seating;
@@ -66,7 +67,8 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock, InviteMe
     {
         if (!await db.Weddings.AnyAsync(x => x.Id == weddingId, ct)) throw Missing("WEDDING_NOT_FOUND");
         var settings = await db.Set<PlanningRsvpSettings>().AsNoTracking().SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
-        return new(weddingId, settings?.PlusOneLimit ?? 0, settings?.Version ?? 0, await Deadline(weddingId, ct));
+        return new(weddingId, settings?.PlusOneLimit ?? 0, settings?.Version ?? 0, await Deadline(weddingId, ct),
+            settings?.RsvpCheckInPolicy ?? PlanningRsvpSettings.CheckInRequired, settings?.AllowWalkIns ?? false);
     }
 
     public async Task<RsvpDashboardData> DashboardAsync(Guid weddingId, IReadOnlySet<InviteMe.Domain.Guests.PlanningGroupKind>? groupScope, CancellationToken ct)
@@ -395,16 +397,28 @@ public sealed class RsvpStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         return new(affected, input.Locked);
     }
 
-    public async Task<RsvpSettingsDto> SaveSettingsAsync(Guid weddingId, SaveRsvpSettings input, CancellationToken ct)
+    public async Task<RsvpSettingsDto> SaveSettingsAsync(Guid weddingId, SaveRsvpSettings input, Guid actor, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await LockWedding(weddingId, ct);
         var settings = await db.Set<PlanningRsvpSettings>().SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
         if ((settings?.Version ?? 0) != input.ExpectedVersion) throw Conflict("CONCURRENCY_CONFLICT");
         if (settings is null) { settings = PlanningRsvpSettings.Create(weddingId); db.Add(settings); }
-        settings.Update(input.PlusOneLimit);
+        var oldPolicy = settings.RsvpCheckInPolicy;
+        var oldWalkIns = settings.AllowWalkIns;
+        var nextPolicy = input.RsvpCheckInPolicy ?? oldPolicy;
+        var nextWalkIns = input.AllowWalkIns ?? oldWalkIns;
+        if ((oldPolicy != nextPolicy || oldWalkIns != nextWalkIns) &&
+            (await db.Set<PlanningCheckIn>().AnyAsync(x => x.WeddingId == weddingId, ct) ||
+             await db.AuditLogs.AnyAsync(x => x.WeddingId == weddingId && x.EntityType == "planning_check_ins" &&
+                 x.Action == "GUEST_CHECKED_IN", ct)))
+            throw Rule("CHECKIN_POLICY_LOCKED", "Check-in policy cannot be changed after the first arrival has been recorded.");
+        settings.Update(input.PlusOneLimit, nextPolicy, nextWalkIns);
+        if (oldPolicy != nextPolicy || oldWalkIns != nextWalkIns)
+            db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_rsvp_settings", weddingId, "CHECKIN_POLICY_CHANGED", actor, null,
+                JsonSerializer.Serialize(new { oldPolicy, newPolicy = nextPolicy, oldWalkIns, newWalkIns = nextWalkIns }, SnapshotJson)));
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
-        return new(weddingId, settings.PlusOneLimit, settings.Version, await Deadline(weddingId, ct));
+        return new(weddingId, settings.PlusOneLimit, settings.Version, await Deadline(weddingId, ct), settings.RsvpCheckInPolicy, settings.AllowWalkIns);
     }
 
     // ---------- helpers ----------

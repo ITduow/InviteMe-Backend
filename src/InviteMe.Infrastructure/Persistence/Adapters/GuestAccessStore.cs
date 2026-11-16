@@ -28,7 +28,8 @@ public sealed class GuestAccessStore(InviteMeDbContext db, TimeProvider clock) :
     // Place status follows RsvpStore: PENDING until the party answers, then USED when the place's person attends.
     public async Task<IReadOnlyList<ReceptionSeatDto>> SeatsAsync(Guid guestId, CancellationToken ct)
     {
-        var answered = await db.Set<PlanningRsvp>().AnyAsync(x => x.GuestId == guestId, ct);
+        var rsvp = await db.Set<PlanningRsvp>().AsNoTracking().SingleOrDefaultAsync(x => x.GuestId == guestId, ct);
+        var answered = rsvp is not null && rsvp.Status != PlanningRsvp.Maybe;
         var rows = await (from place in db.Set<PlanningPlace>().AsNoTracking()
                           where place.GuestId == guestId
                           join person in db.Set<PlanningParticipant>() on place.ParticipantId equals (Guid?)person.Id into people
@@ -46,10 +47,20 @@ public sealed class GuestAccessStore(InviteMeDbContext db, TimeProvider clock) :
                               Attending = person != null && person.AttendanceStatus == "ATTENDING",
                               Table = table == null ? null : table.Name, SeatNumber = assignment == null ? null : (int?)assignment.SeatNumber,
                               CheckedInAt = checkIn == null ? null : (DateTimeOffset?)checkIn.CheckedInAt,
-                              CheckInKind = checkIn == null ? null : checkIn.Kind
+                              CheckInKind = checkIn == null ? null : checkIn.Kind,
+                              CheckInMethod = checkIn == null ? null : checkIn.CheckInMethod,
+                              CheckInRsvpStatus = checkIn == null ? null : checkIn.OriginalRsvpStatus
                           }).ToListAsync(ct);
-        return rows.Select(x => new ReceptionSeatDto(x.Id, x.Position, x.ParticipantId, x.PersonName, RsvpPlaceStatus.Of(answered, x.Attending),
-            x.Table, x.SeatNumber, x.CheckedInAt, x.CheckInKind)).ToList();
+        return rows.Select(x => new ReceptionSeatDto(x.Id, x.Position, x.ParticipantId, x.PersonName,
+            x.CheckInKind == PlanningCheckInKind.WalkIn ? RsvpPlaceStatus.Used : RsvpPlaceStatus.Of(answered, x.Attending),
+            x.Table, x.SeatNumber, x.CheckedInAt, x.CheckInKind, x.CheckInMethod,
+            x.CheckInKind == PlanningCheckInKind.WalkIn ? null : x.CheckInRsvpStatus ?? rsvp?.Status ?? "NOT_RESPONDED")).ToList();
+    }
+
+    public async Task<ReceptionPolicyDto> CheckInPolicyAsync(Guid weddingId, CancellationToken ct)
+    {
+        var settings = await db.Set<PlanningRsvpSettings>().AsNoTracking().SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
+        return new(settings?.RsvpCheckInPolicy ?? PlanningRsvpSettings.CheckInRequired, settings?.AllowWalkIns ?? false);
     }
 
     public async Task<SeatingPublicationDto> PublicationAsync(Guid weddingId, CancellationToken ct) =>

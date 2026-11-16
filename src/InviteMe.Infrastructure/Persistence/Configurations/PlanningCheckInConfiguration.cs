@@ -12,8 +12,15 @@ public sealed class PlanningCheckInConfiguration : IEntityTypeConfiguration<Plan
 {
     public void Configure(EntityTypeBuilder<PlanningCheckIn> b)
     {
-        b.ToTable("planning_check_ins", t => t.HasCheckConstraint("ck_planning_check_ins_kind", "\"Kind\" IN ('INVITED','WALK_IN')"));
-        b.Property(x => x.Kind).HasMaxLength(10).HasDefaultValue(PlanningCheckInKind.Invited);
+        b.ToTable("planning_check_ins", t =>
+        {
+            t.HasCheckConstraint("ck_planning_check_ins_kind", "\"Kind\" IN ('INVITED','INVITED_COMPANION','WALK_IN')");
+            t.HasCheckConstraint("ck_planning_check_ins_method", "\"CheckInMethod\" IS NULL OR \"CheckInMethod\" IN ('NORMAL','COUNTER_VERIFIED')");
+            t.HasCheckConstraint("ck_planning_check_ins_original_rsvp", "\"OriginalRsvpStatus\" IS NULL OR \"OriginalRsvpStatus\" IN ('ATTENDING','MAYBE','DECLINED','NOT_RESPONDED')");
+        });
+        b.Property(x => x.Kind).HasMaxLength(24).HasDefaultValue(PlanningCheckInKind.Invited);
+        b.Property(x => x.CheckInMethod).HasMaxLength(24);
+        b.Property(x => x.OriginalRsvpStatus).HasMaxLength(24);
         b.HasKey(x => x.Id);
         b.HasIndex(x => x.PlaceId).IsUnique().HasDatabaseName("uq_planning_check_ins_place");
         b.HasIndex(x => x.WeddingId).HasDatabaseName("ix_planning_check_ins_wedding");

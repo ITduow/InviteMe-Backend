@@ -88,10 +88,11 @@ public static class RsvpMessages
 public enum RsvpWriteMode { Create, Replace, Upsert }
 
 /// <summary>Wedding RSVP rules. RsvpDeadline is set by wedding setup and shown read-only here.</summary>
-public sealed record RsvpSettingsDto(Guid WeddingId, int PlusOneLimit, int Version, DateTimeOffset? RsvpDeadline);
+public sealed record RsvpSettingsDto(Guid WeddingId, int PlusOneLimit, int Version, DateTimeOffset? RsvpDeadline,
+    string RsvpCheckInPolicy = PlanningRsvpSettings.CheckInRequired, bool AllowWalkIns = false);
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-public sealed record SaveRsvpSettings(int ExpectedVersion, int PlusOneLimit);
+public sealed record SaveRsvpSettings(int ExpectedVersion, int PlusOneLimit, string? RsvpCheckInPolicy = null, bool? AllowWalkIns = null);
 
 /// <summary>Lock or unlock RSVP changes for some guests and/or every guest of a planning group.</summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -126,6 +127,8 @@ public sealed class SaveRsvpSettingsValidator : AbstractValidator<SaveRsvpSettin
     {
         RuleFor(x => x.ExpectedVersion).GreaterThanOrEqualTo(0);
         RuleFor(x => x.PlusOneLimit).InclusiveBetween(0, PlanningRsvpSettings.MaxPlusOneLimit);
+        RuleFor(x => x.RsvpCheckInPolicy).Must(x => x is null or PlanningRsvpSettings.CheckInRequired or PlanningRsvpSettings.CheckInOptional)
+            .WithMessage("RSVP check-in policy must be REQUIRED or OPTIONAL.");
     }
 }
 

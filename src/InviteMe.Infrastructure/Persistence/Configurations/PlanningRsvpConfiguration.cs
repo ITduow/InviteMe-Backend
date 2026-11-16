@@ -123,13 +123,19 @@ public sealed class PlanningRsvpRuleConfiguration : IEntityTypeConfiguration<Pla
 
     public void Configure(EntityTypeBuilder<PlanningRsvpSettings> b)
     {
-        b.ToTable("planning_rsvp_settings", t => t.HasCheckConstraint("ck_planning_rsvp_settings_plus_one", "plus_one_limit BETWEEN 0 AND 20"));
+        b.ToTable("planning_rsvp_settings", t =>
+        {
+            t.HasCheckConstraint("ck_planning_rsvp_settings_plus_one", "plus_one_limit BETWEEN 0 AND 20");
+            t.HasCheckConstraint("ck_planning_rsvp_settings_checkin_policy", "rsvp_check_in_policy IN ('REQUIRED','OPTIONAL')");
+        });
         b.HasKey(x => x.WeddingId);
         b.Property(x => x.WeddingId).HasColumnName("wedding_id");
         b.Property(x => x.PlusOneLimit).HasColumnName("plus_one_limit");
         b.Property(x => x.Version).HasColumnName("version").IsConcurrencyToken();
         // Sentinel true: a new row keeps the DB default (true) while an explicit false is still written.
         b.Property(x => x.AutoRemindersEnabled).HasColumnName("auto_reminders_enabled").HasDefaultValue(true).HasSentinel(true);
+        b.Property(x => x.RsvpCheckInPolicy).HasColumnName("rsvp_check_in_policy").HasMaxLength(12).HasDefaultValue(PlanningRsvpSettings.CheckInRequired);
+        b.Property(x => x.AllowWalkIns).HasColumnName("allow_walk_ins").HasDefaultValue(false);
         b.HasOne<Wedding>().WithMany().HasForeignKey(x => x.WeddingId).OnDelete(DeleteBehavior.Cascade).HasConstraintName("fk_planning_rsvp_settings_wedding");
     }
 }

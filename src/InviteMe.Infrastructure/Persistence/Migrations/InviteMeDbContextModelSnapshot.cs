@@ -824,6 +824,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("CheckInMethod")
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
                     b.Property<DateTimeOffset>("CheckedInAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -840,9 +844,13 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<string>("Kind")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
-                        .HasMaxLength(10)
-                        .HasColumnType("character varying(10)")
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
                         .HasDefaultValue("INVITED");
+
+                    b.Property<string>("OriginalRsvpStatus")
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
 
                     b.Property<Guid?>("ParticipantId")
                         .HasColumnType("uuid");
@@ -867,7 +875,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.ToTable("planning_check_ins", "inviteme", t =>
                         {
-                            t.HasCheckConstraint("ck_planning_check_ins_kind", "\"Kind\" IN ('INVITED','WALK_IN')");
+                            t.HasCheckConstraint("ck_planning_check_ins_kind", "\"Kind\" IN ('INVITED','INVITED_COMPANION','WALK_IN')");
+
+                            t.HasCheckConstraint("ck_planning_check_ins_method", "\"CheckInMethod\" IS NULL OR \"CheckInMethod\" IN ('NORMAL','COUNTER_VERIFIED')");
+
+                            t.HasCheckConstraint("ck_planning_check_ins_original_rsvp", "\"OriginalRsvpStatus\" IS NULL OR \"OriginalRsvpStatus\" IN ('ATTENDING','MAYBE','DECLINED','NOT_RESPONDED')");
                         });
                 });
 
@@ -2474,6 +2486,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("wedding_id");
 
+                    b.Property<bool>("AllowWalkIns")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("allow_walk_ins");
+
                     b.Property<bool>("AutoRemindersEnabled")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
@@ -2484,6 +2502,14 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("plus_one_limit");
 
+                    b.Property<string>("RsvpCheckInPolicy")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)")
+                        .HasDefaultValue("REQUIRED")
+                        .HasColumnName("rsvp_check_in_policy");
+
                     b.Property<int>("Version")
                         .IsConcurrencyToken()
                         .HasColumnType("integer")
@@ -2493,6 +2519,8 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
 
                     b.ToTable("planning_rsvp_settings", "inviteme", t =>
                         {
+                            t.HasCheckConstraint("ck_planning_rsvp_settings_checkin_policy", "rsvp_check_in_policy IN ('REQUIRED','OPTIONAL')");
+
                             t.HasCheckConstraint("ck_planning_rsvp_settings_plus_one", "plus_one_limit BETWEEN 0 AND 20");
                         });
                 });

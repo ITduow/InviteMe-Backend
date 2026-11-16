@@ -57,7 +57,7 @@ internal static class GuestAccessEndpoints
         reception.MapGet("/seat-lookup", (Guid weddingId, string code, GuestAccessHandler h, CancellationToken ct) =>
                 h.LookupAsync(weddingId, new SeatLookupQuery(code), ct))
             .WithName("LookupGuestSeats")
-            .WithSummary("Scanned QR link or token -> recipient and each place with its id, table, RSVP status and checkedInAt. Read only: it never checks in.")
+            .WithSummary("Scanned QR link or token -> recipient, per-place RSVP state, check-in policy and seating. Read only: it never checks in.")
             .Produces<SeatLookupDto>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound);
         reception.MapGet("/reception/search", (Guid weddingId, string q, ReceptionHandler h, CancellationToken ct) =>
                 h.SearchAsync(weddingId, new ReceptionSearchQuery(q), ct))
@@ -67,8 +67,7 @@ internal static class GuestAccessEndpoints
         reception.MapPost("/check-ins", (Guid weddingId, CheckInGuests input, ReceptionHandler h, CancellationToken ct) =>
                 h.CheckInAsync(weddingId, input, ct))
             .WithName("CheckInGuests")
-            .WithSummary("Confirm arrival of chosen places (code or guestId). Repeating it returns ALREADY_CHECKED_IN and counts nothing twice. " +
-                         "An UNUSED place (guest said no) needs exceptionReason.")
+            .WithSummary("Confirm eligible places only. The latest RSVP and REQUIRED/OPTIONAL policy are rechecked in the transaction; declined places are always blocked.")
             .Produces<CheckInResultDto>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
         reception.MapPost("/walk-ins", async (Guid weddingId, AddWalkIn input,
@@ -78,8 +77,7 @@ internal static class GuestAccessEndpoints
                 return Results.Ok(result);
             })
             .WithName("AddWalkIn")
-            .WithSummary("Add people at the counter and check them in: guestId adds extra people to that invitation, recipientName creates a " +
-                         "walk-in invitation. Over capacity needs overrideReason. Requires an Idempotency-Key header (a retry replays the result).")
+            .WithSummary("Add companions to an existing eligible invitation, or create an uninvited walk-in when enabled and WALK_IN_MANAGE is granted. Capacity cannot be overridden. Requires an Idempotency-Key header.")
             .Produces<WalkInResultDto>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
         reception.MapPost("/check-ins/{placeId:guid}/void", (Guid weddingId, Guid placeId, VoidCheckIn input, ReceptionHandler h, CancellationToken ct) =>
@@ -90,7 +88,7 @@ internal static class GuestAccessEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound);
         reception.MapGet("/check-ins/summary", (Guid weddingId, ReceptionHandler h, CancellationToken ct) => h.SummaryAsync(weddingId, ct))
             .WithName("GetCheckInSummary")
-            .WithSummary("Actual attendance vs confirmed places, overall and by side (CHECKIN_MANAGE or RSVP_VIEW). Refetch on GuestCheckedIn.")
+            .WithSummary("Actual attendance, RSVP snapshot, check-in method, unassigned seats and totals by side. Refetch on GuestCheckedIn.")
             .Produces<CheckInSummaryDto>().ProducesProblem(StatusCodes.Status403Forbidden);
         return endpoints;
     }

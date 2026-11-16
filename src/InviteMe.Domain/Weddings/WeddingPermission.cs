@@ -16,5 +16,7 @@ public enum WeddingPermission
     GIFT_EDIT,
     ANALYTICS_VIEW,
     /// <summary>Co-host at the reception: records cash envelopes and presents for the whole wedding, never sees totals.</summary>
-    GIFT_RECORD
+    GIFT_RECORD,
+    /// <summary>May register a genuinely uninvited walk-in when the wedding owner enables walk-ins.</summary>
+    WALK_IN_MANAGE
 }

@@ -24,8 +24,11 @@ public sealed record GuestSeatsDto(string RecipientName, string? Honorific, bool
 // Reception view of a place: the place id to confirm check-in (Cohost04), when it was checked in and how
 // (CheckInKind INVITED, or WALK_IN for a place added at the counter).
 public sealed record ReceptionSeatDto(Guid PlaceId, int Position, Guid? ParticipantId, string? PersonName, string Status, string? Table,
-    int? SeatNumber, DateTimeOffset? CheckedInAt, string? CheckInKind = null);
-public sealed record SeatLookupDto(Guid GuestId, string RecipientName, string? Honorific, bool Published, IReadOnlyList<ReceptionSeatDto> Seats);
+    int? SeatNumber, DateTimeOffset? CheckedInAt, string? CheckInKind = null, string? CheckInMethod = null,
+    string? OriginalRsvpStatus = null);
+public sealed record ReceptionPolicyDto(string RsvpCheckInPolicy, bool AllowWalkIns);
+public sealed record SeatLookupDto(Guid GuestId, string RecipientName, string? Honorific, bool Published,
+    string RsvpCheckInPolicy, bool AllowWalkIns, IReadOnlyList<ReceptionSeatDto> Seats);
 public sealed record SeatingPublicationDto(bool Published, DateTimeOffset? PublishedAt, Guid? PublishedBy);
 public sealed record SeatLookupQuery(string Code);
 
@@ -35,6 +38,7 @@ public interface IGuestAccessStore
     // routes) the invitation must also be published; with it (reception lookup) the token must belong to that wedding.
     Task<GuestAccessTarget?> FindAsync(string token, Guid? weddingId, CancellationToken ct);
     Task<IReadOnlyList<ReceptionSeatDto>> SeatsAsync(Guid guestId, CancellationToken ct);
+    Task<ReceptionPolicyDto> CheckInPolicyAsync(Guid weddingId, CancellationToken ct);
     Task<SeatingPublicationDto> PublicationAsync(Guid weddingId, CancellationToken ct);
     Task<SeatingPublicationDto> SetPublishedAsync(Guid weddingId, Guid? actor, bool published, CancellationToken ct);
 }
@@ -82,16 +86,19 @@ public sealed partial class GuestAccessHandler(IGuestAccessStore store, IQrCodeR
             : new GuestSeatDto(x.Position, x.PersonName, x.Status, x.Table, x.SeatNumber)).ToList());
     }
 
-    // Reception counter (Cohost05): staff see the table right after scanning, published or not, also for an
-    // UNUSED place, so a guest who declined but still comes can take the seat that is kept for them.
+    // Reception counter (Cohost05): staff see the table right after scanning, published or not. RSVP eligibility is
+    // checked again during the check-in write; a declined place remains visible but cannot be checked in.
     public async Task<SeatLookupDto> LookupAsync(Guid weddingId, SeatLookupQuery query, CancellationToken ct)
     {
         await permissions.RequireAsync(weddingId, WeddingPermission.CHECKIN_MANAGE, ct);
+        await plans.RequireFeatureAsync(weddingId, InviteMe.Application.Features.Billing.PlanFeature.Checkin, ct);
         await lookupValidation.ValidateAsync(query, ct);
         TryReadToken(query.Code, out var token);
         var guest = await Find(token, weddingId, ct);
         var published = (await store.PublicationAsync(weddingId, ct)).Published;
-        return new(guest.GuestId, guest.RecipientName, guest.Honorific, published, await store.SeatsAsync(guest.GuestId, ct));
+        var policy = await store.CheckInPolicyAsync(weddingId, ct);
+        return new(guest.GuestId, guest.RecipientName, guest.Honorific, published, policy.RsvpCheckInPolicy, policy.AllowWalkIns,
+            await store.SeatsAsync(guest.GuestId, ct));
     }
 
     public async Task<SeatingPublicationDto> PublicationAsync(Guid weddingId, CancellationToken ct)
