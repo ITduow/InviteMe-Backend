@@ -10,10 +10,12 @@ using InviteMe.Domain.Weddings;
 namespace InviteMe.Application.Features.Invitations;
 
 public sealed record InvitationDesignDto(int Version, JsonElement? Document, string Status = "DRAFT",
-    bool HasUnpublishedChanges = false, int WordingVersion = 0, IReadOnlyList<string>? Warnings = null);
+    bool HasUnpublishedChanges = false, int WordingVersion = 0, IReadOnlyList<string>? Warnings = null,
+    InviteMe.Application.Features.Music.InvitationMusic? Music = null);
 public sealed record SaveInvitationDesign(int ExpectedVersion, JsonElement Document);
 public sealed record PublishInvitationDesign(int ExpectedVersion, int ExpectedWordingVersion);
-public sealed record PublicInvitationDto(JsonElement Document, string Content, bool BrandingBadge = false);
+public sealed record PublicInvitationDto(JsonElement Document, string Content, bool BrandingBadge = false,
+    InviteMe.Application.Features.Music.InvitationMusic? Music = null);
 public interface IInvitationDesignStore
 {
     Task<InvitationDesignDto> GetAsync(Guid weddingId, CancellationToken ct);

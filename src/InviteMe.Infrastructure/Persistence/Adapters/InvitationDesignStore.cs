@@ -23,7 +23,8 @@ public sealed class InvitationDesignStore(InviteMeDbContext db, IWeddingMediaSto
         return new(row.InvitationDesignVersion, document, row.InvitationDesignStatus.ToString(),
             await PublicationJson.InvitationChanged(db, id, ct), wordingVersion,
             document is { } doc && InvitationDesignHandler.UsesTemporaryMedia(doc)
-                ? ["Thiết kế có ảnh tạm từ Studio dev. Tải lại ảnh vào thư viện wedding trước khi publish."] : []);
+                ? ["Thiết kế có ảnh tạm từ Studio dev. Tải lại ảnh vào thư viện wedding trước khi publish."] : [],
+            document is { } musicDocument ? await InvitationMusicPersistence.Resolve(db, musicDocument, ct) : null);
     }
     public async Task<InvitationDesignDto> SaveAsync(Guid id, SaveInvitationDesign input, CancellationToken ct)
     {
@@ -34,6 +35,8 @@ public sealed class InvitationDesignStore(InviteMeDbContext db, IWeddingMediaSto
         var settings = await db.WeddingSettings.SingleOrDefaultAsync(x => x.WeddingId == id, ct);
         if (settings is null) { settings = WeddingSettings.Create(id); db.Add(settings); }
         Version(settings.InvitationDesignVersion, input.ExpectedVersion);
+        await InvitationMusicPersistence.Resolve(db, input.Document, ct, lockTrack: true,
+            retainedTrack: InvitationMusicPersistence.TrackId(settings.InvitationDraftDocumentJson));
         settings.SaveInvitationDraft(input.Document.GetRawText());
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
@@ -57,13 +60,16 @@ public sealed class InvitationDesignStore(InviteMeDbContext db, IWeddingMediaSto
         var presets = wording is null ? InvitationWording.Defaults() : JsonSerializer.Deserialize<WordingPreset[]>(wording.PresetsJson)!;
         if (InvitationWording.ConfigurationError(presets.Cast<WordingPreset?>().ToArray()) is { } error)
             throw Rule("INVITATION_WORDING_INVALID", error);
+        var music = await InvitationMusicPersistence.Resolve(db, JsonSerializer.Deserialize<JsonElement>(settings.InvitationDraftDocumentJson),
+            ct, lockTrack: true, retainedTrack: InvitationMusicPersistence.TrackId(settings.InvitationDraftDocumentJson));
         if (settings.InvitationDesignStatus == InvitationPublicationStatus.PUBLISHED &&
             !await PublicationJson.InvitationChanged(db, id, ct))
         { await tx.CommitAsync(ct); return await GetAsync(id, ct); }
         var snapshot = new JsonObject
         {
             ["document"] = JsonNode.Parse(settings.InvitationDraftDocumentJson),
-            ["wording"] = JsonSerializer.SerializeToNode(presets)
+            ["wording"] = JsonSerializer.SerializeToNode(presets),
+            ["music"] = JsonSerializer.SerializeToNode(music, PublicationJson.Web)
         };
         settings.PublishInvitation(snapshot.ToJsonString());
         db.AuditLogs.Add(AuditLog.ForEntity(id, "invitation_design", id, "INVITATION_PUBLISHED", actorId));
@@ -88,6 +94,6 @@ public sealed class InvitationDesignStore(InviteMeDbContext db, IWeddingMediaSto
         var snapshot = JsonSerializer.Deserialize<JsonElement>(row.InvitationPublishedSnapshotJson);
         var presets = snapshot.GetProperty("wording").Deserialize<WordingPreset[]>()!;
         var wording = InvitationWording.Render(presets, new(row.Id, row.RecipientName, row.Honorific));
-        return new(snapshot.GetProperty("document").Clone(), wording.Content);
+        return new(snapshot.GetProperty("document").Clone(), wording.Content, Music: InvitationMusicPersistence.Published(snapshot));
     }
 }

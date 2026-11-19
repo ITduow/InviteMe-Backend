@@ -73,6 +73,8 @@ public static class AdminPermissionCatalog
     public const string WeddingsView = "ADMIN_WEDDINGS_VIEW";
     public const string TemplatesView = "ADMIN_TEMPLATES_VIEW";
     public const string TemplatesManage = "ADMIN_TEMPLATES_MANAGE";
+    public const string MusicView = "ADMIN_MUSIC_VIEW";
+    public const string MusicManage = "ADMIN_MUSIC_MANAGE";
     public const string AuditView = "ADMIN_AUDIT_VIEW";
     public const string RbacView = "ADMIN_RBAC_VIEW";
     public const string RbacManage = "ADMIN_RBAC_MANAGE";
@@ -86,6 +88,8 @@ public static class AdminPermissionCatalog
         (WeddingsView, "View weddings", "Search platform weddings and their status."),
         (TemplatesView, "View templates", "View invitation and wedding page templates."),
         (TemplatesManage, "Manage templates", "Create, update, publish and hide templates."),
+        (MusicView, "View music", "View the music library."),
+        (MusicManage, "Manage music", "Create, edit and hide music tracks."),
         (AuditView, "View platform audit log", "View system-wide audit events."),
         (RbacView, "View access control", "View the role and permission model."),
         (RbacManage, "Manage access control", "Assign the fixed platform permission set to the Admin role."),
@@ -93,6 +97,6 @@ public static class AdminPermissionCatalog
     ];
 
     public static readonly string[] RequiredAdminPermissions =
-        [DashboardView, UsersView, UsersManage, WeddingsView, TemplatesView, TemplatesManage, AuditView, RbacView, RbacManage, PlansManage];
+        [DashboardView, UsersView, UsersManage, WeddingsView, TemplatesView, TemplatesManage, MusicView, MusicManage, AuditView, RbacView, RbacManage, PlansManage];
 }
 

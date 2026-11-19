@@ -22,7 +22,8 @@ internal static partial class InvitationDocumentValidator
         ["textBinding"] = ["invitationWording"], ["textAlign"] = ["left", "center", "right", "justify"],
         ["timezone"] = ["Asia/Ho_Chi_Minh", "UTC"], ["fontFamily"] = ["Arial", "Georgia", "EB Garamond"],
         ["objectFit"] = ["cover", "contain"], ["imageShape"] = ["rectangle", "arch", "oval", "scallop"],
-        ["action"] = ["rsvp", "calendar", "gift"]
+        ["action"] = ["rsvp", "calendar", "gift"],
+        ["particles"] = ["none", "hearts", "leaves", "happiness"]
     };
     private static readonly Dictionary<string, int> TextProps = new()
     {
@@ -87,6 +88,8 @@ internal static partial class InvitationDocumentValidator
             children.GetArrayLength() > 100 || children.EnumerateArray().Any(x => x.ValueKind != JsonValueKind.String) ||
             !Get(node, "linkedNodes", out var linked) || !EmptyObject(linked)) return false;
         if (Get(props, "textBinding", out _) && name.GetString() != "StudioText") return false;
+        if (Get(props, "music", out _) && id != "ROOT") return false;
+        if (Get(props, "particles", out _) && id != "ROOT") return false;
         if (id == "ROOT") return !Get(node, "parent", out _);
         return Get(node, "parent", out var parent) && parent.ValueKind == JsonValueKind.String &&
             parent.GetString() == "ROOT" && children.GetArrayLength() == 0;
@@ -104,6 +107,9 @@ internal static partial class InvitationDocumentValidator
             else if (EnumProps.TryGetValue(prop.Name, out var choices))
             { if (value.ValueKind != JsonValueKind.String || !choices.Contains(value.GetString())) return false; }
             else if (TextProps.TryGetValue(prop.Name, out var max)) { if (!Text(value, max)) return false; }
+            else if (prop.Name == "background" && value.ValueKind == JsonValueKind.String && value.GetString() == "transparent") { }
+            else if (prop.Name == "backgroundGradient") { if (value.ValueKind != JsonValueKind.String || !GradientPattern().IsMatch(value.GetString()!)) return false; }
+            else if (prop.Name == "music") { if (!Music(value)) return false; }
             else if (ColorProps.Contains(prop.Name)) { if (!Color(value)) return false; }
             else if (prop.Name is "src" or "decoration") { if (!Asset(value)) return false; }
             else if (prop.Name == "cover") { if (!Cover(value)) return false; }
@@ -137,6 +143,13 @@ internal static partial class InvitationDocumentValidator
             (!Get(cover, "decoration", out var decoration) || Asset(decoration));
     }
 
+    private static bool Music(JsonElement music) => Object(music, ["trackId", "enabled", "volume", "loop"]) &&
+        Get(music, "trackId", out var track) && track.ValueKind == JsonValueKind.String && track.TryGetGuid(out var id) && id != Guid.Empty &&
+        Get(music, "enabled", out var enabled) && Boolean(enabled) &&
+        Get(music, "loop", out var loop) && Boolean(loop) &&
+        Get(music, "volume", out var volume) && volume.ValueKind == JsonValueKind.Number &&
+        volume.TryGetDouble(out var number) && double.IsFinite(number) && number is >= 0 and <= 1;
+
     private static bool Rows(JsonElement rows, int max, (string Name, int Max)[] fields) =>
         rows.ValueKind == JsonValueKind.Array && rows.GetArrayLength() >= 1 && rows.GetArrayLength() <= max &&
         rows.EnumerateArray().All(row => Object(row, fields.Select(x => x.Name).ToArray()) &&
@@ -160,6 +173,7 @@ internal static partial class InvitationDocumentValidator
     private static bool Object(JsonElement value, string[] keys) => value.ValueKind == JsonValueKind.Object &&
         value.EnumerateObject().All(x => keys.Contains(x.Name));
 
+    [GeneratedRegex("^linear-gradient\\(135deg, #[0-9a-f]{6}, #[0-9a-f]{6}\\)$", RegexOptions.IgnoreCase)] private static partial Regex GradientPattern();
     [GeneratedRegex("^#[0-9a-f]{6}$", RegexOptions.IgnoreCase)] private static partial Regex ColorPattern();
     [GeneratedRegex(@"^(?:/images/templates/(?:invite-portrait|story-meadow)\.png|/images/template-studio/minimalism-brown/[a-z0-9-]+\.webp|/images/template-studio/minimalism-burgundy/(?:photo\.png|(?:envelope|paper|botanical)\.svg)|/images/template-studio/collection/[a-z0-9-]+\.(?:webp|svg)|/images/template-studio/story-collection/[a-z0-9-]+\.(?:webp|svg)|/images/template-studio/story-red-velvet/photo\.png|/api/template-studio/assets\?id=[a-f0-9-]{36}|(?:https?://[^/?#]+)?/media/wedding-covers/[a-f0-9]{32}/[a-f0-9]{48}\.(?:jpg|png|webp))$")]
     private static partial Regex AssetPattern();

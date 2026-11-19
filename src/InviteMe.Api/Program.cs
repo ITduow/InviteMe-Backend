@@ -108,6 +108,7 @@ app.MapInvitationWording();
 app.MapInvitationMessaging();
 app.MapTextbeeWebhook();
 app.MapInvitationDesign();
+app.MapMusicTracks();
 app.MapWeddingWebsite();
 app.MapPlans();
 app.MapWeddingMedia();

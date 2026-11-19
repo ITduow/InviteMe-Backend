@@ -2017,6 +2017,56 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.ToTable("invitation_wording_settings", "inviteme");
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Invitations.MusicTrack", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AudioUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("audio_url");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_active");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("name");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AudioUrl")
+                        .IsUnique()
+                        .HasDatabaseName("ux_music_tracks_audio_url");
+
+                    b.ToTable("music_tracks", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_music_tracks_name", "length(trim(name)) BETWEEN 1 AND 150");
+
+                            t.HasCheckConstraint("ck_music_tracks_version", "version > 0");
+                        });
+                });
+
             modelBuilder.Entity("InviteMe.Domain.Notifications.Notification", b =>
                 {
                     b.Property<Guid>("Id")

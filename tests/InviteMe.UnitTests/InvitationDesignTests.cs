@@ -55,6 +55,29 @@ public sealed class InvitationDesignTests
         Assert.Equal(1, result.Version);
         Assert.Equal(1, store.Saves);
     }
+    [Theory]
+    [InlineData("none", true)]
+    [InlineData("hearts", true)]
+    [InlineData("leaves", true)]
+    [InlineData("happiness", true)]
+    [InlineData("unknown-effect", false)]
+    public void InvitationParticlesCanBeConfiguredWithoutACover(string effect, bool expected)
+    {
+        var document = System.Text.Json.Nodes.JsonNode.Parse(Valid().GetRawText())!;
+        document["nodes"]!["ROOT"]!["props"]!["particles"] = effect;
+        Assert.Equal(expected, InvitationDesignHandler.ValidDocument(JsonSerializer.SerializeToElement(document)));
+    }
+    [Theory]
+    [InlineData("background", "transparent", true)]
+    [InlineData("backgroundGradient", "linear-gradient(135deg, #ff6b6b, #ff8e53)", true)]
+    [InlineData("backgroundGradient", "url(https://example.com/image.png)", false)]
+    [InlineData("backgroundGradient", "linear-gradient(135deg, red, blue)", false)]
+    public void BackgroundOptionsFollowTheEditorContract(string property, string value, bool expected)
+    {
+        var document = System.Text.Json.Nodes.JsonNode.Parse(Valid().GetRawText())!;
+        document["nodes"]!["ROOT"]!["props"]![property] = value;
+        Assert.Equal(expected, InvitationDesignHandler.ValidDocument(JsonSerializer.SerializeToElement(document)));
+    }
     [Fact]
     public async Task InvitationCannotReferenceAnotherWeddingMedia()
     {
