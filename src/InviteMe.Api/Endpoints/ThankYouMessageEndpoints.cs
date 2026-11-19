@@ -8,6 +8,9 @@ internal static class ThankYouMessageEndpoints
     {
         var host = endpoints.MapGroup("/api/weddings/{weddingId:guid}/ai/thank-you-messages")
             .RequireAuthorization().WithTags("AI Thank You Messages");
+        host.MapPost("/sms/generate", (Guid weddingId, GenerateThankYouSmsRequest input, ThankYouMessageHandler handler, CancellationToken ct) => handler.GenerateSmsAsync(weddingId, input, ct)).RequireRateLimiting("AiThankYouGeneration");
+        host.MapPost("/sms/preview", (Guid weddingId, ThankYouSmsPreviewRequest input, ThankYouMessageHandler handler, HttpContext http, CancellationToken ct) =>
+        { http.Response.Headers.CacheControl = "no-store"; return handler.PreviewSmsAsync(weddingId, input, ct); });
         host.MapPost("/send", async (Guid weddingId, QueueThankYouTemplateMessages input,
                 [Microsoft.AspNetCore.Mvc.FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
                 ThankYouMessageHandler handler, CancellationToken ct) =>

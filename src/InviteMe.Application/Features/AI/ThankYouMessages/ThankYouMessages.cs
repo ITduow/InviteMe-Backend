@@ -7,13 +7,33 @@ using InviteMe.Application.Ports.Authentication;
 using InviteMe.Application.Ports.Authorization;
 using InviteMe.Application.Features.Guests.Access;
 using InviteMe.Domain.AI;
+using InviteMe.Application.Ports.AI;
 
 namespace InviteMe.Application.Features.AI.ThankYouMessages;
 
 public sealed record EditThankYouMessage(string Content, int ExpectedVersion, bool IncludeGiftAmount = false);
 public sealed record ApproveThankYouMessage(int ExpectedVersion);
 public sealed record QueueThankYouMessages(IReadOnlyList<Guid> MessageIds, IReadOnlyList<string> Channels);
-public sealed record QueueThankYouTemplateMessages(Guid TemplateId, IReadOnlyList<Guid> GuestIds, IReadOnlyList<string> Channels);
+public sealed record QueueThankYouTemplateMessages(Guid TemplateId, IReadOnlyList<Guid> GuestIds, IReadOnlyList<string> Channels, string? SmsContent = null);
+public sealed record ThankYouSmsPreviewRequest(IReadOnlyList<Guid> GuestIds, string? SmsContent);
+public sealed record ThankYouSmsPreviewItem(Guid GuestId, string GuestName, string Content, string Encoding, int Units, int Segments, bool HasPhone);
+public sealed record ThankYouSmsGenerated(string Content);
+public sealed record GenerateThankYouSmsRequest(IReadOnlyList<Guid>? GuestIds);
+
+public static class ThankYouSmsText
+{
+    public const string Default = "Cảm ơn bạn đã dành tình cảm cho chúng mình!";
+    public static string Validate(string? content)
+    {
+        var text = content is null ? Default : content.Trim();
+        if (string.IsNullOrWhiteSpace(text) || text.Length > 500 || text.Any(c => char.IsControl(c) && c is not '\n' and not '\r') ||
+            text.Contains("http", StringComparison.OrdinalIgnoreCase) || text.Contains("www.", StringComparison.OrdinalIgnoreCase) || text.IndexOfAny(['{', '}', '<', '>']) >= 0)
+            throw new ValidationException([new("SmsContent", "Enter a short plain-text thank-you without links or placeholders.")]);
+        return text;
+    }
+    public static string Render(string text, string name, string weddingTitle) =>
+        $"{name} thân mến, {text}\n— {(string.IsNullOrWhiteSpace(weddingTitle) ? "Đám cưới" : weddingTitle.Trim())}";
+}
 public sealed record ThankYouGuestContext(Guid Id, string Name, string? Email, string? Phone, string? Group, string Side,
     string Attendance, int PartySize, string? PublicWish, long? PaidGiftAmount);
 public sealed record ThankYouMessageDto(Guid Id, Guid WeddingId, Guid GuestId, string GuestName, string Tone, string Content,
@@ -41,7 +61,8 @@ public interface IThankYouMessageStore
     Task<ThankYouBatchQueued> QueueAsync(Guid weddingId, Guid actor, string key, IReadOnlyList<Guid> messageIds,
         IReadOnlyList<string> channels, string frontendUrl, CancellationToken ct);
     Task<ThankYouBatchQueued> QueueTemplateAsync(Guid weddingId, Guid actor, string key, Guid templateId,
-        IReadOnlyList<Guid> guestIds, IReadOnlyList<string> channels, string frontendUrl, CancellationToken ct);
+        IReadOnlyList<Guid> guestIds, IReadOnlyList<string> channels, string frontendUrl, string? smsContent, CancellationToken ct);
+    Task<IReadOnlyList<ThankYouSmsPreviewItem>> PreviewSmsAsync(Guid weddingId, IReadOnlyList<Guid> guestIds, string frontendUrl, string? smsContent, CancellationToken ct);
     Task<ThankYouSendBatchDto> BatchAsync(Guid weddingId, Guid batchId, CancellationToken ct);
     Task<int> RetryAsync(Guid weddingId, Guid batchId, Guid actor, CancellationToken ct);
     Task<ThankYouPublicLetterDto?> PublicLetterAsync(string token, CancellationToken ct);
@@ -65,7 +86,8 @@ public sealed class EditThankYouMessageValidator : AbstractValidator<EditThankYo
 }
 
 public sealed class ThankYouMessageHandler(IThankYouMessageStore store, IWeddingAccessReader access,
-    ICurrentUser current, GuestLinkOptions links, IInvitationChannelSender sender,
+    ICurrentUser current, GuestLinkOptions links, IInvitationChannelSender sender, IAiTextGenerator ai,
+    InviteMe.Application.Features.Billing.IWeddingEntitlements plans,
     RequestValidation<EditThankYouMessage> editValidation)
 {
     private async Task<Guid> Owner(Guid weddingId, CancellationToken ct)
@@ -117,10 +139,35 @@ public sealed class ThankYouMessageHandler(IThankYouMessageStore store, IWedding
             throw new ValidationException([new("Channels", "Choose EMAIL and/or SMS.")]);
         foreach (var channel in channels)
             if (!sender.IsAvailable(channel)) throw new ApplicationProblemException(ProblemKind.Unavailable, "THANK_YOU_CHANNEL_NOT_CONFIGURED", $"{channel} delivery is not configured.");
-        if (!Uri.TryCreate(links.FrontendUrl, UriKind.Absolute, out var frontend) || frontend.Scheme is not ("http" or "https"))
+        if ((!Uri.TryCreate(links.FrontendUrl, UriKind.Absolute, out var frontend) || frontend.Scheme is not ("http" or "https")) && channels.Contains("EMAIL"))
             throw new ApplicationProblemException(ProblemKind.Unavailable, "THANK_YOU_LINKS_NOT_CONFIGURED", "Frontend URL is not configured.");
         return await store.QueueTemplateAsync(weddingId, actor, idempotencyKey.Trim(), input.TemplateId, input.GuestIds,
-            channels, frontend.ToString().TrimEnd('/'), ct);
+            channels, frontend?.ToString().TrimEnd('/') ?? "", input.SmsContent, ct);
+    }
+    public async Task<IReadOnlyList<ThankYouSmsPreviewItem>> PreviewSmsAsync(Guid weddingId, ThankYouSmsPreviewRequest input, CancellationToken ct)
+    {
+        await Owner(weddingId, ct);
+        if (input.GuestIds is not { Count: > 0 } || input.GuestIds.Count > MessageRecipientLimits.Maximum || input.GuestIds.Any(x => x == Guid.Empty) || input.GuestIds.Distinct().Count() != input.GuestIds.Count)
+            throw new ValidationException([new("GuestIds", "Select valid unique guests.")]);
+        return await store.PreviewSmsAsync(weddingId, input.GuestIds, "", input.SmsContent, ct);
+    }
+    public async Task<ThankYouSmsGenerated> GenerateSmsAsync(Guid weddingId, GenerateThankYouSmsRequest input, CancellationToken ct)
+    {
+        await Owner(weddingId, ct);
+        await plans.RequireQuotaAsync(weddingId, InviteMe.Application.Features.Billing.PlanQuota.AiThankYouRuns, 1, ct);
+        var limit = 150;
+        if (input.GuestIds is { Count: > 0 })
+        {
+            var examples = await PreviewSmsAsync(weddingId, new(input.GuestIds, "x"), ct);
+            limit = Math.Min(limit, examples.Min(x => 201 - x.Content.Length + 1));
+            if (limit < 10) throw new ApplicationProblemException(ProblemKind.BusinessRule, "THANK_YOU_SMS_TOO_LONG", "Recipient details leave too little space for a message.");
+        }
+        var generated = await ai.GenerateAsync(new("WARM", "vi", null, "THANK_YOU_SMS", limit.ToString(global::System.Globalization.CultureInfo.InvariantCulture)), ct);
+        var text = ThankYouSmsText.Validate(generated.Text);
+        if (text.Length > limit) throw new ApplicationProblemException(ProblemKind.BadGateway, "AI_SMS_COPY_INVALID", "AI suggestion is too long; please try again.");
+        if (input.GuestIds is { Count: > 0 } && (await PreviewSmsAsync(weddingId, new(input.GuestIds, text), ct)).Any(x => x.Segments > 3))
+            throw new ApplicationProblemException(ProblemKind.BadGateway, "AI_SMS_COPY_INVALID", "AI suggestion exceeds the SMS limit for a selected guest.");
+        return new(text);
     }
     public async Task<ThankYouSendBatchDto> BatchAsync(Guid weddingId, Guid batchId, CancellationToken ct)
     { await Owner(weddingId, ct); return await store.BatchAsync(weddingId, batchId, ct); }

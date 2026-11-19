@@ -150,10 +150,12 @@ public sealed class ThankYouMessageStore(InviteMeDbContext db, TimeProvider cloc
     }
 
     public async Task<ThankYouBatchQueued> QueueTemplateAsync(Guid weddingId, Guid actor, string key, Guid templateId,
-        IReadOnlyList<Guid> guestIds, IReadOnlyList<string> channels, string frontendUrl, CancellationToken ct)
+        IReadOnlyList<Guid> guestIds, IReadOnlyList<string> channels, string frontendUrl, string? smsContent, CancellationToken ct)
     {
         var ids = guestIds.Order().ToArray();
-        var canonical = JsonSerializer.Serialize(new { templateId, guestIds = ids, channels = channels.Order(StringComparer.Ordinal).ToArray() });
+        var canonical = smsContent is null
+            ? JsonSerializer.Serialize(new { templateId, guestIds = ids, channels = channels.Order(StringComparer.Ordinal).ToArray() })
+            : JsonSerializer.Serialize(new { templateId, guestIds = ids, channels = channels.Order(StringComparer.Ordinal).ToArray(), smsContent });
         var requestHash = Hash(canonical); var idempotencyHash = Hash(key);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await LockWedding(weddingId, actor, ct);
@@ -172,7 +174,7 @@ public sealed class ThankYouMessageStore(InviteMeDbContext db, TimeProvider cloc
             .Select(x => new { x.Id, x.RecipientName, x.Email, x.Phone, x.InvitationToken }).ToListAsync(ct);
         if (guests.Count != ids.Length)
             throw new ApplicationProblemException(ProblemKind.NotFound, "GUEST_NOT_FOUND", "One or more selected guests are unavailable in this wedding.");
-        if (guests.Any(x => x.InvitationToken is not { Length: 64 }))
+        if (channels.Contains("EMAIL") && guests.Any(x => x.InvitationToken is not { Length: 64 }))
             throw new ApplicationProblemException(ProblemKind.BusinessRule, "GUEST_INVITATION_TOKEN_REQUIRED", "Every guest must have an active personal link before sending.");
         if (channels.Contains("EMAIL") && guests.Any(x => string.IsNullOrWhiteSpace(x.Email)) ||
             channels.Contains("SMS") && guests.Any(x => string.IsNullOrWhiteSpace(x.Phone)))
@@ -185,17 +187,17 @@ public sealed class ThankYouMessageStore(InviteMeDbContext db, TimeProvider cloc
             .ToDictionaryAsync(x => x.GuestId, x => x.Amount, ct);
         var batch = ThankYouSendBatch.Create(weddingId, idempotencyHash, requestHash, clock.GetUtcNow());
         db.ThankYouSendBatches.Add(batch);
+        var weddingTitle = await db.Weddings.Where(x => x.Id == weddingId).Select(x => x.Title).SingleAsync(ct);
         foreach (var guest in guests)
         {
             var paidAmount = paidAmounts.GetValueOrDefault(guest.Id);
             var letter = ThankYouContent.Render(template.Content, guest.RecipientName,
                 template.IncludesGiftAmount && paidAmount > 0 ? paidAmount : null);
-            var publicLink = $"{frontendUrl.TrimEnd('/')}/thank-you/{guest.InvitationToken}";
             foreach (var channel in channels)
             {
-                var content = channel == "EMAIL" ? letter : $"Cảm ơn {Short(guest.RecipientName, 32)}! Xem thư cảm ơn: {publicLink}";
+                var content = channel == "EMAIL" ? letter : ThankYouSmsText.Render(ThankYouSmsText.Validate(smsContent), guest.RecipientName, weddingTitle);
                 if (channel == "SMS" && SmsSegmentCounter.CountSegments(content) > 3)
-                    throw new ApplicationProblemException(ProblemKind.BusinessRule, "THANK_YOU_SMS_TOO_LONG", "The thank-you SMS and personal link exceed three SMS segments.");
+                    throw new ApplicationProblemException(ProblemKind.BusinessRule, "THANK_YOU_SMS_TOO_LONG", "The thank-you SMS exceeds three SMS segments.");
                 db.ThankYouSendJobs.Add(ThankYouSendJob.CreateForTemplate(batch.Id, weddingId, template.Id, guest.Id,
                     channel, channel == "EMAIL" ? guest.Email!.Trim() : NormalizeSmsPhone(guest.Phone), content, letter, clock.GetUtcNow()));
             }
@@ -204,6 +206,21 @@ public sealed class ThankYouMessageStore(InviteMeDbContext db, TimeProvider cloc
             metadata: JsonSerializer.Serialize(new { templateId, guestCount = guests.Count, channels, includeGiftAmount = template.IncludesGiftAmount })));
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
         return new(batch.Id, false);
+    }
+
+    public async Task<IReadOnlyList<ThankYouSmsPreviewItem>> PreviewSmsAsync(Guid weddingId, IReadOnlyList<Guid> guestIds, string frontendUrl, string? smsContent, CancellationToken ct)
+    {
+        var text = ThankYouSmsText.Validate(smsContent);
+        var guests = await db.Set<PlanningGuest>().AsNoTracking().Where(x => x.WeddingId == weddingId && x.ArchivedAt == null && guestIds.Contains(x.Id))
+            .Select(x => new { x.Id, x.RecipientName, x.Phone }).ToListAsync(ct);
+        if (guests.Count != guestIds.Count) throw new ApplicationProblemException(ProblemKind.NotFound, "GUEST_NOT_FOUND", "One or more guests are unavailable.");
+        var weddingTitle = await db.Weddings.Where(x => x.Id == weddingId).Select(x => x.Title).SingleAsync(ct);
+        return guests.Select(guest =>
+        {
+            var content = ThankYouSmsText.Render(text, guest.RecipientName, weddingTitle);
+            var length = SmsSegmentCounter.Measure(content);
+            return new ThankYouSmsPreviewItem(guest.Id, guest.RecipientName, content, length.Encoding, length.Units, length.Segments, !string.IsNullOrWhiteSpace(guest.Phone));
+        }).ToArray();
     }
 
     public async Task<ThankYouSendBatchDto> BatchAsync(Guid weddingId, Guid batchId, CancellationToken ct)
