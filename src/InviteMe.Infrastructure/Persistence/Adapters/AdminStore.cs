@@ -12,6 +12,7 @@ using InviteMe.Domain.Audit;
 using InviteMe.Domain.Guests;
 using InviteMe.Domain.Identity;
 using InviteMe.Domain.Invitations;
+using InviteMe.Domain.Rsvps;
 using InviteMe.Domain.Weddings;
 using InviteMe.Infrastructure.Identity;
 using InviteMe.Infrastructure.Authentication;
@@ -20,11 +21,32 @@ using Microsoft.EntityFrameworkCore;
 
 namespace InviteMe.Infrastructure.Persistence.Adapters;
 
-public sealed class AdminStore(InviteMeDbContext db, UserManager<ApplicationUser> users, IWeddingEntitlements entitlements) : IAdminStore
+public sealed class AdminStore(
+    InviteMeDbContext db,
+    UserManager<ApplicationUser> users,
+    IWeddingEntitlements entitlements,
+    TimeProvider clock) : IAdminStore
 {
     private static readonly string[] TemplateStatuses = ["ACTIVE", "INACTIVE", "DRAFT"];
+    private static readonly TimeZoneInfo VietnamTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
     private static readonly HashSet<string> SensitiveMetadataKeys =
         ["email", "phone", "token", "password", "secret", "content", "message", "wish", "amount", "account", "bankpayload"];
+
+    private sealed class DashboardBucketCountSqlRow
+    {
+        public DashboardBucketCountSqlRow() { }
+        public DateOnly Bucket { get; set; }
+        public long Count { get; set; }
+    }
+
+    private sealed class DashboardInvitationSqlRow
+    {
+        public DashboardInvitationSqlRow() { }
+        public DateOnly Bucket { get; set; }
+        public string Channel { get; set; } = "";
+        public string Status { get; set; } = "";
+        public long Count { get; set; }
+    }
 
     public async Task<AdminDashboardDto> GetDashboardAsync(CancellationToken ct)
     {
@@ -38,6 +60,114 @@ public sealed class AdminStore(InviteMeDbContext db, UserManager<ApplicationUser
         var guests = await db.Set<PlanningGuest>().AsNoTracking().LongCountAsync(x => x.ArchivedAt == null, ct);
         var sent = await db.InvitationSendJobs.AsNoTracking().LongCountAsync(x => x.Status == "SENT", ct);
         return new(totalAccounts, activeAccounts, suspendedAccounts, totalWeddings, drafts, published, closed, guests, sent);
+    }
+
+    public async Task<AdminDashboardAnalyticsDto> GetDashboardAnalyticsAsync(
+        DateOnly from, DateOnly to, string bucket, CancellationToken ct)
+    {
+        if (from > to)
+            throw BadRequest("ADMIN_ANALYTICS_RANGE_INVALID", "The start date must be on or before the end date.");
+        if (to.DayNumber - from.DayNumber > 365)
+            throw BadRequest("ADMIN_ANALYTICS_RANGE_TOO_LARGE", "The dashboard date range cannot exceed 366 days.");
+        if (bucket is not ("day" or "week"))
+            throw BadRequest("ADMIN_ANALYTICS_BUCKET_INVALID", "The dashboard bucket must be day or week.");
+
+        var fromLocal = from.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+        var toLocalExclusive = to.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+        var fromUtc = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(fromLocal, VietnamTimeZone));
+        var toUtc = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(toLocalExclusive, VietnamTimeZone));
+
+        var accounts = await db.Database.SqlQuery<DashboardBucketCountSqlRow>($"""
+            SELECT date_trunc({bucket}, created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS "Bucket",
+                   COUNT(*)::bigint AS "Count"
+            FROM inviteme.users
+            WHERE created_at >= {fromUtc} AND created_at < {toUtc}
+            GROUP BY 1
+            ORDER BY 1
+            """).ToListAsync(ct);
+
+        var weddings = await db.Database.SqlQuery<DashboardBucketCountSqlRow>($"""
+            SELECT date_trunc({bucket}, created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS "Bucket",
+                   COUNT(*)::bigint AS "Count"
+            FROM inviteme.weddings
+            WHERE created_at >= {fromUtc} AND created_at < {toUtc}
+            GROUP BY 1
+            ORDER BY 1
+            """).ToListAsync(ct);
+
+        var invitationRows = await db.Database.SqlQuery<DashboardInvitationSqlRow>($"""
+            SELECT date_trunc({bucket}, created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS "Bucket",
+                   channel AS "Channel", status AS "Status", COUNT(*)::bigint AS "Count"
+            FROM inviteme.invitation_send_jobs
+            WHERE created_at >= {fromUtc} AND created_at < {toUtc}
+            GROUP BY 1, channel, status
+            ORDER BY 1, channel, status
+            """).ToListAsync(ct);
+
+        var bucketDates = DashboardBucketDates(from, to, bucket);
+        var accountCounts = accounts.ToDictionary(x => x.Bucket, x => x.Count);
+        var weddingCounts = weddings.ToDictionary(x => x.Bucket, x => x.Count);
+        var accountGrowth = bucketDates
+            .Select(date => new AdminDashboardTrendPointDto(date, accountCounts.GetValueOrDefault(date)))
+            .ToArray();
+        var weddingGrowth = bucketDates
+            .Select(date => new AdminDashboardTrendPointDto(date, weddingCounts.GetValueOrDefault(date)))
+            .ToArray();
+        var invitationCounts = invitationRows.ToDictionary(
+            x => (x.Bucket, x.Channel, x.Status), x => x.Count);
+        var invitationStatuses = new[]
+            { "PENDING", "SENDING", "ACCEPTED", "SENT", "DELIVERED", "FAILED", "UNKNOWN", "REVIEW_REQUIRED", "SIMULATED" };
+        var invitations = bucketDates
+            .SelectMany(date => new[] { "EMAIL", "SMS" }.SelectMany(channelName => invitationStatuses.Select(status =>
+                new AdminDashboardInvitationPointDto(
+                    date, channelName, status, invitationCounts.GetValueOrDefault((date, channelName, status))))))
+            .ToArray();
+
+        var rsvpRows = await (
+            from guest in db.Set<PlanningGuest>().AsNoTracking()
+            join wedding in db.Weddings.AsNoTracking() on guest.WeddingId equals wedding.Id
+            join rsvp in db.Set<PlanningRsvp>().AsNoTracking() on guest.Id equals rsvp.GuestId into guestRsvps
+            from rsvp in guestRsvps.DefaultIfEmpty()
+            where guest.ArchivedAt == null && wedding.Status != "ARCHIVED"
+            group rsvp by rsvp == null ? "NO_RESPONSE" : rsvp.Status into statusGroup
+            select new AdminDashboardStatusCountDto(statusGroup.Key, statusGroup.LongCount())
+        ).ToListAsync(ct);
+        var rsvpCounts = rsvpRows.ToDictionary(x => x.Status, x => x.Count);
+        var rsvpStatus = new[] { "ATTENDING", "MAYBE", "DECLINED", "NO_RESPONSE" }
+            .Select(status => new AdminDashboardStatusCountDto(status, rsvpCounts.GetValueOrDefault(status)))
+            .ToArray();
+
+        var nonArchivedWeddings = await db.Weddings.AsNoTracking()
+            .LongCountAsync(x => x.Status != "ARCHIVED", ct);
+        var publishedWebsites = await db.WeddingSettings.AsNoTracking()
+            .LongCountAsync(x => x.WebsiteStatus == WebsitePublicationStatus.PUBLISHED &&
+                db.Weddings.Any(w => w.Id == x.WeddingId && w.Status != "ARCHIVED"), ct);
+
+        var failedInvitations = await db.InvitationSendJobs.AsNoTracking()
+            .LongCountAsync(x => x.Status == "FAILED" && x.CreatedAt >= fromUtc && x.CreatedAt < toUtc, ct);
+        var delayCutoff = clock.GetUtcNow().AddMinutes(-30);
+        var delayedInvitations = await db.InvitationSendJobs.AsNoTracking().LongCountAsync(x =>
+            (x.Status == "PENDING" && x.NextAttemptAt <= delayCutoff) ||
+            (x.Status == "SENDING" && x.LeaseUntil != null && x.LeaseUntil < delayCutoff), ct);
+
+        return new AdminDashboardAnalyticsDto(
+            from, to, bucket, accountGrowth, weddingGrowth, invitations, rsvpStatus,
+            nonArchivedWeddings, publishedWebsites, failedInvitations, delayedInvitations);
+    }
+
+    private static IReadOnlyList<DateOnly> DashboardBucketDates(DateOnly from, DateOnly to, string bucket)
+    {
+        var first = from;
+        if (bucket == "week")
+        {
+            var daysSinceMonday = ((int)from.DayOfWeek + 6) % 7;
+            first = from.AddDays(-daysSinceMonday);
+        }
+
+        var step = bucket == "week" ? 7 : 1;
+        var result = new List<DateOnly>();
+        for (var date = first; date <= to; date = date.AddDays(step)) result.Add(date);
+        return result;
     }
 
     public async Task<IReadOnlyList<string>> GetAdminPermissionsAsync(CancellationToken ct)

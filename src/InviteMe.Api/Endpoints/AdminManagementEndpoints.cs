@@ -32,6 +32,10 @@ internal static class AdminManagementEndpoints
         group.MapGet("/dashboard", async (IAdminStore store, CancellationToken ct) =>
             Results.Ok(await store.GetDashboardAsync(ct)))
             .RequireAuthorization(AdminPolicyNames.DashboardView).WithName("GetAdminDashboard");
+        group.MapGet("/dashboard/analytics", async (DateOnly from, DateOnly to, string? bucket,
+                IAdminStore store, CancellationToken ct) =>
+            Results.Ok(await store.GetDashboardAnalyticsAsync(from, to, bucket ?? "day", ct)))
+            .RequireAuthorization(AdminPolicyNames.DashboardView).WithName("GetAdminDashboardAnalytics");
 
         group.MapGet("/users", async (IAdminStore store, CancellationToken ct, int page = 1, int pageSize = 25,
                 string? search = null, string? status = null, string? role = null) =>
