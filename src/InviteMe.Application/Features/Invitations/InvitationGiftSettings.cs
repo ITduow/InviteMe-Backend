@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using InviteMe.Application.Features.Gifts;
 
 namespace InviteMe.Application.Features.Invitations;
 
@@ -29,7 +28,7 @@ public sealed record InvitationGiftSettings(string Mode, InvitationGiftRecipient
             var label = recipient.Role == "BRIDE" ? "cô dâu" : "chú rể";
             if (config.Mode == "UPLOADED" && string.IsNullOrWhiteSpace(recipient.ImageUrl))
                 return $"Vui lòng tải ảnh QR của {label} hoặc tắt hiển thị mã này.";
-            if (config.Mode == "MANUAL" && (GiftBanks.Find(recipient.BankBin) is null ||
+            if (config.Mode == "MANUAL" && (!Regex.IsMatch(recipient.BankBin ?? "", "^[0-9]{6}$") ||
                 !Regex.IsMatch(recipient.AccountNumber ?? "", "^[0-9]{4,30}$")))
                 return $"Vui lòng chọn ngân hàng, nhập STK từ 4–30 chữ số của {label}.";
             if (config.Mode == "LINKED" && recipient.AccountId is null)

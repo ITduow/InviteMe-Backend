@@ -19,7 +19,7 @@ namespace InviteMe.Infrastructure.Persistence.Adapters.Gifts;
 /// and a manual confirmation cannot both pay it.
 /// </summary>
 public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe.Application.Features.Billing.IWeddingEntitlements plans,
-    InviteMe.Infrastructure.Notifications.WeddingNotifier notifier) : IGiftStore
+    InviteMe.Infrastructure.Notifications.WeddingNotifier notifier, IBankDirectory bankDirectory) : IGiftStore
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -32,9 +32,12 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         var enabled = (await plans.LimitsAsync(wedding.Id, ct)).GiftQr;
         var config = await PublishedGift(wedding.Id, ct);
         if (config is { Mode: "MANUAL" })
+        {
+            var banks = await bankDirectory.GetAsync(ct);
             return new(guest.RecipientName, wedding.Title, [], [], PlanningGift.MinAmount, PlanningGift.MaxAmount, [], true, [], "MANUAL", [],
-                config.Recipients.Where(r => r.Enabled).Select(r => new ManualGiftQrDto(r.Role, r.BankBin!, GiftBanks.Find(r.BankBin)!.Name,
+                config.Recipients.Where(r => r.Enabled).Select(r => new ManualGiftQrDto(r.Role, r.BankBin!, banks.FirstOrDefault(b => b.Bin == r.BankBin)?.Name ?? r.BankBin!,
                     r.AccountNumber!, "", GiftRules.AccountQrImageUrl(r.BankBin!, r.AccountNumber!, ""))).ToList());
+        }
         if (config is { Mode: "UPLOADED" })
             return new(guest.RecipientName, wedding.Title, [], [], PlanningGift.MinAmount, PlanningGift.MaxAmount, [], true, [], "UPLOADED",
                 config.Recipients.Where(r => r.Enabled && r.ImageUrl != null).Select(r => new UploadedGiftQrDto(r.Role, r.ImageUrl!)).ToList());
@@ -204,6 +207,8 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
 
     public async Task<GiftBankAccountDto> AddAccountAsync(Guid weddingId, SaveGiftAccount input, Guid actor, CancellationToken ct)
     {
+        var bank = (await bankDirectory.GetAsync(ct)).FirstOrDefault(b => b.Bin == input.BankBin)
+            ?? throw Rule("GIFT_BANK_INVALID", "Ngân hàng không có trong danh sách VietQR hiện tại. Vui lòng chọn lại.");
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await LockWedding(weddingId, ct);
         var accounts = await db.Set<PlanningGiftAccount>().Where(x => x.WeddingId == weddingId).ToListAsync(ct);
@@ -212,7 +217,7 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         var number = input.AccountNumber.Trim();
         if (accounts.Any(x => x.BankBin == input.BankBin && x.AccountNumber == number))
             throw new ApplicationProblemException(ProblemKind.Conflict, "GIFT_ACCOUNT_EXISTS", "Tài khoản này đã được thêm.");
-        var account = PlanningGiftAccount.Create(weddingId, input.BankBin, GiftBanks.Find(input.BankBin)!.Name, number,
+        var account = PlanningGiftAccount.Create(weddingId, input.BankBin, bank.Name, number,
             GiftRules.Ascii(input.AccountName), GiftRules.Clean(input.Label), clock.GetUtcNow());
         db.Add(account);
         db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_gift_accounts", account.Id, "GIFT_ACCOUNT_ADDED", actor, null,

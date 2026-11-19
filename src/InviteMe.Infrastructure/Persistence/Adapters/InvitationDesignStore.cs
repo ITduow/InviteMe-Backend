@@ -11,7 +11,7 @@ using static InviteMe.Infrastructure.Persistence.Adapters.PlanningPersistence;
 
 namespace InviteMe.Infrastructure.Persistence.Adapters;
 
-public sealed class InvitationDesignStore(InviteMeDbContext db, IWeddingMediaStorage mediaStorage, IWeddingMediaCatalog mediaCatalog) : IInvitationDesignStore
+public sealed class InvitationDesignStore(InviteMeDbContext db, IWeddingMediaStorage mediaStorage, IWeddingMediaCatalog mediaCatalog, InviteMe.Application.Ports.Gifts.IBankDirectory banks) : IInvitationDesignStore
 {
     public async Task<InvitationDesignDto> GetAsync(Guid id, CancellationToken ct)
     {
@@ -83,7 +83,16 @@ public sealed class InvitationDesignStore(InviteMeDbContext db, IWeddingMediaSto
     {
         if (InvitationGiftSettings.ConfigurationError(document) is { } error)
             throw Rule("INVITATION_GIFT_CONFIGURATION_REQUIRED", error);
-        if (!InvitationGiftSettings.HasWidget(document) || InvitationGiftSettings.Read(document) is not { Mode: "LINKED" } gift) return;
+        if (!InvitationGiftSettings.HasWidget(document)) return;
+        var config = InvitationGiftSettings.Read(document);
+        if (config is { Mode: "MANUAL" })
+        {
+            var directory = await banks.GetAsync(ct);
+            if (config.Recipients.Any(r => r.Enabled && !directory.Any(bank => bank.Bin == r.BankBin)))
+                throw Rule("INVITATION_GIFT_BANK_INVALID", "Ngân hàng đã chọn không có trong danh sách VietQR hiện tại. Vui lòng chọn lại ngân hàng.");
+            return;
+        }
+        if (config is not { Mode: "LINKED" } gift) return;
         var ids = gift.Recipients.Where(r => r.Enabled).Select(r => r.AccountId!.Value).ToArray();
         var count = await db.Set<InviteMe.Domain.Gifts.PlanningGiftAccount>().CountAsync(a => a.WeddingId == weddingId && ids.Contains(a.Id) && a.BankHubAccountXid != null, ct);
         if (count != ids.Length) throw Rule("INVITATION_GIFT_ACCOUNT_NOT_LINKED", "Tài khoản nhận mừng phải thuộc đám cưới này và đã liên kết ngân hàng thành công. Vui lòng liên kết hoặc chọn QR có sẵn.");

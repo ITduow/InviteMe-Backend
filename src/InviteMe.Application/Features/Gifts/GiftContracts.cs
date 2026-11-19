@@ -194,7 +194,7 @@ public static class GiftRules
 /// <summary>Banks the couple can pick (Napas BIN used by VietQR). Covers the banks SePay connects plus common ones.</summary>
 public static class GiftBanks
 {
-    public sealed record Bank(string Bin, string Name);
+    public sealed record Bank(string Bin, string Name, string? Code = null, string? Logo = null);
     public static readonly IReadOnlyList<Bank> All =
     [
         new("970436", "Vietcombank"), new("970415", "VietinBank"), new("970418", "BIDV"), new("970405", "Agribank"),
@@ -247,7 +247,7 @@ public sealed class SaveGiftAccountValidator : AbstractValidator<SaveGiftAccount
 {
     public SaveGiftAccountValidator()
     {
-        RuleFor(x => x.BankBin).Must(x => GiftBanks.Find(x) is not null).WithMessage("Unknown bank BIN.");
+        RuleFor(x => x.BankBin).NotEmpty().Matches("^[0-9]{6}$").WithMessage("Invalid bank BIN.");
         RuleFor(x => x.AccountNumber).NotEmpty().Matches("^[0-9A-Za-z]{4,30}$").WithMessage("Account number: 4-30 letters or digits.");
         RuleFor(x => x.AccountName).NotEmpty().MaximumLength(100);
         RuleFor(x => x.Label).MaximumLength(30);

@@ -21,10 +21,10 @@ public sealed class InvitationDesignTests
     }
     [Theory]
     [InlineData("970422", "000000001010", true)]
-    [InlineData("999999", "000000001010", false)]
+    [InlineData("bad", "000000001010", false)]
     [InlineData("970422", "123", false)]
     [InlineData("970422", "12AB34", false)]
-    public void ManualGiftNeedsOnlySupportedBankAndAccountNumber(string bankBin, string accountNumber, bool valid)
+    public void ManualGiftNeedsWellFormedBankBinAndAccountNumber(string bankBin, string accountNumber, bool valid)
     {
         var doc = WithImportedWidget(); doc["widgets"]![0]!["type"] = "GIFT";
         doc["nodes"]!["ROOT"]!["props"]!["gift"] = JsonSerializer.SerializeToNode(new {mode="MANUAL",recipients=new[]{new {role="BRIDE",enabled=true,bankBin,accountNumber}}});

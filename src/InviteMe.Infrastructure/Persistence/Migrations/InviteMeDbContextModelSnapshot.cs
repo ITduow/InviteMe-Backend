@@ -883,6 +883,27 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Gifts.BankDirectoryCache", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("key");
+
+                    b.Property<string>("DataJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("data_json");
+
+                    b.Property<DateTimeOffset>("FetchedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fetched_at");
+
+                    b.HasKey("Key");
+
+                    b.ToTable("bank_directory_cache", "inviteme");
+                });
+
             modelBuilder.Entity("InviteMe.Domain.Gifts.PlanningGift", b =>
                 {
                     b.Property<Guid>("Id")

@@ -156,6 +156,15 @@ public static class DependencyInjection
         services.AddSingleton(new InviteMe.Application.Features.Gifts.BankHubWebhookOptions(configuration["SePay:BankHub:NotifyApiKey"]));
         services.AddSingleton(new InviteMe.Infrastructure.Gifts.BankHubOptions(configuration["SePay:BankHub:BaseUrl"],
             configuration["SePay:BankHub:ClientId"], configuration["SePay:BankHub:ClientSecret"]));
+        services.AddMemoryCache();
+        services.AddSingleton<InviteMe.Application.Ports.Gifts.IBankDirectoryCacheStore, BankDirectoryCacheStore>();
+        services.AddSingleton<InviteMe.Application.Ports.Gifts.IBankDirectory, InviteMe.Infrastructure.Gifts.VietQrBankDirectory>();
+        services.AddHttpClient(InviteMe.Infrastructure.Gifts.VietQrBankDirectory.HttpClientName, client =>
+        {
+            client.BaseAddress = new Uri("https://api.vietqr.io/");
+            client.Timeout = TimeSpan.FromSeconds(8);
+            client.MaxResponseContentBufferSize = 1024 * 1024;
+        });
         services.AddSingleton<InviteMe.Infrastructure.Gifts.BankHubTokenCache>();
         services.AddHttpClient<InviteMe.Application.Features.Gifts.IBankHubClient, InviteMe.Infrastructure.Gifts.BankHubClient>(client =>
             client.Timeout = TimeSpan.FromSeconds(15));

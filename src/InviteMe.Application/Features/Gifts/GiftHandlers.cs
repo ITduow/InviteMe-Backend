@@ -82,11 +82,11 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
     RequestValidation<GiftLedgerFilter> filterValidation, RequestValidation<PageRequest> pages,
     RequestValidation<SimulateSePayTransfer> simulateValidation, IPlanningChangePublisher changes, TimeProvider clock,
     InviteMe.Application.Features.Billing.IWeddingEntitlements plans, IGiftProofStorage proofs,
-    InviteMe.Application.Features.Weddings.Setup.ImageUploadLimit limit, IBankHubClient bankHub)
+    InviteMe.Application.Features.Weddings.Setup.ImageUploadLimit limit, IBankHubClient bankHub, IBankDirectory banks)
 {
     public const string NeedsReview = "NEEDS_REVIEW";
 
-    public IReadOnlyList<GiftBanks.Bank> Banks() => GiftBanks.All;
+    public Task<IReadOnlyList<GiftBanks.Bank>> BanksAsync(CancellationToken ct) => banks.GetAsync(ct);
 
     public async Task<IReadOnlyList<GiftBankAccountDto>> AccountsAsync(Guid weddingId, CancellationToken ct)
     { await Require(weddingId, WeddingPermission.GIFT_VIEW, ct); return await store.AccountsAsync(weddingId, ct); }
