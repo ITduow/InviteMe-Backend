@@ -230,14 +230,18 @@ public sealed class PlanOrderStore(InviteMeDbContext db, TimeProvider clock, Bil
 
     public async Task<PlanRevenueDto> RevenueAsync(DateTimeOffset? from, DateTimeOffset? to, CancellationToken ct)
     {
+        // Npgsql maps timestamptz to UTC DateTimeOffset values only. Admin clients may send
+        // local-offset ISO timestamps (for example, Vietnam's +07:00 dashboard boundaries).
+        var fromUtc = from?.ToUniversalTime();
+        var toUtc = to?.ToUniversalTime();
         var rows = await (from pay in db.Set<PlanPayment>().AsNoTracking()
                           join o in db.Set<PlanOrder>().AsNoTracking() on pay.OrderId equals (Guid?)o.Id
                           join p in db.Set<Plan>().AsNoTracking() on o.PlanId equals p.Id
-                          where pay.Status == PlanPayment.Applied && (@from == null || pay.TransactionAt >= @from) && (to == null || pay.TransactionAt <= to)
+                          where pay.Status == PlanPayment.Applied && (fromUtc == null || pay.TransactionAt >= fromUtc) && (toUtc == null || pay.TransactionAt <= toUtc)
                           select new { pay.Amount, pay.TransactionAt, p.Code, OrderId = o.Id, o.Status }).ToListAsync(ct);
         var review = await db.Set<PlanPayment>().CountAsync(x => x.Status == PlanPayment.Review, ct);
         PlanRevenueRow Row(IGrouping<string, (long Amount, Guid OrderId)> g) => new(g.Key, g.Sum(x => x.Amount), g.Select(x => x.OrderId).Distinct().Count());
-        return new(from, to, rows.Sum(x => x.Amount), rows.Where(x => x.Status == PlanOrder.Paid).Select(x => x.OrderId).Distinct().Count(),
+        return new(fromUtc, toUtc, rows.Sum(x => x.Amount), rows.Where(x => x.Status == PlanOrder.Paid).Select(x => x.OrderId).Distinct().Count(),
             rows.GroupBy(x => x.Code, x => (x.Amount, x.OrderId)).Select(Row).OrderByDescending(x => x.Amount).ToList(),
             rows.GroupBy(x => x.TransactionAt.ToOffset(Vietnam).ToString("yyyy-MM", CultureInfo.InvariantCulture), x => (x.Amount, x.OrderId))
                 .Select(Row).OrderBy(x => x.Key).ToList(), review);

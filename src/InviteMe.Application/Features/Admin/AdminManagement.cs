@@ -9,6 +9,18 @@ public sealed record AdminDashboardDto(
     long TotalAccounts, long ActiveAccounts, long SuspendedAccounts, long TotalWeddings,
     long DraftWeddings, long PublishedWeddings, long ClosedWeddings, long ActiveGuests, long InvitationsSent);
 
+public sealed record AdminDashboardTrendPointDto(DateOnly Bucket, long Count);
+public sealed record AdminDashboardInvitationPointDto(DateOnly Bucket, string Channel, string Status, long Count);
+public sealed record AdminDashboardStatusCountDto(string Status, long Count);
+public sealed record AdminDashboardAnalyticsDto(
+    DateOnly From, DateOnly To, string Bucket,
+    IReadOnlyList<AdminDashboardTrendPointDto> AccountGrowth,
+    IReadOnlyList<AdminDashboardTrendPointDto> WeddingGrowth,
+    IReadOnlyList<AdminDashboardInvitationPointDto> InvitationDelivery,
+    IReadOnlyList<AdminDashboardStatusCountDto> RsvpStatus,
+    long NonArchivedWeddings, long PublishedWebsites,
+    long FailedInvitations, long DelayedInvitations);
+
 public sealed record AdminUserDto(Guid Id, string Email, string FullName, string Role, string Status, DateTimeOffset CreatedAt);
 public sealed record AdminUserDetailDto(AdminUserDto Account, long WeddingCount, IReadOnlyList<AdminWeddingDto> RecentWeddings);
 public sealed record AdminUserQuery(int Page = 1, int PageSize = 25, string? Search = null, string? Status = null, string? Role = null);
@@ -45,6 +57,7 @@ public sealed record AdminAuditLogDto(Guid Id, Guid? WeddingId, string? WeddingT
 public interface IAdminStore
 {
     Task<AdminDashboardDto> GetDashboardAsync(CancellationToken ct);
+    Task<AdminDashboardAnalyticsDto> GetDashboardAnalyticsAsync(DateOnly from, DateOnly to, string bucket, CancellationToken ct);
     Task<IReadOnlyList<string>> GetAdminPermissionsAsync(CancellationToken ct);
     Task<PagedResult<AdminUserDto>> ListUsersAsync(AdminUserQuery query, CancellationToken ct);
     Task<AdminUserDetailDto> GetUserDetailAsync(Guid userId, CancellationToken ct);
