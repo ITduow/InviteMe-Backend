@@ -101,10 +101,14 @@ public static class DependencyInjection
             configuration["Billing:AccountNumber"], configuration["Billing:AccountName"]));
         services.AddScoped<InviteMe.Application.Features.Weddings.Setup.IWeddingListReader, WeddingListReader>();
         services.AddOptions<WeddingMediaOptions>().BindConfiguration(WeddingMediaOptions.SectionName)
+            .Validate(x => x.Provider is "S3" or "Local", "WeddingMedia:Provider must be S3 or Local.")
             .Validate(x => x.MaximumFileSizeBytes is > 0 and <= InviteMe.Domain.Weddings.UploadLimits.MaxImageBytes, "WeddingMedia:MaximumFileSizeBytes must be between 1 byte and 5 MB.")
             .Validate(x => x.AllowedFormats.All(f => new[] { "jpeg", "jpg", "png", "webp" }.Contains(f, StringComparer.OrdinalIgnoreCase)), "WeddingMedia:AllowedFormats may include only JPEG, PNG and WebP.")
             .ValidateOnStart();
-        services.AddHttpClient<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage, S3WeddingMediaStorage>();
+        if (configuration["WeddingMedia:Provider"] == "Local")
+            services.AddScoped<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage, LocalWeddingMediaStorage>();
+        else
+            services.AddHttpClient<InviteMe.Application.Features.Weddings.Setup.IWeddingMediaStorage, S3WeddingMediaStorage>();
         services.AddSingleton(sp => new InviteMe.Application.Features.Weddings.Setup.ImageUploadLimit(Math.Min(
             sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<WeddingMediaOptions>>().Value.MaximumFileSizeBytes,
             InviteMe.Domain.Weddings.UploadLimits.MaxImageBytes)));
@@ -132,6 +136,7 @@ public static class DependencyInjection
             configuration["Frontend:Url"] ?? "http://localhost:3000",
             configuration["InvitationMessaging:PublicApiUrl"] ?? "http://localhost:5000"));
         services.AddScoped<InviteMe.Application.Features.Invitations.IInvitationDesignStore, InvitationDesignStore>();
+        services.AddScoped<InviteMe.Application.Features.Music.IMusicTrackStore, MusicTrackStore>();
         services.AddScoped<InviteMe.Application.Features.Weddings.Website.IWeddingWebsiteStore, WeddingWebsiteStore>();
         services.AddScoped<InviteMe.Application.Features.Weddings.Website.IWeddingEventStore, WeddingEventStore>();
         services.AddScoped<InviteMe.Application.Features.Weddings.Website.IStoryWishStore, StoryWishStore>();
@@ -151,6 +156,15 @@ public static class DependencyInjection
         services.AddSingleton(new InviteMe.Application.Features.Gifts.BankHubWebhookOptions(configuration["SePay:BankHub:NotifyApiKey"]));
         services.AddSingleton(new InviteMe.Infrastructure.Gifts.BankHubOptions(configuration["SePay:BankHub:BaseUrl"],
             configuration["SePay:BankHub:ClientId"], configuration["SePay:BankHub:ClientSecret"]));
+        services.AddMemoryCache();
+        services.AddSingleton<InviteMe.Application.Ports.Gifts.IBankDirectoryCacheStore, BankDirectoryCacheStore>();
+        services.AddSingleton<InviteMe.Application.Ports.Gifts.IBankDirectory, InviteMe.Infrastructure.Gifts.VietQrBankDirectory>();
+        services.AddHttpClient(InviteMe.Infrastructure.Gifts.VietQrBankDirectory.HttpClientName, client =>
+        {
+            client.BaseAddress = new Uri("https://api.vietqr.io/");
+            client.Timeout = TimeSpan.FromSeconds(8);
+            client.MaxResponseContentBufferSize = 1024 * 1024;
+        });
         services.AddSingleton<InviteMe.Infrastructure.Gifts.BankHubTokenCache>();
         services.AddHttpClient<InviteMe.Application.Features.Gifts.IBankHubClient, InviteMe.Infrastructure.Gifts.BankHubClient>(client =>
             client.Timeout = TimeSpan.FromSeconds(15));

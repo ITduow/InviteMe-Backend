@@ -39,6 +39,8 @@ internal static class AdminPolicyNames
     public const string WeddingsView = "Admin.Weddings.View";
     public const string TemplatesView = "Admin.Templates.View";
     public const string TemplatesManage = "Admin.Templates.Manage";
+    public const string MusicView = "Admin.Music.View";
+    public const string MusicManage = "Admin.Music.Manage";
     public const string AuditView = "Admin.Audit.View";
     public const string RbacView = "Admin.Rbac.View";
     public const string RbacManage = "Admin.Rbac.Manage";

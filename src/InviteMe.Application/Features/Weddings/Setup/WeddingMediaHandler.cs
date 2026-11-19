@@ -5,6 +5,7 @@ using InviteMe.Domain.Weddings;
 namespace InviteMe.Application.Features.Weddings.Setup;
 
 public sealed record UploadedWeddingMedia(Guid Id, string Url);
+public sealed record UploadedInvitationPage(Guid Id, string Url, int Width, int Height);
 public sealed record DeletedWeddingMedia(Guid Id);
 public enum WeddingMediaDeleteStatus { Deleted, NotFound, InUse }
 public sealed record WeddingMediaDeleteResult(Guid Id, WeddingMediaDeleteStatus Status);
@@ -25,6 +26,16 @@ public interface IWeddingMediaCatalog
 public sealed class WeddingMediaHandler(IWeddingMediaStorage storage, IWeddingMediaCatalog catalog,
     IWeddingPermissionService permissions, InviteMe.Application.Features.Billing.IWeddingEntitlements plans, ImageUploadLimit limit)
 {
+    public async Task<UploadedInvitationPage> UploadInvitationPageAsync(Guid weddingId, Stream content, long length, CancellationToken ct)
+    {
+        await permissions.RequireAsync(weddingId, WeddingPermission.WEDDING_EDIT, ct);
+        if (length <= 0 || length > limit.Bytes)
+            throw new ApplicationProblemException(ProblemKind.PayloadTooLarge, "MEDIA_SIZE_INVALID", $"Image must be {limit.Label} or smaller.");
+        var (width, height) = await InvitationImageDimensions.ReadAsync(content, ct);
+        var image = await UploadAsync(weddingId, content, length, ct);
+        return new(image.Id, image.Url, width, height);
+    }
+
     public async Task<UploadedWeddingMedia> UploadAsync(Guid weddingId, Stream content, long length, CancellationToken ct)
     {
         await permissions.RequireAsync(weddingId, WeddingPermission.WEDDING_EDIT, ct);

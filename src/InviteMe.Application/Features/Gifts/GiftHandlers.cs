@@ -82,11 +82,11 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
     RequestValidation<GiftLedgerFilter> filterValidation, RequestValidation<PageRequest> pages,
     RequestValidation<SimulateSePayTransfer> simulateValidation, IPlanningChangePublisher changes, TimeProvider clock,
     InviteMe.Application.Features.Billing.IWeddingEntitlements plans, IGiftProofStorage proofs,
-    InviteMe.Application.Features.Weddings.Setup.ImageUploadLimit limit, IBankHubClient bankHub)
+    InviteMe.Application.Features.Weddings.Setup.ImageUploadLimit limit, IBankHubClient bankHub, IBankDirectory banks)
 {
     public const string NeedsReview = "NEEDS_REVIEW";
 
-    public IReadOnlyList<GiftBanks.Bank> Banks() => GiftBanks.All;
+    public Task<IReadOnlyList<GiftBanks.Bank>> BanksAsync(CancellationToken ct) => banks.GetAsync(ct);
 
     public async Task<IReadOnlyList<GiftBankAccountDto>> AccountsAsync(Guid weddingId, CancellationToken ct)
     { await Require(weddingId, WeddingPermission.GIFT_VIEW, ct); return await store.AccountsAsync(weddingId, ct); }
@@ -96,6 +96,13 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
         await Require(weddingId, WeddingPermission.GIFT_EDIT, ct);
         await accountValidation.ValidateAsync(input, ct);
         return await store.AddAccountAsync(weddingId, input, user.UserId!.Value, ct);
+    }
+    public async Task<GiftBankAccountDto> SetAccountDisplayAsync(Guid weddingId, Guid accountId, SetGiftAccountDisplay input, CancellationToken ct)
+    {
+        await Require(weddingId, WeddingPermission.GIFT_EDIT, ct);
+        if (input.ShowInInvitation is null || input.Label?.Length > 30)
+            throw new ValidationException("Choose whether to show the account; its label must be at most 30 characters.");
+        return await store.SetAccountDisplayAsync(weddingId, accountId, input, user.UserId!.Value, ct);
     }
 
     /// <summary>
@@ -300,7 +307,7 @@ public sealed class GiftHostHandler(IGiftStore store, IWeddingPermissionService 
     /// </summary>
     private async Task RequireOwnGiftCode(Guid weddingId, string content, CancellationToken ct)
     {
-        if (GiftRules.FindCode(null, content) is { } code && (await store.GiftsAsync(weddingId, ct)).All(x => x.Code != code))
+        if (GiftRules.FindCode(null, content) is { } code && !await store.OwnTransferCodeAsync(weddingId, code, ct))
             throw new ApplicationProblemException(ProblemKind.NotFound, "GIFT_NOT_FOUND", "This gift code is not one of this wedding's gifts.");
     }
 

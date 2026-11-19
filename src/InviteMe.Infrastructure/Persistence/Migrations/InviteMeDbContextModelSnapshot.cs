@@ -883,6 +883,27 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("InviteMe.Domain.Gifts.BankDirectoryCache", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("key");
+
+                    b.Property<string>("DataJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("data_json");
+
+                    b.Property<DateTimeOffset>("FetchedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fetched_at");
+
+                    b.HasKey("Key");
+
+                    b.ToTable("bank_directory_cache", "inviteme");
+                });
+
             modelBuilder.Entity("InviteMe.Domain.Gifts.PlanningGift", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1007,7 +1028,7 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.HasIndex("Code")
                         .IsUnique()
                         .HasDatabaseName("uq_planning_gifts_code")
-                        .HasFilter("code IS NOT NULL");
+                        .HasFilter("code IS NOT NULL AND code NOT LIKE 'MG%'");
 
                     b.HasIndex("GuestId")
                         .HasDatabaseName("ix_planning_gifts_guest");
@@ -1084,6 +1105,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)")
                         .HasColumnName("label");
+
+                    b.Property<bool>("ShowInInvitation")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("show_in_invitation");
 
                     b.Property<Guid>("WeddingId")
                         .HasColumnType("uuid")
@@ -1305,6 +1332,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<int>("ExpectedPeople")
                         .HasColumnType("integer");
 
+                    b.Property<string>("GiftTransferCode")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
                     b.Property<string>("Group")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -1343,6 +1374,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("GiftTransferCode")
+                        .IsUnique()
+                        .HasDatabaseName("uq_planning_guests_gift_transfer_code")
+                        .HasFilter("\"GiftTransferCode\" IS NOT NULL");
 
                     b.HasIndex("InvitationToken")
                         .IsUnique()
@@ -2015,6 +2051,56 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.HasKey("WeddingId");
 
                     b.ToTable("invitation_wording_settings", "inviteme");
+                });
+
+            modelBuilder.Entity("InviteMe.Domain.Invitations.MusicTrack", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AudioUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("audio_url");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_active");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("name");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AudioUrl")
+                        .IsUnique()
+                        .HasDatabaseName("ux_music_tracks_audio_url");
+
+                    b.ToTable("music_tracks", "inviteme", t =>
+                        {
+                            t.HasCheckConstraint("ck_music_tracks_name", "length(trim(name)) BETWEEN 1 AND 150");
+
+                            t.HasCheckConstraint("ck_music_tracks_version", "version > 0");
+                        });
                 });
 
             modelBuilder.Entity("InviteMe.Domain.Notifications.Notification", b =>

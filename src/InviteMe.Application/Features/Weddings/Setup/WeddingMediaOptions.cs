@@ -9,6 +9,7 @@ public sealed record ImageUploadLimit(long Bytes)
 public sealed class WeddingMediaOptions
 {
     public const string SectionName = "WeddingMedia";
+    public string Provider { get; set; } = "S3";
     public string LocalDirectory { get; set; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "InviteMe", "WeddingMedia");
     public string PublicBaseUrl { get; set; } = "";

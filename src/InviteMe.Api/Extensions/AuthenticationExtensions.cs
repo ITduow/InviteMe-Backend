@@ -133,6 +133,8 @@ internal static class AuthenticationExtensions
             options.AddPolicy(AdminPolicyNames.WeddingsView, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.WeddingsView)));
             options.AddPolicy(AdminPolicyNames.TemplatesView, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.TemplatesView)));
             options.AddPolicy(AdminPolicyNames.TemplatesManage, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.TemplatesManage)));
+            options.AddPolicy(AdminPolicyNames.MusicView, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.MusicView)));
+            options.AddPolicy(AdminPolicyNames.MusicManage, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.MusicManage)));
             options.AddPolicy(AdminPolicyNames.AuditView, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.AuditView)));
             options.AddPolicy(AdminPolicyNames.RbacView, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.RbacView)));
             options.AddPolicy(AdminPolicyNames.RbacManage, policy => policy.AddRequirements(new AdminPermissionRequirement(AdminPermissionCatalog.RbacManage)));

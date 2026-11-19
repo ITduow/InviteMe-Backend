@@ -27,6 +27,9 @@ public sealed class GuestPlanningModel :
         guests.Property(x => x.Phone).HasMaxLength(30); guests.Property(x => x.Note).HasMaxLength(2000);
         guests.Property(x => x.Email).HasMaxLength(254);
         guests.Property(x => x.InvitationToken).HasMaxLength(64);
+        guests.Property(x => x.GiftTransferCode).HasMaxLength(10);
+        guests.HasIndex(x => x.GiftTransferCode).IsUnique().HasFilter("\"GiftTransferCode\" IS NOT NULL")
+            .HasDatabaseName("uq_planning_guests_gift_transfer_code");
         guests.HasIndex(x => x.InvitationToken).IsUnique().HasFilter("\"InvitationToken\" IS NOT NULL");
         guests.Property(x => x.Version).IsConcurrencyToken();
         guests.HasIndex(x => new { x.WeddingId, x.RecipientName });

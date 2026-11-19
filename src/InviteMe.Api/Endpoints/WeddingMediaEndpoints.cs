@@ -13,6 +13,16 @@ internal static class WeddingMediaEndpoints
         var host = endpoints.MapGroup("/api/weddings/{weddingId:guid}/media")
             .RequireAuthorization().WithTags("Wedding Media");
         host.MapGet("", (Guid weddingId, WeddingMediaHandler h, CancellationToken ct) => h.ListAsync(weddingId, ct));
+        host.MapPost("/invitation-pages", async (Guid weddingId, [FromForm] WeddingMediaUploadForm form,
+            WeddingMediaHandler h, CancellationToken ct) =>
+        {
+            if (form.File is null) return Results.BadRequest(new { code = "MEDIA_FILE_REQUIRED" });
+            await using var stream = form.File.OpenReadStream();
+            return Results.Ok(await h.UploadInvitationPageAsync(weddingId, stream, form.File.Length, ct));
+        }).DisableAntiforgery().RequireRateLimiting("wedding-media-upload")
+            .WithMetadata(new RequestSizeLimitAttribute(InviteMe.Domain.Weddings.UploadLimits.MaxImageRequestBytes),
+                new RequestFormLimitsAttribute { MultipartBodyLengthLimit = InviteMe.Domain.Weddings.UploadLimits.MaxImageRequestBytes })
+            .Produces<UploadedInvitationPage>().ProducesProblem(400).ProducesProblem(401).ProducesProblem(403).ProducesProblem(413);
         host.MapDelete("/{mediaId:guid}", async (Guid weddingId, Guid mediaId, WeddingMediaHandler h, CancellationToken ct) =>
             Results.Ok(await h.DeleteAsync(weddingId, mediaId, ct)))
             .WithName("DeleteWeddingMedia").WithSummary("Delete an unused image from this wedding's media library.")

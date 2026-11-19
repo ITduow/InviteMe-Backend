@@ -15,6 +15,8 @@ public sealed class PlanningGuest
     public string? Note { get; set; }
     // Null for guests imported before token generation was introduced.
     public string? InvitationToken { get; set; }
+    /// <summary>Reusable transfer reference of this invitation, shared by its receiving-account QRs.</summary>
+    public string? GiftTransferCode { get; set; }
     public int Version { get; set; } = 1;
     public DateTimeOffset? ArchivedAt { get; set; }
 }

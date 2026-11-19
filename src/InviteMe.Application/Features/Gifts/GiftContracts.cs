@@ -11,7 +11,10 @@ namespace InviteMe.Application.Features.Gifts;
 
 /// <summary>BankHubLinked = linked through SePay Bank Hub: transfers into it are confirmed automatically.</summary>
 public sealed record GiftBankAccountDto(Guid Id, string BankBin, string BankName, string AccountNumber, string AccountName, string? Label,
-    bool BankHubLinked = false);
+    bool BankHubLinked = false, bool ShowInInvitation = true);
+public sealed record ManualGiftQrDto(string Role, string BankBin, string BankName, string AccountNumber, string AccountName, string QrImageUrl);
+public sealed record UploadedGiftQrDto(string Role, string ImageUrl);
+public sealed record GuestGiftQrDto(GiftBankAccountDto Account, string QrImageUrl, string TransferContent);
 
 /// <summary>Bank Hub page (iframe) where the couple links or unlinks an account; the link works once and expires.</summary>
 public sealed record BankHubLinkDto(string HostedLinkUrl, string? ExpiresAt);
@@ -24,7 +27,8 @@ public sealed record BankHubAccount(string Xid, string? BankBin, string? BrandNa
 
 /// <summary>What the gift form needs: the couple's accounts, suggested amounts and the gifts this guest already started.</summary>
 public sealed record GuestGiftPageDto(string RecipientName, string WeddingTitle, IReadOnlyList<GiftBankAccountDto> Accounts,
-    IReadOnlyList<long> SuggestedAmounts, long MinAmount, long MaxAmount, IReadOnlyList<GuestGiftDto> MyGifts, bool QrEnabled = true);
+    IReadOnlyList<long> SuggestedAmounts, long MinAmount, long MaxAmount, IReadOnlyList<GuestGiftDto> MyGifts, bool QrEnabled = true,
+    IReadOnlyList<GuestGiftQrDto>? QrCards = null, string Mode = "LINKED", IReadOnlyList<UploadedGiftQrDto>? UploadedQrCards = null, IReadOnlyList<ManualGiftQrDto>? ManualQrCards = null);
 
 /// <summary>Amount in VND (10,000 – 100,000,000). AccountId is required when the couple has two accounts.</summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -53,6 +57,8 @@ public sealed record GuestGiftResult(GuestGiftDto Gift, bool Created, Guid Weddi
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SaveGiftAccount(string BankBin, string AccountNumber, string AccountName, string? Label = null);
+ [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record SetGiftAccountDisplay(bool? ShowInInvitation, string? Label = null);
 
 /// <summary>
 /// Method CASH (envelope), TRANSFER or ITEM (a present handed over at the wedding: ItemName and Quantity, optional EstimatedValue,
@@ -135,7 +141,7 @@ public static class GiftRules
     /// <summary>"MC" + 8 characters without look-alikes (no 0/O, 1/I). SePay payment-code template: prefix MC, 6-10 letters/digits.</summary>
     public const string CodePrefix = "MC";
     private const string CodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    private static readonly Regex CodeInContent = new(@"(?<![A-Z0-9])MC[A-HJ-NP-Z2-9]{8}(?![A-Z0-9])", RegexOptions.CultureInvariant);
+    private static readonly Regex CodeInContent = new(@"(?<![A-Z0-9])M[CG][A-HJ-NP-Z2-9]{8}(?![A-Z0-9])", RegexOptions.CultureInvariant);
     public const string ReceivedEvent = "GiftReceived", ChangedEvent = "GiftChanged";
 
     public static string NewCode()
@@ -145,11 +151,13 @@ public static class GiftRules
         for (var i = 2; i < chars.Length; i++) chars[i] = CodeAlphabet[global::System.Security.Cryptography.RandomNumberGenerator.GetInt32(CodeAlphabet.Length)];
         return new string(chars);
     }
+    public static string NewInvitationCode() => "MG" + NewCode()[2..];
 
     /// <summary>The code SePay found, or one written in the transfer content (if the SePay template was not configured).</summary>
     public static string? FindCode(string? providerCode, string? content)
     {
-        if (!string.IsNullOrWhiteSpace(providerCode)) return providerCode.Trim().ToUpperInvariant();
+        if (!string.IsNullOrWhiteSpace(providerCode) && CodeInContent.IsMatch(providerCode.Trim().ToUpperInvariant()))
+            return CodeInContent.Match(providerCode.Trim().ToUpperInvariant()).Value;
         var match = CodeInContent.Match((content ?? "").ToUpperInvariant());
         return match.Success ? match.Value : null;
     }
@@ -158,6 +166,12 @@ public static class GiftRules
     public static string QrImageUrl(string bankBin, string accountNumber, string accountName, long amount, string content) =>
         $"https://img.vietqr.io/image/{bankBin}-{accountNumber}-compact2.png?amount={amount.ToString(CultureInfo.InvariantCulture)}" +
         $"&addInfo={Uri.EscapeDataString(content)}&accountName={Uri.EscapeDataString(Ascii(accountName))}";
+    public static string QrImageUrl(string bankBin, string accountNumber, string accountName, string content) =>
+        $"https://img.vietqr.io/image/{bankBin}-{accountNumber}-compact.png?addInfo={Uri.EscapeDataString(content)}&accountName={Uri.EscapeDataString(Ascii(accountName))}";
+
+    public static string AccountQrImageUrl(string bankBin, string accountNumber, string accountName) =>
+        $"https://img.vietqr.io/image/{bankBin}-{accountNumber}-compact.png" +
+        (string.IsNullOrWhiteSpace(accountName) ? "" : $"?accountName={Uri.EscapeDataString(Ascii(accountName))}");
 
     /// <summary>Banks write the account holder in capitals without diacritics.</summary>
     public static string Ascii(string text)
@@ -180,7 +194,7 @@ public static class GiftRules
 /// <summary>Banks the couple can pick (Napas BIN used by VietQR). Covers the banks SePay connects plus common ones.</summary>
 public static class GiftBanks
 {
-    public sealed record Bank(string Bin, string Name);
+    public sealed record Bank(string Bin, string Name, string? Code = null, string? Logo = null);
     public static readonly IReadOnlyList<Bank> All =
     [
         new("970436", "Vietcombank"), new("970415", "VietinBank"), new("970418", "BIDV"), new("970405", "Agribank"),
@@ -189,6 +203,20 @@ public static class GiftBanks
         new("970452", "KienLongBank"), new("970424", "ShinhanBank"), new("970441", "VIB"), new("970437", "HDBank")
     ];
     public static Bank? Find(string? bin) => All.FirstOrDefault(x => x.Bin == bin);
+    public static bool MatchesGateway(string bin, string? gateway)
+    {
+        if (gateway is null) return false;
+        var normalized=Regex.Replace(gateway.ToUpperInvariant(),"[^A-Z0-9]","");
+        var bank=Find(bin);
+        if (normalized==bin || bank is not null && normalized==Regex.Replace(bank.Name.ToUpperInvariant(),"[^A-Z0-9]","")) return true;
+        return bin switch {
+            "970422"=>normalized is "MB" or "MBB", "970436"=>normalized=="VCB",
+            "970415"=>normalized is "ICB" or "CTG", "970407"=>normalized=="TCB",
+            "970432"=>normalized=="VPB", "970423"=>normalized=="TPB", "970403"=>normalized=="STB",
+            "970426"=>normalized=="MSB", "970452"=>normalized=="KLB", "970437"=>normalized=="HDB",
+            _=>false
+        };
+    }
 }
 
 // ---------- validation ----------
@@ -219,7 +247,7 @@ public sealed class SaveGiftAccountValidator : AbstractValidator<SaveGiftAccount
 {
     public SaveGiftAccountValidator()
     {
-        RuleFor(x => x.BankBin).Must(x => GiftBanks.Find(x) is not null).WithMessage("Unknown bank BIN.");
+        RuleFor(x => x.BankBin).NotEmpty().Matches("^[0-9]{6}$").WithMessage("Invalid bank BIN.");
         RuleFor(x => x.AccountNumber).NotEmpty().Matches("^[0-9A-Za-z]{4,30}$").WithMessage("Account number: 4-30 letters or digits.");
         RuleFor(x => x.AccountName).NotEmpty().MaximumLength(100);
         RuleFor(x => x.Label).MaximumLength(30);

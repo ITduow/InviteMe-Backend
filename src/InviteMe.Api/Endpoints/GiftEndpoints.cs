@@ -68,9 +68,12 @@ internal static class GiftEndpoints
 
         // Wedding owner (GIFT_VIEW / GIFT_EDIT, wedding-wide).
         var host = endpoints.MapGroup("/api/weddings/{weddingId:guid}/gifts").RequireAuthorization().WithTags("Gifts (Host)");
-        host.MapGet("/banks", (GiftHostHandler h) => h.Banks()).WithName("ListGiftBanks").Produces<IReadOnlyList<GiftBanks.Bank>>();
+        host.MapGet("/banks", (GiftHostHandler h, CancellationToken ct) => h.BanksAsync(ct)).WithName("ListGiftBanks").Produces<IReadOnlyList<GiftBanks.Bank>>();
         host.MapGet("/accounts", (Guid weddingId, GiftHostHandler h, CancellationToken ct) => h.AccountsAsync(weddingId, ct))
             .WithName("ListGiftAccounts").Produces<IReadOnlyList<GiftBankAccountDto>>().ProducesProblem(StatusCodes.Status403Forbidden);
+        host.MapPut("/accounts/{accountId:guid}/display", (Guid weddingId, Guid accountId, SetGiftAccountDisplay input, GiftHostHandler h, CancellationToken ct) =>
+                h.SetAccountDisplayAsync(weddingId, accountId, input, ct))
+            .WithName("SetGiftAccountDisplay").Produces<GiftBankAccountDto>().ProducesValidationProblem().ProducesProblem(403).ProducesProblem(404);
         host.MapPost("/accounts", async (Guid weddingId, SaveGiftAccount input, GiftHostHandler h, CancellationToken ct) =>
                 Results.Json(await h.AddAccountAsync(weddingId, input, ct), statusCode: StatusCodes.Status201Created))
             .WithName("AddGiftAccount").Produces<GiftBankAccountDto>(StatusCodes.Status201Created).ProducesValidationProblem()

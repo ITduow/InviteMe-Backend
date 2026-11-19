@@ -33,6 +33,7 @@ public sealed class PlanningGiftConfiguration : IEntityTypeConfiguration<Plannin
         b.Property(x => x.AccountNumber).HasColumnName("account_number").HasMaxLength(30);
         b.Property(x => x.AccountName).HasColumnName("account_name").HasMaxLength(100);
         b.Property(x => x.Label).HasColumnName("label").HasMaxLength(30);
+        b.Property(x => x.ShowInInvitation).HasColumnName("show_in_invitation").HasDefaultValue(true);
         b.Property(x => x.BankHubAccountXid).HasColumnName("bank_hub_account_xid").HasMaxLength(64);
         b.Property(x => x.CreatedAt).HasColumnName("created_at");
         b.HasIndex(x => new { x.WeddingId, x.BankBin, x.AccountNumber }).IsUnique().HasDatabaseName("uq_planning_gift_accounts_wedding_account");
@@ -89,7 +90,7 @@ public sealed class PlanningGiftConfiguration : IEntityTypeConfiguration<Plannin
         b.HasOne<PlanningParticipant>().WithMany().HasForeignKey(x => x.ParticipantId).OnDelete(DeleteBehavior.SetNull).HasConstraintName("fk_planning_gifts_participant");
         b.HasOne<PlanningGiftProof>().WithMany().HasForeignKey(x => x.ProofId).OnDelete(DeleteBehavior.SetNull).HasConstraintName("fk_planning_gifts_proof");
         b.Ignore(x => x.AmountMismatch);
-        b.HasIndex(x => x.Code).IsUnique().HasFilter("code IS NOT NULL").HasDatabaseName("uq_planning_gifts_code");
+        b.HasIndex(x => x.Code).IsUnique().HasFilter("code IS NOT NULL AND code NOT LIKE 'MG%'").HasDatabaseName("uq_planning_gifts_code");
         b.HasIndex(x => new { x.WeddingId, x.IdempotencyKey }).IsUnique().HasFilter("idempotency_key IS NOT NULL")
             .HasDatabaseName("uq_planning_gifts_idempotency");
         b.HasIndex(x => new { x.WeddingId, x.CreatedAt }).HasDatabaseName("ix_planning_gifts_wedding");

@@ -17,6 +17,8 @@ public sealed class PlanningGiftAccount
     public string AccountName { get; private set; } = "";
     /// <summary>Optional label shown to guests, e.g. "Nhà trai" / "Nhà gái".</summary>
     public string? Label { get; private set; }
+    public bool ShowInInvitation { get; private set; } = true;
+    public void SetInvitationDisplay(bool show, string? label) { ShowInInvitation = show; Label = label; }
     /// <summary>Set while the couple has linked this account through SePay Bank Hub: its transfers arrive by IPN.</summary>
     public string? BankHubAccountXid { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
@@ -135,6 +137,15 @@ public sealed class PlanningGift
             CreatedAt = now, ExpiresAt = now, PaidAt = paidAt
         }
         : throw new ArgumentOutOfRangeException(nameof(amount));
+
+    /// <summary>Each bank transaction using a reusable invitation QR creates its own received gift.</summary>
+    public static PlanningGift FromInvitationQr(Guid weddingId, Guid guestId, string giverName, Guid accountId,
+        string transferCode, long amount, DateTimeOffset paidAt, DateTimeOffset now) => amount > 0 && transferCode.StartsWith("MG", StringComparison.Ordinal)
+        ? new() {
+            Id = Guid.NewGuid(), WeddingId = weddingId, GuestId = guestId, GiverName = giverName, AccountId = accountId,
+            Code = transferCode, Method = Qr, AmountReceived = amount, Status = Paid, Confirmation = Auto,
+            CreatedAt = now, ExpiresAt = now, PaidAt = paidAt
+        } : throw new ArgumentOutOfRangeException(nameof(amount));
 
     /// <summary>A sealed envelope put in the gift box: who gave it is known, the amount is counted by the couple later.</summary>
     public static PlanningGift Envelope(Guid weddingId, Guid? guestId, string giverName, string? message, Guid actor, DateTimeOffset now,
