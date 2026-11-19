@@ -37,6 +37,7 @@ public sealed class InvitationDesignStore(InviteMeDbContext db, IWeddingMediaSto
         Version(settings.InvitationDesignVersion, input.ExpectedVersion);
         await InvitationMusicPersistence.Resolve(db, input.Document, ct, lockTrack: true,
             retainedTrack: InvitationMusicPersistence.TrackId(settings.InvitationDraftDocumentJson));
+        await ValidateGiftAsync(id, input.Document, ct);
         settings.SaveInvitationDraft(input.Document.GetRawText());
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
@@ -57,6 +58,7 @@ public sealed class InvitationDesignStore(InviteMeDbContext db, IWeddingMediaSto
         if (settings?.InvitationDraftDocumentJson is null ||
             !InvitationDesignHandler.ValidDocument(JsonSerializer.Deserialize<JsonElement>(settings.InvitationDraftDocumentJson)))
             throw Rule("INVITATION_DRAFT_REQUIRED", "Save a valid invitation before publishing.");
+        await ValidateGiftAsync(id, JsonSerializer.Deserialize<JsonElement>(settings.InvitationDraftDocumentJson), ct);
         var presets = wording is null ? InvitationWording.Defaults() : JsonSerializer.Deserialize<WordingPreset[]>(wording.PresetsJson)!;
         if (InvitationWording.ConfigurationError(presets.Cast<WordingPreset?>().ToArray()) is { } error)
             throw Rule("INVITATION_WORDING_INVALID", error);
@@ -77,6 +79,16 @@ public sealed class InvitationDesignStore(InviteMeDbContext db, IWeddingMediaSto
         await tx.CommitAsync(ct);
         return await GetAsync(id, ct);
     }
+    private async Task ValidateGiftAsync(Guid weddingId, JsonElement document, CancellationToken ct)
+    {
+        if (InvitationGiftSettings.ConfigurationError(document) is { } error)
+            throw Rule("INVITATION_GIFT_CONFIGURATION_REQUIRED", error);
+        if (!InvitationGiftSettings.HasWidget(document) || InvitationGiftSettings.Read(document) is not { Mode: "LINKED" } gift) return;
+        var ids = gift.Recipients.Where(r => r.Enabled).Select(r => r.AccountId!.Value).ToArray();
+        var count = await db.Set<InviteMe.Domain.Gifts.PlanningGiftAccount>().CountAsync(a => a.WeddingId == weddingId && ids.Contains(a.Id) && a.BankHubAccountXid != null, ct);
+        if (count != ids.Length) throw Rule("INVITATION_GIFT_ACCOUNT_NOT_LINKED", "Tài khoản nhận mừng phải thuộc đám cưới này và đã liên kết ngân hàng thành công. Vui lòng liên kết hoặc chọn QR có sẵn.");
+    }
+
     public Task<bool> IsPublishedAsync(Guid id, CancellationToken ct) => db.WeddingSettings.AsNoTracking()
         .AnyAsync(x => x.WeddingId == id && x.InvitationDesignStatus == InvitationPublicationStatus.PUBLISHED && x.InvitationPublishedSnapshotJson != null, ct);
     public async Task<PublicInvitationDto?> FindPublicAsync(string token, CancellationToken ct)

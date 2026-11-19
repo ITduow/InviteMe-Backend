@@ -29,6 +29,8 @@ public interface IGiftStore
     /// <summary>The Bank Hub id of one linked receiving account, or null.</summary>
     Task<string?> BankHubAccountXidAsync(Guid weddingId, Guid accountId, CancellationToken ct);
     Task<GiftBankAccountDto> AddAccountAsync(Guid weddingId, SaveGiftAccount input, Guid actor, CancellationToken ct);
+    Task<GiftBankAccountDto> SetAccountDisplayAsync(Guid weddingId, Guid accountId, SetGiftAccountDisplay input, Guid actor, CancellationToken ct);
+    Task<bool> OwnTransferCodeAsync(Guid weddingId, string code, CancellationToken ct);
     Task RemoveAccountAsync(Guid weddingId, Guid accountId, Guid actor, CancellationToken ct);
 
     /// <summary>Every gift of the wedding, newest first (a wedding has a few hundred at most).</summary>

@@ -19,6 +19,46 @@ public sealed class GiftTests
         Assert.Null(GiftRules.FindCode(null, "chuc mung hanh phuc"));
         Assert.Null(GiftRules.FindCode("", "XMC7K2Q9PXA")); // part of a longer word
     }
+    [Fact]
+    public void InvitationQrHasStableIdentityAndNoPresetAmount()
+    {
+        var code=GiftRules.NewInvitationCode();
+        Assert.Matches("^MG[A-HJ-NP-Z2-9]{8}$",code);
+        var qr=GiftRules.QrImageUrl("970422","0000000001","Co Dau Demo",code);
+        Assert.DoesNotContain("amount=",qr);
+        Assert.Contains("addInfo="+code,qr);
+        Assert.Equal(code,GiftRules.FindCode(null,"Chuc mung "+code));
+        Assert.Equal(code,GiftRules.FindCode("unrelated provider value","Chuc mung "+code));
+        var account=Guid.NewGuid();var guest=Guid.NewGuid();var wedding=Guid.NewGuid();
+        var first=PlanningGift.FromInvitationQr(wedding,guest,"Guest",account,code,200_000,Now,Now);
+        var second=PlanningGift.FromInvitationQr(wedding,guest,"Guest",account,code,50_000,Now,Now);
+        Assert.NotEqual(first.Id,second.Id);
+        Assert.Equal(first.Code,second.Code);
+        Assert.Equal(PlanningGift.Paid,first.Status);
+        Assert.Equal(PlanningGift.Auto,first.Confirmation);
+        Assert.Equal(250_000,first.AmountReceived+second.AmountReceived);
+        Assert.Null(first.AmountExpected);
+        Assert.False(first.AmountMismatch);
+    }
+    [Fact]
+    public void HidingQrDoesNotUnlinkTheReceivingAccount()
+    {
+        var account=PlanningGiftAccount.Create(Guid.NewGuid(),"970422","MBBank","0000000001","Bride",null,Now);
+        account.LinkBankHub("linked-xid");
+        Assert.True(account.ShowInInvitation);
+        account.SetInvitationDisplay(false,"Cô dâu");
+        Assert.False(account.ShowInInvitation);
+        Assert.Equal("linked-xid",account.BankHubAccountXid);
+        Assert.Equal("Cô dâu",account.Label);
+    }
+    [Fact]
+    public void ReceiptBankMustMatchEvenWhenAccountNumbersCoincide()
+    {
+        Assert.True(GiftBanks.MatchesGateway("970422","MBBank"));
+        Assert.True(GiftBanks.MatchesGateway("970422","MB"));
+        Assert.False(GiftBanks.MatchesGateway("970422","Vietcombank"));
+        Assert.False(GiftBanks.MatchesGateway("970422",null));
+    }
 
     [Fact]
     public void BankHubIpnReadsAsTheSePayTransferItCarries()

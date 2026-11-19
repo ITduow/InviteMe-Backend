@@ -12,6 +12,152 @@ namespace InviteMe.UnitTests;
 
 public sealed class InvitationDesignTests
 {
+    private static System.Text.Json.Nodes.JsonObject Imported(string source)
+    {
+        var document = System.Text.Json.Nodes.JsonNode.Parse(Valid().GetRawText())!.AsObject();
+        document["kind"] = "IMPORTED";
+        document["pages"] = JsonSerializer.SerializeToNode(new[] {new {id="page-1",imageUrl=source,width=1748,height=2480,order=0}});
+        return document;
+    }
+    [Theory]
+    [InlineData("970422", "000000001010", true)]
+    [InlineData("999999", "000000001010", false)]
+    [InlineData("970422", "123", false)]
+    [InlineData("970422", "12AB34", false)]
+    public void ManualGiftNeedsOnlySupportedBankAndAccountNumber(string bankBin, string accountNumber, bool valid)
+    {
+        var doc = WithImportedWidget(); doc["widgets"]![0]!["type"] = "GIFT";
+        doc["nodes"]!["ROOT"]!["props"]!["gift"] = JsonSerializer.SerializeToNode(new {mode="MANUAL",recipients=new[]{new {role="BRIDE",enabled=true,bankBin,accountNumber}}});
+        var json=JsonSerializer.SerializeToElement(doc);
+        Assert.True(InvitationDesignHandler.ValidDocument(json));
+        Assert.Equal(valid,InvitationGiftSettings.ConfigurationError(json) is null);
+        var url=InviteMe.Application.Features.Gifts.GiftRules.AccountQrImageUrl("970422","000000001010","");
+        Assert.DoesNotContain("?",url); Assert.Contains("000000001010",url);
+    }
+
+    [Fact]
+    public async Task GiftWidgetCannotSaveBeforeConfiguration()
+    {
+        var doc = WithImportedWidget();
+        doc["widgets"]![0]!["type"] = "GIFT";
+        var error = await Assert.ThrowsAsync<ApplicationProblemException>(() => Create(new Store(), true).SaveAsync(Guid.NewGuid(), new(0, JsonSerializer.SerializeToElement(doc)), default));
+        Assert.Equal("INVITATION_GIFT_CONFIGURATION_REQUIRED", error.Code);
+        doc["widgets"]![0]!["enabled"] = false;
+        Assert.Null(InvitationGiftSettings.ConfigurationError(JsonSerializer.SerializeToElement(doc)));
+    }
+
+    [Theory]
+    [InlineData("{\"mode\":\"UPLOADED\",\"recipients\":[]}", false)]
+    [InlineData("{\"mode\":\"UPLOADED\",\"recipients\":[{\"role\":\"BRIDE\",\"enabled\":true}]}", false)]
+    [InlineData("{\"mode\":\"UPLOADED\",\"recipients\":[{\"role\":\"BRIDE\",\"enabled\":true,\"imageUrl\":\"/media/qr.png\"}]}", true)]
+    [InlineData("{\"mode\":\"LINKED\",\"recipients\":[{\"role\":\"BRIDE\",\"enabled\":true}]}", false)]
+    public void GiftConfigurationRequiresAtLeastOneCompleteRecipient(string settings, bool valid)
+    {
+        var doc = WithImportedWidget(); doc["widgets"]![0]!["type"] = "GIFT";
+        doc["nodes"]!["ROOT"]!["props"]!["gift"] = System.Text.Json.Nodes.JsonNode.Parse(settings);
+        Assert.True(InvitationDesignHandler.ValidDocument(JsonSerializer.SerializeToElement(doc)));
+        Assert.Equal(valid, InvitationGiftSettings.ConfigurationError(JsonSerializer.SerializeToElement(doc)) is null);
+    }
+
+    [Fact]
+    public void GiftConfigurationRejectsDuplicateRolesAndMixedModes()
+    {
+        var doc = WithImportedWidget();
+        doc["nodes"]!["ROOT"]!["props"]!["gift"] = System.Text.Json.Nodes.JsonNode.Parse("""
+          {"mode":"UPLOADED","recipients":[{"role":"BRIDE","enabled":true,"imageUrl":"/media/qr.png","accountId":"4ffb79c4-0bc2-46b5-a798-b4eeb2a97977"}]}
+          """);
+        Assert.False(InvitationDesignHandler.ValidDocument(JsonSerializer.SerializeToElement(doc)));
+        doc["nodes"]!["ROOT"]!["props"]!["gift"]!["recipients"]![0]!.AsObject().Remove("accountId");
+        doc["nodes"]!["ROOT"]!["props"]!["gift"]!["recipients"]!.AsArray().Add(doc["nodes"]!["ROOT"]!["props"]!["gift"]!["recipients"]![0]!.DeepClone());
+        Assert.False(InvitationDesignHandler.ValidDocument(JsonSerializer.SerializeToElement(doc)));
+    }
+
+    [Fact]
+    public async Task ImportedPagesRequireOwnedWeddingMedia()
+    {
+        var store = new Store();
+        var id = Guid.NewGuid();
+        await Create(store, true).SaveAsync(id, new(0, JsonSerializer.SerializeToElement(Imported($"/media/wedding-covers/{id:N}/known.png"))), default);
+        Assert.Equal(1, store.Saves);
+        var error = await Assert.ThrowsAsync<ApplicationProblemException>(() => Create(store,true).SaveAsync(id,
+            new(1,JsonSerializer.SerializeToElement(Imported($"/media/wedding-covers/{Guid.NewGuid():N}/known.png"))),default));
+        Assert.Equal("INVITATION_MEDIA_NOT_OWNED",error.Code);
+        Assert.Equal(1,store.Saves);
+    }
+    [Theory]
+    [InlineData("width", "0")]
+    [InlineData("height", "30001")]
+    [InlineData("order", "1")]
+    [InlineData("order", "0.5")]
+    [InlineData("id", "\"\"")]
+    [InlineData("imageUrl", "\"/images/templates/invite-portrait.png\"")]
+    public void ImportedPageMetadataIsValidated(string field,string value)
+    {
+        var doc=Imported("/media/wedding-covers/test/page.png");
+        doc["pages"]![0]![field]=System.Text.Json.Nodes.JsonNode.Parse(value);
+        Assert.False(InvitationDesignHandler.ValidDocument(JsonSerializer.SerializeToElement(doc)));
+    }
+    [Fact]
+    public void ImportedPagesCannotContainEditableObjectsOrDuplicateIds()
+    {
+        var doc=Imported("/media/wedding-covers/test/page.png");
+        doc["nodes"]!["ROOT"]!["props"]!["text"]="not editable";
+        Assert.False(InvitationDesignHandler.ValidDocument(JsonSerializer.SerializeToElement(doc)));
+        doc["nodes"]!["ROOT"]!["props"]!.AsObject().Remove("text");
+        var duplicate=doc["pages"]![0]!.DeepClone();duplicate["order"]=1;
+        doc["pages"]!.AsArray().Add(duplicate);
+        Assert.False(InvitationDesignHandler.ValidDocument(JsonSerializer.SerializeToElement(doc)));
+    }
+    [Fact]
+    public void TemplateAndImportedPagesCannotBeMixed()
+    {
+        var doc=Imported("/media/wedding-covers/test/page.png");
+        doc["kind"]="TEMPLATE";
+        Assert.False(InvitationDesignHandler.ValidDocument(JsonSerializer.SerializeToElement(doc)));
+        doc.Remove("pages");
+        Assert.True(InvitationDesignHandler.ValidDocument(JsonSerializer.SerializeToElement(doc)));
+    }
+    [Fact]
+    public async Task InvitationImageDimensionsRejectSignatureOnlyFiles()
+    {
+        await using var stream=new MemoryStream(new byte[]{137,80,78,71,13,10,26,10});
+        await Assert.ThrowsAsync<ApplicationProblemException>(()=>InvitationImageDimensions.ReadAsync(stream,default));
+        Assert.Equal(0,stream.Position);
+    }
+
+    private static System.Text.Json.Nodes.JsonNode WithImportedWidget()
+    {
+        var doc=Imported("/media/wedding-covers/test/page.png");
+        doc["widgets"]=System.Text.Json.Nodes.JsonNode.Parse("""
+            [{"id":"rsvp-1","pageId":"page-1","type":"RSVP","enabled":true,"x":0.25,"y":0.8,
+            "width":0.5,"height":0.08,"label":"RSVP","backgroundColor":"#cf7892","textColor":"#ffffff"}]
+            """);
+        doc["widgets"]![0]!["pageId"]=doc["pages"]![0]!["id"]!.GetValue<string>();
+        return doc;
+    }
+
+    [Fact]
+    public void ImportedRsvpWidgetsAreAcceptedWithoutChangingPages()
+    {
+        Assert.True(InvitationDesignHandler.ValidDocument(JsonSerializer.SerializeToElement(WithImportedWidget())));
+    }
+
+    [Theory]
+    [InlineData("pageId", "\"missing-page\"")]
+    [InlineData("type", "\"script\"")]
+    [InlineData("x", "0.9")]
+    [InlineData("y", "0.99")]
+    [InlineData("width", "0")]
+    [InlineData("height", "-1")]
+    [InlineData("label", "\" \"")]
+    [InlineData("enabled", "\"true\"")]
+    [InlineData("backgroundColor", "\"url(https://example.com)\"")]
+    public void InvalidImportedWidgetsAreRejected(string field,string value)
+    {
+        var doc=WithImportedWidget();
+        doc["widgets"]![0]![field]=System.Text.Json.Nodes.JsonNode.Parse(value);
+        Assert.False(InvitationDesignHandler.ValidDocument(JsonSerializer.SerializeToElement(doc)));
+    }
     private static JsonElement Valid() => JsonSerializer.SerializeToElement(new
     {
         schemaVersion = 1,

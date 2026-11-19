@@ -41,6 +41,8 @@ public sealed class InvitationDesignHandler(IInvitationDesignStore store, IWeddi
         await permissions.RequireAsync(id, WeddingPermission.INVITATION_SEND, ct);
         if (input.ExpectedVersion < 0 || !ValidDocument(input.Document))
             throw new ValidationException("Invalid invitation document or version.");
+        if (InvitationGiftSettings.ConfigurationError(input.Document) is { } giftError)
+            throw new ApplicationProblemException(ProblemKind.BusinessRule, "INVITATION_GIFT_CONFIGURATION_REQUIRED", giftError);
         await ValidateMedia(id, input.Document, ct);
         var result = await store.SaveAsync(id, input, ct);
         await changes.PublishAsync(id, new("InvitationDesignChanged", id, result.Version), ct);
@@ -71,6 +73,8 @@ public sealed class InvitationDesignHandler(IInvitationDesignStore store, IWeddi
             if (!media.TryGetOwnedFileName(id, source, out var fileName) ||
                 !await catalog.ContainsAsync(id, fileName, ct))
                 throw new ApplicationProblemException(ProblemKind.BadRequest, "INVITATION_MEDIA_NOT_OWNED", $"Invitation image must belong to this wedding's media library. {location}");
+            if (reference.NodeId.StartsWith("gift:", StringComparison.Ordinal) && Path.GetExtension(fileName) is not (".png" or ".jpg" or ".jpeg"))
+                throw new ApplicationProblemException(ProblemKind.BadRequest, "INVITATION_GIFT_QR_FORMAT", "Ảnh QR mừng cưới chỉ chấp nhận JPG/JPEG/PNG, tối đa 5 MB.");
             await using var stream = await media.OpenReadAsync(id, fileName, ct);
             if (stream is null) throw new ApplicationProblemException(ProblemKind.BadRequest, "INVITATION_MEDIA_MISSING", $"Invitation image is no longer available. {location}");
         }

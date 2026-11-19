@@ -1,4 +1,5 @@
 using InviteMe.Application.Features.Notifications;
+using InviteMe.Application.Features.Invitations;
 using System.Text.Json;
 using InviteMe.Application.Common.Errors;
 using InviteMe.Application.Features.Gifts;
@@ -28,19 +29,69 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
     {
         var (wedding, guest) = await Guest(token, ct);
         var accounts = await Accounts(wedding.Id, ct);
+        var enabled = (await plans.LimitsAsync(wedding.Id, ct)).GiftQr;
+        var config = await PublishedGift(wedding.Id, ct);
+        if (config is { Mode: "MANUAL" })
+            return new(guest.RecipientName, wedding.Title, [], [], PlanningGift.MinAmount, PlanningGift.MaxAmount, [], true, [], "MANUAL", [],
+                config.Recipients.Where(r => r.Enabled).Select(r => new ManualGiftQrDto(r.Role, r.BankBin!, GiftBanks.Find(r.BankBin)!.Name,
+                    r.AccountNumber!, "", GiftRules.AccountQrImageUrl(r.BankBin!, r.AccountNumber!, ""))).ToList());
+        if (config is { Mode: "UPLOADED" })
+            return new(guest.RecipientName, wedding.Title, [], [], PlanningGift.MinAmount, PlanningGift.MaxAmount, [], true, [], "UPLOADED",
+                config.Recipients.Where(r => r.Enabled && r.ImageUrl != null).Select(r => new UploadedGiftQrDto(r.Role, r.ImageUrl!)).ToList());
+        var visible = config is null ? accounts.Where(account => account.ShowInInvitation).ToList()
+            : config.Recipients.Where(r => r.Enabled).Select(r => accounts.FirstOrDefault(a => a.Id == r.AccountId && a.BankHubLinked) is { } a
+                ? a with { Label = r.Role == "BRIDE" ? "Cô dâu" : "Chú rể" } : null).Where(a => a != null).Select(a => a!).ToList();
+        var code = enabled && visible.Count > 0 ? await InvitationTransferCode(guest, ct) : null;
+        var cards = code is null ? [] : visible.Select(account => new GuestGiftQrDto(account,
+            GiftRules.QrImageUrl(account.BankBin, account.AccountNumber, account.AccountName, code), code)).ToList();
         // The guest's own QR codes and the presents they declared; what the desk wrote down for them stays with the couple.
         var gifts = await db.Set<PlanningGift>().AsNoTracking()
             .Where(x => x.GuestId == guest.Id && (x.Method == PlanningGift.Qr || x.DeclaredByGuest))
             .OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
-        return new(guest.RecipientName, wedding.Title, accounts, GiftRules.SuggestedAmounts, PlanningGift.MinAmount, PlanningGift.MaxAmount,
-            gifts.Select(g => GuestDto(g, accounts.FirstOrDefault(a => a.Id == g.AccountId))).ToList(), (await plans.LimitsAsync(wedding.Id, ct)).GiftQr);
+        return new(guest.RecipientName, wedding.Title, visible, GiftRules.SuggestedAmounts, PlanningGift.MinAmount, PlanningGift.MaxAmount,
+            gifts.Select(g => GuestDto(g, accounts.FirstOrDefault(a => a.Id == g.AccountId))).ToList(), enabled, cards);
     }
+
+    private async Task<InvitationGiftSettings?> PublishedGift(Guid weddingId, CancellationToken ct)
+    {
+        var snapshot = await db.WeddingSettings.AsNoTracking().Where(s => s.WeddingId == weddingId)
+            .Select(s => s.InvitationPublishedSnapshotJson).SingleOrDefaultAsync(ct);
+        if (snapshot is null) return null;
+        using var json = JsonDocument.Parse(snapshot);
+        return json.RootElement.TryGetProperty("document", out var document) ? InvitationGiftSettings.Read(document) : null;
+    }
+
+    private async Task<string> InvitationTransferCode(PlanningGuest guest, CancellationToken ct)
+    {
+        if (guest.GiftTransferCode is { } saved) return saved;
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var row = await db.Set<PlanningGuest>().FromSqlInterpolated($"SELECT * FROM inviteme.planning_guests WHERE \"Id\"={guest.Id} FOR UPDATE").SingleAsync(ct);
+        if (row.GiftTransferCode is null)
+        {
+            for (var attempt = 0; ; attempt++)
+            {
+                row.GiftTransferCode = GiftRules.NewInvitationCode();
+                try { await db.SaveChangesAsync(ct); break; }
+                catch (DbUpdateException e) when (attempt < 3 && UniqueViolation(e) == "uq_planning_guests_gift_transfer_code")
+                { row.GiftTransferCode = null; }
+            }
+        }
+        await tx.CommitAsync(ct);
+        return row.GiftTransferCode;
+    }
+
+    public Task<bool> OwnTransferCodeAsync(Guid weddingId, string code, CancellationToken ct) => code.StartsWith("MG", StringComparison.Ordinal)
+        ? db.Set<PlanningGuest>().AnyAsync(guest => guest.WeddingId == weddingId && guest.GiftTransferCode == code, ct)
+        : db.Set<PlanningGift>().AnyAsync(gift => gift.WeddingId == weddingId && gift.Code == code, ct);
 
     public async Task<GuestGiftResult> CreateQrGiftAsync(string token, string idempotencyKey, CreateGuestGift input, CancellationToken ct)
     {
         var (wedding, guest) = await Guest(token, ct);
         await plans.RequireFeatureAsync(wedding.Id, InviteMe.Application.Features.Billing.PlanFeature.GiftQr, ct);
-        var accounts = await Accounts(wedding.Id, ct);
+        var config = await PublishedGift(wedding.Id, ct);
+        if (config is { Mode: "UPLOADED" or "MANUAL" }) throw new ApplicationProblemException(ProblemKind.BusinessRule, "GIFT_UNTRACKED_QR", "Thiệp này không liên kết ngân hàng, không tạo giao dịch theo dõi.");
+        var accounts = (await Accounts(wedding.Id, ct)).Where(account => config is null ? account.ShowInInvitation
+            : account.BankHubLinked && config.Recipients.Any(r => r.Enabled && r.AccountId == account.Id)).ToList();
         if (accounts.Count == 0)
             throw new ApplicationProblemException(ProblemKind.BusinessRule, "GIFT_ACCOUNT_NOT_SET", "Cô dâu chú rể chưa thêm tài khoản nhận mừng.");
         var account = input.AccountId is { } id
@@ -166,6 +217,17 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         db.Add(account);
         db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_gift_accounts", account.Id, "GIFT_ACCOUNT_ADDED", actor, null,
             JsonSerializer.Serialize(new { account.BankName, last4 = number[^Math.Min(4, number.Length)..] }, Json)));
+        await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
+        return Dto(account);
+    }
+    public async Task<GiftBankAccountDto> SetAccountDisplayAsync(Guid weddingId, Guid accountId, SetGiftAccountDisplay input, Guid actor, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await LockWedding(weddingId, ct);
+        var account = await db.Set<PlanningGiftAccount>().SingleOrDefaultAsync(account => account.Id == accountId && account.WeddingId == weddingId, ct)
+            ?? throw Missing("GIFT_ACCOUNT_NOT_FOUND");
+        account.SetInvitationDisplay(input.ShowInInvitation!.Value, GiftRules.Clean(input.Label));
+        db.AuditLogs.Add(AuditLog.ForEntity(weddingId, "planning_gift_accounts", accountId, "GIFT_ACCOUNT_DISPLAY_CHANGED", actor));
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
         return Dto(account);
     }
@@ -453,7 +515,21 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         }
         // A code only counts when the money reached one of that wedding's receiving accounts: with Bank Hub every couple links
         // their own account, so a transfer into someone else's account must not mark this couple's gift as received.
-        else if (code is not null && await db.Set<PlanningGift>()
+        else if (code is not null && code.StartsWith("MG", StringComparison.Ordinal) &&
+                 await db.Set<PlanningGuest>().AsNoTracking().SingleOrDefaultAsync(guest => guest.GiftTransferCode == code, ct) is { } recipient &&
+                 await InvitationAccount(recipient.WeddingId, transaction.AccountNumber, payload.Gateway, ct) is { } receivingAccount)
+        {
+            if (await Replay(provider, payload.Id, ct) is { } replayed) return replayed;
+            var receipt = PlanningGift.FromInvitationQr(recipient.WeddingId, recipient.Id, recipient.RecipientName,
+                receivingAccount.Id, code, payload.TransferAmount, transaction.TransactionAt, now);
+            db.Add(receipt);
+            transaction.Resolve(PlanningGiftTransaction.Matched, recipient.WeddingId, receipt.Id);
+            db.AuditLogs.Add(Audit(receipt, "GIFT_PAID_BY_BANK", null, transaction.Id));
+            await notifier.GiftAsync(receipt.WeddingId, NotificationTypes.GiftReceived,
+                new(receipt.Id, receipt.GiverName, receipt.Method, payload.TransferAmount), null, ct);
+            paid = true;
+        }
+        else if (code is not null && !code.StartsWith("MG", StringComparison.Ordinal) && await db.Set<PlanningGift>()
                      .FromSqlInterpolated($"SELECT * FROM inviteme.planning_gifts WHERE code = {code} FOR UPDATE").SingleOrDefaultAsync(ct) is { } gift
                  && await db.Set<PlanningGiftAccount>().AnyAsync(x => x.WeddingId == gift.WeddingId && x.AccountNumber == transaction.AccountNumber, ct))
         {
@@ -491,6 +567,14 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
     }
 
     // ---------- helpers ----------
+
+    private async Task<PlanningGiftAccount?> InvitationAccount(Guid weddingId, string number, string? gateway, CancellationToken ct)
+    {
+        await LockWedding(weddingId, ct);
+        var accounts = await db.Set<PlanningGiftAccount>().Where(account => account.WeddingId == weddingId && account.AccountNumber == number).ToListAsync(ct);
+        // Account numbers can coincide across banks: both the bank and number must match.
+        return accounts.SingleOrDefault(account => GiftBanks.MatchesGateway(account.BankBin, gateway));
+    }
 
     private async Task<GiftWebhookResult?> Replay(string provider, long providerId, CancellationToken ct) =>
         await db.Set<PlanningGiftTransaction>().AsNoTracking()
@@ -546,7 +630,7 @@ public sealed class GiftStore(InviteMeDbContext db, TimeProvider clock, InviteMe
         g.ClaimedAt, g.PaidAt, g.ItemName, g.ItemQuantity, g.ItemValue, g.ProofId is not null, g.ParticipantId, g.DeclaredByGuest, g.Note);
 
     private static GiftBankAccountDto Dto(PlanningGiftAccount a) =>
-        new(a.Id, a.BankBin, a.BankName, a.AccountNumber, a.AccountName, a.Label, a.BankHubAccountXid is not null);
+        new(a.Id, a.BankBin, a.BankName, a.AccountNumber, a.AccountName, a.Label, a.BankHubAccountXid is not null, a.ShowInInvitation);
 
     private static GiftTransactionDto Dto(PlanningGiftTransaction t) => new(t.Id, t.Status, t.Amount, t.Code, t.Content, t.Gateway,
         t.AccountNumber, t.ReferenceCode, t.TransactionAt, t.ReceivedAt, t.GiftId);

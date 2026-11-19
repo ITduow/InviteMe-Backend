@@ -33,7 +33,7 @@ internal static partial class InvitationDocumentValidator
 
     public static bool Valid(JsonElement document)
     {
-        if (!Object(document, ["schemaVersion", "templateId", "nodes"]) || document.GetRawText().Length > 500000 ||
+        if (!Object(document, ["schemaVersion", "templateId", "nodes", "kind", "pages", "widgets"]) || document.GetRawText().Length > 500000 ||
             !Get(document, "schemaVersion", out var version) || version.ValueKind != JsonValueKind.Number ||
             !version.TryGetInt32(out var schema) || schema != 1 ||
             Get(document, "templateId", out var template) && !Text(template, 100) ||
@@ -44,12 +44,40 @@ internal static partial class InvitationDocumentValidator
         var children = root.GetProperty("nodes").EnumerateArray().Select(x => x.GetString()!).ToArray();
         if (children.Length != entries.Length - 1 || children.Distinct().Count() != children.Length ||
             children.Any(x => x == "ROOT" || !nodes.TryGetProperty(x, out _))) return false;
+        if (Get(document, "kind", out var kind) &&
+            (kind.ValueKind != JsonValueKind.String || kind.GetString() is not ("TEMPLATE" or "IMPORTED"))) return false;
+        if (Get(document, "kind", out kind) && kind.GetString() == "IMPORTED")
+        {
+            if (entries.Length != 1 || Get(document, "templateId", out _) ||
+                root.GetProperty("props").EnumerateObject().Any(x => x.Name is not ("music" or "particles" or "gift")) ||
+                !Get(document, "pages", out var pages) || pages.ValueKind != JsonValueKind.Array ||
+                pages.GetArrayLength() is < 1 or > 24) return false;
+            var ids = new HashSet<string>();
+            var order = 0;
+            foreach (var page in pages.EnumerateArray())
+            {
+                if (!Object(page, ["id", "imageUrl", "width", "height", "order"]) ||
+                    !Get(page, "id", out var id) || !Text(id, 100) || string.IsNullOrWhiteSpace(id.GetString()) || !ids.Add(id.GetString()!) ||
+                    !Get(page, "imageUrl", out var url) || !Asset(url) || IsSharedAsset(url.GetString()!) ||
+                    !Get(page, "width", out var width) || width.ValueKind != JsonValueKind.Number || !width.TryGetInt32(out var w) || w is < 1 or > 30000 ||
+                    !Get(page, "height", out var height) || height.ValueKind != JsonValueKind.Number || !height.TryGetInt32(out var h) || h is < 1 or > 30000 ||
+                    (long)w * h > 100_000_000 || !Get(page, "order", out var index) || index.ValueKind != JsonValueKind.Number || !index.TryGetInt32(out var i) || i != order++) return false;
+            }
+            if (Get(document, "widgets", out var widgets) && !Widgets(widgets, ids)) return false;
+        }
+        else if (Get(document, "pages", out _) || Get(document, "widgets", out _)) return false;
         return entries.All(entry => Node(entry.Name, entry.Value) &&
             (entry.Name == "ROOT" || children.Contains(entry.Name)));
     }
 
     public static IEnumerable<(string NodeId, string Source)> MediaReferences(JsonElement document)
     {
+        if (Get(document, "pages", out var pages))
+            foreach (var page in pages.EnumerateArray())
+                yield return (page.GetProperty("id").GetString()!, page.GetProperty("imageUrl").GetString()!);
+        if (InvitationGiftSettings.Read(document) is { Mode: "UPLOADED" } config)
+            foreach (var recipient in config.Recipients.Where(r => r.ImageUrl != null))
+                yield return ($"gift:{recipient.Role}", recipient.ImageUrl!);
         foreach (var node in document.GetProperty("nodes").EnumerateObject())
         {
             var props = node.Value.GetProperty("props");
@@ -62,6 +90,33 @@ internal static partial class InvitationDocumentValidator
             if (Get(props, "cover", out var cover) && Get(cover, "decoration", out var decoration) &&
                 !IsSharedAsset(decoration.GetString()!)) yield return (node.Name, decoration.GetString()!);
         }
+    }
+
+    private static bool Widgets(JsonElement widgets, HashSet<string> pages)
+    {
+        if (widgets.ValueKind != JsonValueKind.Array || widgets.GetArrayLength() > 24) return false;
+        var ids = new HashSet<string>();
+        foreach (var widget in widgets.EnumerateArray())
+        {
+            if (!Object(widget, ["id", "pageId", "type", "enabled", "x", "y", "width", "height", "label", "backgroundColor", "textColor"]) ||
+                !Get(widget, "id", out var id) || !Text(id, 100) || string.IsNullOrWhiteSpace(id.GetString()) || !ids.Add(id.GetString()!) ||
+                !Get(widget, "pageId", out var pageId) || pageId.ValueKind != JsonValueKind.String || !pages.Contains(pageId.GetString()!) ||
+                !Get(widget, "type", out var type) || type.ValueKind != JsonValueKind.String || type.GetString() is not ("RSVP" or "GIFT") ||
+                !Get(widget, "enabled", out var enabled) || !Boolean(enabled) ||
+                !Get(widget, "label", out var label) || !Text(label, 80) || string.IsNullOrWhiteSpace(label.GetString()) ||
+                !Get(widget, "backgroundColor", out var background) || !Color(background) || background.GetString()!.Length != 7 ||
+                !Get(widget, "textColor", out var color) || !Color(color) || color.GetString()!.Length != 7 ||
+                !Ratio(widget, "x", 0, out var x) || !Ratio(widget, "y", 0, out var y) ||
+                !Ratio(widget, "width", 0.1, out var width) || !Ratio(widget, "height", 0.001, out var height) ||
+                x + width > 1 + 1e-9 || y + height > 1 + 1e-9) return false;
+        }
+        return true;
+    }
+    private static bool Ratio(JsonElement widget, string name, double minimum, out double number)
+    {
+        number = 0;
+        return Get(widget, name, out var value) && value.ValueKind == JsonValueKind.Number &&
+            value.TryGetDouble(out number) && double.IsFinite(number) && number >= minimum && number <= 1;
     }
 
     public static IEnumerable<string> MediaSources(JsonElement document) =>
@@ -88,6 +143,7 @@ internal static partial class InvitationDocumentValidator
             children.GetArrayLength() > 100 || children.EnumerateArray().Any(x => x.ValueKind != JsonValueKind.String) ||
             !Get(node, "linkedNodes", out var linked) || !EmptyObject(linked)) return false;
         if (Get(props, "textBinding", out _) && name.GetString() != "StudioText") return false;
+        if (Get(props, "gift", out _) && id != "ROOT") return false;
         if (Get(props, "music", out _) && id != "ROOT") return false;
         if (Get(props, "particles", out _) && id != "ROOT") return false;
         if (id == "ROOT") return !Get(node, "parent", out _);
@@ -109,6 +165,7 @@ internal static partial class InvitationDocumentValidator
             else if (TextProps.TryGetValue(prop.Name, out var max)) { if (!Text(value, max)) return false; }
             else if (prop.Name == "background" && value.ValueKind == JsonValueKind.String && value.GetString() == "transparent") { }
             else if (prop.Name == "backgroundGradient") { if (value.ValueKind != JsonValueKind.String || !GradientPattern().IsMatch(value.GetString()!)) return false; }
+            else if (prop.Name == "gift") { if (!Gift(value)) return false; }
             else if (prop.Name == "music") { if (!Music(value)) return false; }
             else if (ColorProps.Contains(prop.Name)) { if (!Color(value)) return false; }
             else if (prop.Name is "src" or "decoration") { if (!Asset(value)) return false; }
@@ -124,6 +181,25 @@ internal static partial class InvitationDocumentValidator
             else if (prop.Name == "milestones")
             { if (!Rows(value, 8, [("time", 40), ("title", 120), ("description", 220)])) return false; }
             else return false;
+        }
+        return true;
+    }
+
+    private static bool Gift(JsonElement gift)
+    {
+        if (!Object(gift, ["mode", "recipients"]) || !Get(gift, "mode", out var mode) || !Choice(mode, ["UPLOADED", "LINKED", "MANUAL"]) ||
+            !Get(gift, "recipients", out var recipients) || recipients.ValueKind != JsonValueKind.Array || recipients.GetArrayLength() > 2) return false;
+        var roles = new HashSet<string>();
+        foreach (var row in recipients.EnumerateArray())
+        {
+            if (!Object(row, ["role", "enabled", "imageUrl", "accountId", "bankBin", "accountNumber", "accountName"]) || !Get(row, "role", out var role) || !Choice(role, ["BRIDE", "GROOM"]) ||
+                !roles.Add(role.GetString()!) || !Get(row, "enabled", out var enabled) || !Boolean(enabled)) return false;
+            if (Get(row, "imageUrl", out var url) && (!Asset(url) || IsSharedAsset(url.GetString()!))) return false;
+            if (Get(row, "accountId", out var id) && (id.ValueKind != JsonValueKind.String || !id.TryGetGuid(out var guid) || guid == Guid.Empty)) return false;
+            if (mode.GetString() == "UPLOADED" && Get(row, "accountId", out _) || mode.GetString() == "LINKED" && Get(row, "imageUrl", out _)) return false;
+            foreach (var field in new[] { "bankBin", "accountNumber", "accountName" })
+                if (Get(row, field, out var text) && (!Text(text, field == "accountName" ? 100 : 30) || mode.GetString() != "MANUAL")) return false;
+            if (mode.GetString() == "MANUAL" && (Get(row, "accountId", out _) || Get(row, "imageUrl", out _))) return false;
         }
         return true;
     }

@@ -1007,7 +1007,7 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.HasIndex("Code")
                         .IsUnique()
                         .HasDatabaseName("uq_planning_gifts_code")
-                        .HasFilter("code IS NOT NULL");
+                        .HasFilter("code IS NOT NULL AND code NOT LIKE 'MG%'");
 
                     b.HasIndex("GuestId")
                         .HasDatabaseName("ix_planning_gifts_guest");
@@ -1084,6 +1084,12 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)")
                         .HasColumnName("label");
+
+                    b.Property<bool>("ShowInInvitation")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("show_in_invitation");
 
                     b.Property<Guid>("WeddingId")
                         .HasColumnType("uuid")
@@ -1305,6 +1311,10 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                     b.Property<int>("ExpectedPeople")
                         .HasColumnType("integer");
 
+                    b.Property<string>("GiftTransferCode")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
                     b.Property<string>("Group")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -1343,6 +1353,11 @@ namespace InviteMe.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("GiftTransferCode")
+                        .IsUnique()
+                        .HasDatabaseName("uq_planning_guests_gift_transfer_code")
+                        .HasFilter("\"GiftTransferCode\" IS NOT NULL");
 
                     b.HasIndex("InvitationToken")
                         .IsUnique()
