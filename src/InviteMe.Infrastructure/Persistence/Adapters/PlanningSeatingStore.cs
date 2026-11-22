@@ -202,12 +202,12 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
             if (table is not null)
             {
                 var occupied = await db.Set<PlanningSeatAssignment>().Where(x => x.TableId == table.Id && !ids.Contains(x.PlaceId)).Select(x => x.SeatNumber).ToListAsync(ct);
-                free = Enumerable.Range(1, table.Capacity).Where(x => !occupied.Contains(x)).ToList();
-                if (input.SeatNumber is { } seat)
-                {
-                    if (!free.Remove(seat)) throw Rule("SEAT_UNAVAILABLE", "Ghế đã có chỗ hoặc nằm ngoài sức chứa.");
-                    free.Insert(0, seat);
-                }
+                var start = input.SeatNumber ?? 1;
+                if (start < 1 || start > table.Capacity || input.SeatNumber.HasValue && occupied.Contains(start))
+                    throw Rule("SEAT_UNAVAILABLE", "Ghế đã có chỗ hoặc nằm ngoài sức chứa.");
+                // Match FE preview: continue around the table from the hovered seat, skipping occupied seats.
+                free = Enumerable.Range(0, table.Capacity).Select(i => (start - 1 + i) % table.Capacity + 1)
+                    .Where(x => !occupied.Contains(x)).ToList();
                 if (free.Count < places.Count) throw Rule("TABLE_FULL", "Bàn không đủ chỗ cho cả nhóm.");
             }
             // Delete first to permit swaps/reordering without transient unique-seat violations.
