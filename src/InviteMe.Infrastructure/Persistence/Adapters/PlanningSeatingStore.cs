@@ -313,6 +313,7 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
             canvas.Tables is null || canvas.Tables.Count > tableIds.Count ||
             canvas.Tables.Any(entry => !tableIds.Contains(entry.Key) || entry.Value is null ||
                 !Point(entry.Value.X, entry.Value.Y) || entry.Value.Side is not (null or "BRIDE" or "GROOM") ||
+                entry.Value.Shape is not (null or "round" or "twoSided" or "fourSided") ||
                 (entry.Value.OutsideZone && entry.Value.Side is not null)) ||
             canvas.Zones is null || canvas.Zones.Count > 2 ||
             canvas.Zones.Any(entry => entry.Key is not ("BRIDE" or "GROOM") || entry.Value is null ||
