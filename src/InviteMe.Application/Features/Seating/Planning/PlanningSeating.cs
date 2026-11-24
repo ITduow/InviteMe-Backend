@@ -44,8 +44,9 @@ public sealed class ChangePlanningSeatingValidator : AbstractValidator<ChangePla
         RuleFor(x => x).Must(x => (x.Action == "UPDATE_CANVAS_LAYOUT") == (x.CanvasLayout is not null));
         RuleFor(x => x.TableId).NotEqual(Guid.Empty).When(x => x.TableId.HasValue);
         RuleFor(x => x).Must(x => x.Side is null || x.Action is "UPDATE_TABLE" or "CREATE_TABLE" or "CREATE_TABLES");
-        RuleFor(x => x.Side).Must(x => x is null or "BRIDE" or "GROOM");
-        RuleFor(x => x).Must(x => x.Side is null ? x.Row is null && x.Column is null : ((x.Action is "CREATE_TABLE" or "CREATE_TABLES") && x.Row is null && x.Column is null) || (x.Row is >= 1 and <= 100 && x.Column is >= 1 and <= 4));
+        RuleFor(x => x.Side).Must(x => x is null or "BRIDE" or "GROOM" || (x == "UNSPECIFIED"));
+        RuleFor(x => x).Must(x => x.Side != "UNSPECIFIED" || x.Action == "UPDATE_TABLE");
+        RuleFor(x => x).Must(x => x.Side is null or "UNSPECIFIED" ? x.Row is null && x.Column is null : (x.Row is null && x.Column is null) || (x.Row is >= 1 and <= 100 && x.Column is >= 1 and <= 4));
         RuleFor(x => x.Group).Must(x => x is null || Enum.IsDefined(x.Value));
         RuleFor(x => x).Must(x => x.TableId.HasValue).When(x => x.Action is "UPDATE_TABLE" or "DELETE_TABLE");
         When(x => x.Action is "CREATE_TABLE" or "UPDATE_TABLE", () =>

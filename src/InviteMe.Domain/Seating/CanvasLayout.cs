@@ -6,4 +6,4 @@ public sealed record CanvasTable(double X, double Y, bool OutsideZone = false, s
     string? Shape = null);
 public sealed record CanvasObject(string Id, string Type, double X, double Y, double? Width = null, double? Height = null);
 public sealed record CanvasLayout(bool SplitZones, Dictionary<string, CanvasTable> Tables,
-    Dictionary<string, CanvasZone> Zones, CanvasPoint? Stage, CanvasObject[] Objects);
+    Dictionary<string, CanvasZone> Zones, CanvasPoint? Stage, CanvasObject[] Objects, string? ReceptionMode = null);

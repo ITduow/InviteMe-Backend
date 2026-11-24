@@ -6,6 +6,77 @@ using InviteMe.Domain.Guests;
 namespace InviteMe.UnitTests;
 public sealed class SeatingGenerationTests
 {
+    [Theory]
+    [InlineData("GROOM", "BRIDE")]
+    [InlineData("BRIDE", "GROOM")]
+    public void SingleReceptionPlacesRelationshipFirstThenHostInRowColumnOrder(string host, string other)
+    {
+        var entries = new[] {
+            (host, PlanningGroupKind.FAMILY), (host, PlanningGroupKind.FAMILY),
+            (host, PlanningGroupKind.FAMILY), (host, PlanningGroupKind.FAMILY),
+            (other, PlanningGroupKind.FAMILY), (other, PlanningGroupKind.FAMILY),
+            (host, PlanningGroupKind.VIP), (host, PlanningGroupKind.VIP),
+            (other, PlanningGroupKind.VIP), (other, PlanningGroupKind.VIP),
+            (host, PlanningGroupKind.RELATIVES), (host, PlanningGroupKind.RELATIVES)
+        };
+        var source = Source(entries.Select(entry => (10, entry.Item2)).ToArray());
+        source = source with { Guests = source.Guests.Select((g, i) => g with { Side = entries[i].Item1 }).ToArray() };
+        var input = new GenerateSeating(0, TablesPerRow: new(4, 4), ReceptionMode: host);
+        var result = SeatingPlanner.Generate(source, input);
+        Assert.Equal(host, result.ReceptionMode);
+        Assert.Equal(12, result.Tables.Count);
+        for (var i = 0; i < result.Tables.Count; i++)
+        {
+            var table = result.Tables[i];
+            Assert.Equal((i / 4 + 1, i % 4 + 1), (table.Row, table.Column));
+            Assert.Equal(entries[i].Item1, table.Side);
+            Assert.Equal(entries[i].Item2, table.Group);
+            Assert.Single(table.GuestIds);
+        }
+        Assert.Equal(source.Places.Count, result.Assignments.Count);
+        Assert.All(source.Places.GroupBy(p => p.GuestId), party =>
+            Assert.Single(result.Assignments.Where(a => party.Any(p => p.Id == a.PlaceId)).Select(a => a.TableCode).Distinct()));
+        Assert.Equal(result.Assignments, SeatingPlanner.Generate(source, input).Assignments);
+        var draft = new SeatingGenerationDraft(result.Tables.Select(t => new SeatingDraftTable(t.Code, t.Code, t.Side, t.Row, t.Column, t.Capacity)).ToArray(), result.Assignments);
+        Assert.Equal(result.Assignments, SeatingPlanner.ValidateDraft(source, input with { Draft = draft }).Assignments);
+        var duplicate = draft.Tables!.ToArray();
+        duplicate[4] = duplicate[4] with { Row = 1, Column = 1 };
+        Assert.Throws<ApplicationProblemException>(() => SeatingPlanner.ValidateDraft(source, input with { Draft = draft with { Tables = duplicate } }));
+    }
+
+    [Theory]
+    [InlineData("GROOM")]
+    [InlineData("BRIDE")]
+    public void SingleReceptionKeepsMutualAndUnspecifiedPartiesSeparateAndHonorsCustomPriority(string host)
+    {
+        var other = host == "GROOM" ? "BRIDE" : "GROOM";
+        var source = Source((1, PlanningGroupKind.FAMILY), (1, PlanningGroupKind.FAMILY),
+            (1, PlanningGroupKind.FAMILY), (1, PlanningGroupKind.FAMILY), (1, PlanningGroupKind.VIP));
+        var sides = new[] { "UNSPECIFIED", "MUTUAL", other, host, host };
+        source = source with { Guests = source.Guests.Select((g, i) => g with { Side = sides[i] }).ToArray() };
+        var input = new GenerateSeating(0, TablesPerRow: new(4, 4), ReceptionMode: host);
+        var result = SeatingPlanner.Generate(source, input);
+        Assert.Equal(new[] { host, other, "MUTUAL", "UNSPECIFIED", host },
+            result.Tables.Select(t => source.Guests.Single(g => g.Id == Assert.Single(t.GuestIds)).Side));
+        Assert.Equal((2, 1), (result.Tables[^1].Row, result.Tables[^1].Column));
+        Assert.Equal(sides, source.Guests.Select(g => g.Side));
+        var priority = SeatingPlanner.DefaultPositionPriority.ToArray();
+        (priority[0], priority[1]) = (priority[1], priority[0]);
+        var customized = SeatingPlanner.Generate(source, input with { PositionPriority = priority });
+        Assert.Equal(PlanningGroupKind.VIP, customized.Tables[0].Group);
+        Assert.Equal((1, 1), (customized.Tables[0].Row, customized.Tables[0].Column));
+    }
+
+    [Fact]
+    public void JointBrideTablesStartAtTheLeftColumnWithoutAislePriority()
+    {
+        var source = Source((8, PlanningGroupKind.FAMILY), (8, PlanningGroupKind.VIP), (8, PlanningGroupKind.FRIENDS));
+        source = source with { Guests = source.Guests.Select(g => g with { Side = "BRIDE" }).ToArray() };
+        var result = SeatingPlanner.Generate(source, new(0, 8, new(4, 4)));
+        Assert.Equal(new[] { 1, 2, 3 }, result.Tables.Select(t => t.Column));
+        Assert.All(result.Tables, table => Assert.Equal(1, table.Row));
+        Assert.Throws<ApplicationProblemException>(() => SeatingPlanner.Generate(source, new(0, ReceptionMode: "UNKNOWN")));
+    }
     [Fact]
     public void EditedDraftValidatesFinalAssignmentsAndKeepsUnassignedPlaces()
     {
@@ -97,7 +168,7 @@ public sealed class SeatingGenerationTests
     }
 
     [Fact]
-    public void OrdersTablesByPriorityFromStageAndAisle()
+    public void OrdersTablesByPriorityFromFrontRows()
     {
         var source = Source((8, PlanningGroupKind.OTHER), (8, PlanningGroupKind.FAMILY),
             (8, PlanningGroupKind.VIP), (8, PlanningGroupKind.FRIENDS), (8, PlanningGroupKind.NEIGHBORS));

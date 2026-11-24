@@ -14,6 +14,59 @@ namespace InviteMe.IntegrationTests;
 public sealed class SeatingGenerationApiTests
 {
     [PostgreSqlFact, Trait("Category", "PostgreSQL")]
+    public Task SeparateReceptionPreviewDraftApplyAndReopenPreserveModeSeatsAndManualLayout() => CoHostPermissionTests.WithApi(async (db, factory) =>
+    {
+        using var owner = await CoHostPermissionTests.SignIn(factory, "separate-reception-owner");
+        foreach (var host in new[] { "GROOM", "BRIDE" })
+        {
+            var wedding = await CoHostPermissionTests.CreateWedding(db, owner, "reception-" + host);
+            var guests = await PlanningTestData.Guests(db, wedding.Id, "PENDING", "Bride family", "Groom family");
+            guests[0].Side = "BRIDE"; guests[1].Side = "GROOM";
+            guests[0].Group = guests[1].Group = PlanningGroupKind.FAMILY;
+            await db.SaveChangesAsync();
+            var url = $"/api/weddings/{wedding.Id}/guest-planning/seating-plan";
+            var config = new GenerateSeating(0, ReceptionMode: host);
+            var response = await owner.PostAsJsonAsync(url + "/generate-preview", config);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var preview = (await response.Content.ReadFromJsonAsync<SeatingGenerationPreview>())!;
+            Assert.Equal(host, preview.ReceptionMode);
+            Assert.Equal(2, preview.Tables.Count);
+            Assert.Equal(host, preview.Tables[0].Side);
+            Assert.Equal(new[] { (1, 1), (1, 2) }, preview.Tables.Select(t => (t.Row, t.Column)));
+            var tables = preview.Tables.Select(t => new SeatingDraftTable(t.Code, "Edited " + t.Code, t.Side, t.Row, t.Column, t.Capacity)).ToArray();
+            var canvas = new CanvasLayout(false, tables.ToDictionary(t => t.Code, _ => new CanvasTable(-123, 456)), new(), null, [], host);
+            var apply = config with { SourceFingerprint = preview.SourceFingerprint, AlgorithmVersion = preview.AlgorithmVersion,
+                Draft = new(tables, preview.Assignments), CanvasLayout = canvas };
+            var overlap = tables.ToArray();
+            overlap[1] = overlap[1] with { Column = overlap[0].Column };
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, (await owner.PostAsJsonAsync(url + "/generate-apply", apply with { Draft = new(overlap, preview.Assignments) })).StatusCode);
+            Assert.Empty((await owner.GetFromJsonAsync<PlanningSeatingDto>(url))!.Tables);
+            response = await owner.PostAsJsonAsync(url + "/generate-apply", apply);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var plan = (await owner.GetFromJsonAsync<PlanningSeatingDto>(url))!;
+            Assert.Equal(host, plan.CanvasLayout!.ReceptionMode);
+            Assert.Equal(2, plan.Assignments.Count);
+            Assert.Equal(new[] { "BRIDE", "GROOM" }, plan.Guests.Select(g => g.Side).Order());
+            Assert.All(plan.CanvasLayout.Tables.Values, p => Assert.Equal((-123d, 456d), (p.X, p.Y)));
+            Assert.All(plan.Tables, t => Assert.StartsWith("Edited ", t.Name));
+            // A legacy canvas save cannot erase the selected reception mode or reflow positions.
+            var seats = plan.Assignments.OrderBy(a => a.PlaceId).ToArray();
+            response = await owner.PatchAsJsonAsync(url, new ChangePlanningSeating(plan.Version, "UPDATE_CANVAS_LAYOUT", CanvasLayout: plan.CanvasLayout with { ReceptionMode = null }));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            plan = (await response.Content.ReadFromJsonAsync<PlanningSeatingDto>())!;
+            Assert.Equal(host, plan.CanvasLayout!.ReceptionMode);
+            Assert.Equal(seats, plan.Assignments.OrderBy(a => a.PlaceId));
+            response = await owner.PatchAsJsonAsync(url, new ChangePlanningSeating(plan.Version, "CREATE_TABLE", Name: "Extra", Capacity: 10, Side: host));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            plan = (await response.Content.ReadFromJsonAsync<PlanningSeatingDto>())!;
+            var extra = plan.Tables.Single(t => t.Name == "Extra");
+            Assert.Equal((2, 1), (extra.Row, extra.Column));
+            Assert.Equal(seats, plan.Assignments.OrderBy(a => a.PlaceId));
+            Assert.Equal(HttpStatusCode.Conflict, (await owner.PostAsJsonAsync(url + "/generate-apply", apply)).StatusCode);
+        }
+    });
+
+    [PostgreSqlFact, Trait("Category", "PostgreSQL")]
     public Task ScopedCohostCannotGenerateAndQuotaIsCheckedBeforeWrites() => CoHostPermissionTests.WithApi(async (db,factory) =>
     {
         using var owner=await CoHostPermissionTests.SignIn(factory,"generation-owner");
