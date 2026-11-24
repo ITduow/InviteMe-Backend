@@ -309,7 +309,10 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
     {
         static bool Coordinate(double value) => double.IsFinite(value) && Math.Abs(value) <= 1000000;
         static bool Point(double x, double y) => Coordinate(x) && Coordinate(y);
-        if ((canvas.Stage is { } stage && !Point(stage.X, stage.Y)) ||
+        static bool Size(double? width, double? height) =>
+            (width is null && height is null) ||
+            (width is > 0 && height is > 0 && Coordinate(width.Value) && Coordinate(height.Value));
+        if ((canvas.Stage is { } stage && (!Point(stage.X, stage.Y) || !Size(stage.Width, stage.Height))) ||
             canvas.Tables is null || canvas.Tables.Count > tableIds.Count ||
             canvas.Tables.Any(entry => !tableIds.Contains(entry.Key) || entry.Value is null ||
                 !Point(entry.Value.X, entry.Value.Y) || entry.Value.Side is not (null or "BRIDE" or "GROOM") ||
@@ -321,7 +324,8 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
                 !Point(entry.Value.Width, entry.Value.Height)) ||
             canvas.Objects is null || canvas.Objects.Length > 200 ||
             canvas.Objects.Any(item => item is null || string.IsNullOrWhiteSpace(item.Id) || item.Id.Length > 100 ||
-                item.Type is not ("danceFloor" or "giftTable" or "entrance" or "aisle" or "stage") || !Point(item.X, item.Y)) ||
+                item.Type is not ("danceFloor" or "giftTable" or "entrance" or "aisle" or "stage") || !Point(item.X, item.Y) ||
+                !Size(item.Width, item.Height)) ||
             canvas.Objects.Select(item => item.Id).Distinct().Count() != canvas.Objects.Length)
             throw Rule("INVALID_CANVAS_LAYOUT", "Canvas layout is invalid.");
         return canvas;
