@@ -8,6 +8,10 @@ using InviteMe.Api.Authentication;
 using InviteMe.Application.Features.Weddings.Setup;
 using InviteMe.Domain.Weddings;
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
+using InviteMe.Application.Features.Music;
+using InviteMe.Application.Features.Invitations;
+using InviteMe.Application.Common.Errors;
 
 namespace InviteMe.Api.Endpoints;
 
@@ -117,11 +121,34 @@ internal static class AdminManagementEndpoints
             Results.Ok(await store.ListAuditLogsAsync(new(action, entityType, entityId, from, to), new(page, pageSize), ct)))
             .RequireAuthorization(AdminPolicyNames.AuditView).WithName("ListAdminAuditLogs");
 
-        endpoints.MapGet("/api/templates", async (IAdminStore store, CancellationToken ct) =>
+        endpoints.MapGet("/api/templates", async (IAdminStore store, IMusicTrackStore tracks, CancellationToken ct) =>
         {
             var templates = await store.ListPublishedTemplatesAsync(ct);
-            return Results.Ok(templates.Select(x => new PublicTemplateDto(x.Id, x.Name, x.Slug, x.Theme,
-                x.PreviewUrl, x.ConfigurationJson)).ToArray());
+            var resolved = new Dictionary<Guid, MusicTrackDto?>();
+            var result = new List<PublicTemplateDto>();
+            foreach (var template in templates)
+            {
+                InvitationMusic? music = null;
+                if (template.ConfigurationJson is { } config)
+                {
+                    using var document = JsonDocument.Parse(config);
+                    if (InvitationDesignHandler.ValidDocument(document.RootElement) &&
+                        MusicTrackValidation.ReadSettings(document.RootElement) is { Enabled: true } settings)
+                    {
+                        if (!resolved.TryGetValue(settings.TrackId, out var track))
+                        {
+                            try { track = await tracks.GetAsync(settings.TrackId, ct); }
+                            catch (ApplicationProblemException error) when (error.Kind == ProblemKind.NotFound) { track = null; }
+                            resolved[settings.TrackId] = track;
+                        }
+                        // Only active tracks referenced by a published template are exposed here.
+                        if (track is { IsActive: true })
+                            music = new(track.Id, track.Name, track.AudioUrl, true, settings.Enabled, settings.Volume, settings.Loop);
+                    }
+                }
+                result.Add(new(template.Id, template.Name, template.Slug, template.Theme, template.PreviewUrl, template.ConfigurationJson, music));
+            }
+            return Results.Ok(result);
         }).AllowAnonymous().WithTags("Templates").WithName("ListPublicTemplates");
 
         endpoints.MapGet("/api/templates/visibility", async (IAdminStore store, CancellationToken ct) =>
@@ -139,4 +166,4 @@ internal static class AdminManagementEndpoints
 
 internal sealed record TemplateStatusInput(string Status);
 internal sealed class AdminTemplateAssetForm { public IFormFile? File { get; set; } }
-internal sealed record PublicTemplateDto(Guid Id, string Name, string Slug, string? Theme, string? PreviewUrl, string? ConfigurationJson);
+internal sealed record PublicTemplateDto(Guid Id, string Name, string Slug, string? Theme, string? PreviewUrl, string? ConfigurationJson, InvitationMusic? Music);

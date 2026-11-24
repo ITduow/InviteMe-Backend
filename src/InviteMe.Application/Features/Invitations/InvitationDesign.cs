@@ -15,7 +15,7 @@ public sealed record InvitationDesignDto(int Version, JsonElement? Document, str
 public sealed record SaveInvitationDesign(int ExpectedVersion, JsonElement Document);
 public sealed record PublishInvitationDesign(int ExpectedVersion, int ExpectedWordingVersion);
 public sealed record PublicInvitationDto(JsonElement Document, string Content, bool BrandingBadge = false,
-    InviteMe.Application.Features.Music.InvitationMusic? Music = null);
+    InviteMe.Application.Features.Music.InvitationMusic? Music = null, string? RecipientLabel = null);
 public interface IInvitationDesignStore
 {
     Task<InvitationDesignDto> GetAsync(Guid weddingId, CancellationToken ct);

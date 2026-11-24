@@ -62,6 +62,8 @@ public sealed class PublicationLifecycleTests
             Assert.Equal("PUBLISHED", first.Status);
             var a = (await owner.GetFromJsonAsync<PublicInvitationDto>(publicPath))!;
             var b = (await owner.GetFromJsonAsync<PublicInvitationDto>($"/api/guest-invitations/{guests[1].InvitationToken}"))!;
+            Assert.Equal("bác An", a.RecipientLabel);
+            Assert.Equal("bạn Bình", b.RecipientLabel);
             Assert.Contains("An", a.Content);
             Assert.Contains("Bình", b.Content);
             Assert.DoesNotContain("Bình", a.Content);

@@ -31,6 +31,10 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         var plan = await db.Set<PlanningSeatingPlan>().SingleOrDefaultAsync(x => x.WeddingId == weddingId, ct);
         Version(plan?.Version ?? 0, input.ExpectedVersion);
         if (plan is null) { plan = new() { WeddingId = weddingId }; db.Add(plan); }
+        var receptionMode = ReadCanvas(plan)?.ReceptionMode ?? "JOINT";
+        var singleReception = receptionMode != "JOINT";
+        int ColumnsFor(string side) => (singleReception ? receptionMode == "BRIDE" : side == "BRIDE")
+            ? plan.BrideTablesPerRow : plan.GroomTablesPerRow;
         if (scopeIds is { Length: 0 }) throw Missing("SEATING_GROUP_SCOPE_EMPTY");
         if (scopeIds is not null && (input.Action is "CREATE_TABLES" or "CREATE_TABLE") && (input.Group is null || !scopeIds.Contains(input.Group.Value)))
             throw Rule("SEATING_GROUP_REQUIRED", "Chỉ được tạo bàn trong nhóm khách được giao.");
@@ -41,9 +45,26 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         if (scopeIds is not null && input.Side is not null && input.Action == "UPDATE_TABLE") throw Rule("SEATING_LAYOUT_REQUIRES_WEDDING_SCOPE", "Layout requires wedding-wide access.");
         if (input.Side is not null && table is not null)
         {
-            var width = input.Side == "BRIDE" ? plan.BrideTablesPerRow : plan.GroomTablesPerRow;
-            if (input.Column > width || tables.Any(t => t.Id != table.Id && t.Side == input.Side && t.Row == input.Row && t.Column == input.Column)) throw Rule("INVALID_TABLE_SLOT", "Slot unavailable.");
-            table.Side = input.Side; table.Row = input.Row; table.Column = input.Column;
+            if (input.Side == "UNSPECIFIED")
+            {
+                table.Side = null; table.Row = null; table.Column = null;
+            }
+            else
+            {
+                var width = ColumnsFor(input.Side);
+                var occupied = allTables.Where(t => t.Id != table.Id && (singleReception || t.Side == input.Side))
+                    .Select(t => (t.Row, t.Column)).ToHashSet();
+                var row = input.Row ?? (singleReception || table.Side == input.Side ? table.Row : null);
+                var column = input.Column ?? (singleReception || table.Side == input.Side ? table.Column : null);
+                if (row is null || column is null)
+                {
+                    var index = Enumerable.Range(0, 100 * width).FirstOrDefault(i => !occupied.Contains((i / width + 1, i % width + 1)), -1);
+                    if (index < 0) throw Rule("INVALID_TABLE_SLOT", "No free slot.");
+                    row = index / width + 1; column = index % width + 1;
+                }
+                if (column > width || occupied.Contains((row, column))) throw Rule("INVALID_TABLE_SLOT", "Slot unavailable.");
+                table.Side = input.Side; table.Row = row; table.Column = column;
+            }
         }
         if (input.Action == "UPDATE_TABLE" && table is not null && scopeIds is not null && input.Group is not null && input.Group != table.Group)
             throw Rule("TABLE_GROUP_IMMUTABLE", "Co-host không thể chuyển bàn sang nhóm khác.");
@@ -60,8 +81,8 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         void PositionNewTable(PlanningTable created, bool first)
         {
             if (input.Side is null) return; // Keep old API clients compatible; current FE always supplies a side.
-            var width = input.Side == "BRIDE" ? plan.BrideTablesPerRow : plan.GroomTablesPerRow;
-            var occupied = allTables.Where(t => t.Side == input.Side).Select(t => (t.Row, t.Column)).ToHashSet();
+            var width = ColumnsFor(input.Side);
+            var occupied = allTables.Where(t => singleReception || t.Side == input.Side).Select(t => (t.Row, t.Column)).ToHashSet();
             int row, column;
             if (first && input.Row is { } requestedRow && input.Column is { } requestedColumn)
             {
@@ -92,44 +113,20 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         {
             if (scopeIds is not null) throw Rule("SEATING_LAYOUT_REQUIRES_WEDDING_SCOPE", "Layout requires wedding-wide access.");
             var canvas = ValidateCanvas(input.CanvasLayout!, allTables.Select(t => t.Id.ToString()).ToHashSet());
-            var changes = allTables.Where(t => canvas.Tables.TryGetValue(t.Id.ToString(), out var position)
-                && position.Side is not null && position.Side != t.Side).ToArray();
-            var occupied = allTables.Except(changes).Select(t => (t.Side, t.Row, t.Column)).ToHashSet();
-            foreach (var moving in changes)
-            {
-                moving.Side = null;
-                moving.Row = null;
-                moving.Column = null;
-            }
-            if (changes.Length > 0) await db.SaveChangesAsync(ct);
-            foreach (var moving in changes)
-            {
-                var side = canvas.Tables[moving.Id.ToString()].Side!;
-                var width = side == "BRIDE" ? plan.BrideTablesPerRow : plan.GroomTablesPerRow;
-                var index = Enumerable.Range(0, 100 * width).FirstOrDefault(
-                    n => occupied.Add((side, n / width + 1, n % width + 1)), -1);
-                if (index < 0) throw Rule("INVALID_TABLE_SLOT", "No slot is available in the destination zone.");
-                moving.Side = side;
-                moving.Row = index / width + 1;
-                moving.Column = index % width + 1;
-            }
-            plan.CanvasLayout = JsonSerializer.SerializeToDocument(canvas with
-            {
-                Tables = canvas.Tables.ToDictionary(pair => pair.Key, pair => pair.Value with { Side = null })
-            });
+            plan.CanvasLayout = JsonSerializer.SerializeToDocument(WithoutZones(canvas) with { ReceptionMode = canvas.ReceptionMode ?? receptionMode });
         }
         else if (input.Action == "MOVE_TABLE_SLOT")
         {
             if (table!.Side is null || table.Row is null || table.Column is null) throw Rule("TABLE_LAYOUT_REQUIRED", "Assign legacy table layout first.");
-            var width = table.Side == "BRIDE" ? plan.BrideTablesPerRow : plan.GroomTablesPerRow;
+            var width = ColumnsFor(table.Side);
             if (input.TargetColumn > width || input.TargetColumn is null || input.TargetRow is null || input.TargetRow < 1)
                 throw Rule("INVALID_TABLE_SLOT", "Slot outside layout.");
-            var other = tables.SingleOrDefault(t => t.Side == table.Side && t.Row == input.TargetRow && t.Column == input.TargetColumn);
+            var other = tables.SingleOrDefault(t => (singleReception || t.Side == table.Side) && t.Row == input.TargetRow && t.Column == input.TargetColumn);
             var row = table.Row; var column = table.Column; var sourceSide = table.Side;
             table.Side = null; table.Row = null; table.Column = null;
             await db.SaveChangesAsync(ct);
             if (other is not null && other.Id != table.Id) { other.Row = row; other.Column = column; await db.SaveChangesAsync(ct); }
-            table.Side = other?.Side ?? sourceSide; table.Row = input.TargetRow; table.Column = input.TargetColumn;
+            table.Side = sourceSide; table.Row = input.TargetRow; table.Column = input.TargetColumn;
         }
         else if (input.Action == "UPDATE_LAYOUT")
         {
@@ -138,11 +135,11 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
             await db.SaveChangesAsync(ct);
             plan.BrideTablesPerRow = input.BrideTablesPerRow!.Value;
             plan.GroomTablesPerRow = input.GroomTablesPerRow!.Value;
-            foreach (var side in new[] { "BRIDE", "GROOM" })
+            foreach (var side in singleReception ? new[] { receptionMode } : new[] { "BRIDE", "GROOM" })
             {
-                var width = side == "BRIDE" ? plan.BrideTablesPerRow : plan.GroomTablesPerRow;
-                var sorted = tables.Where(t => originalSides[t.Id] == side).OrderBy(t => t.Name).ThenBy(t => t.Id).ToArray();
-                for (var i = 0; i < sorted.Length; i++) { sorted[i].Side = side; sorted[i].Row = i / width + 1; sorted[i].Column = i % width + 1; }
+                var width = ColumnsFor(side);
+                var sorted = tables.Where(t => originalSides[t.Id] is not null && (singleReception || originalSides[t.Id] == side)).OrderBy(t => t.Name).ThenBy(t => t.Id).ToArray();
+                for (var i = 0; i < sorted.Length; i++) { sorted[i].Side = originalSides[sorted[i].Id]; sorted[i].Row = i / width + 1; sorted[i].Column = i % width + 1; }
             }
         }
         else if (input.Action == "CREATE_TABLES")
@@ -202,12 +199,12 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
             if (table is not null)
             {
                 var occupied = await db.Set<PlanningSeatAssignment>().Where(x => x.TableId == table.Id && !ids.Contains(x.PlaceId)).Select(x => x.SeatNumber).ToListAsync(ct);
-                free = Enumerable.Range(1, table.Capacity).Where(x => !occupied.Contains(x)).ToList();
-                if (input.SeatNumber is { } seat)
-                {
-                    if (!free.Remove(seat)) throw Rule("SEAT_UNAVAILABLE", "Ghế đã có chỗ hoặc nằm ngoài sức chứa.");
-                    free.Insert(0, seat);
-                }
+                var start = input.SeatNumber ?? 1;
+                if (start < 1 || start > table.Capacity || input.SeatNumber.HasValue && occupied.Contains(start))
+                    throw Rule("SEAT_UNAVAILABLE", "Ghế đã có chỗ hoặc nằm ngoài sức chứa.");
+                // Match FE preview: continue around the table from the hovered seat, skipping occupied seats.
+                free = Enumerable.Range(0, table.Capacity).Select(i => (start - 1 + i) % table.Capacity + 1)
+                    .Where(x => !occupied.Contains(x)).ToList();
                 if (free.Count < places.Count) throw Rule("TABLE_FULL", "Bàn không đủ chỗ cho cả nhóm.");
             }
             // Delete first to permit swaps/reordering without transient unique-seat violations.
@@ -276,24 +273,14 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
             ValidateCanvas(canvas, ids.Keys.ToHashSet());
             plan.CanvasLayout = JsonSerializer.SerializeToDocument(canvas with
             {
-                Tables = canvas.Tables.ToDictionary(pair => ids[pair.Key].ToString(), pair => pair.Value with { Side = null })
+                SplitZones = false, Zones = new(), ReceptionMode = input.ReceptionMode,
+                Tables = canvas.Tables.ToDictionary(pair => ids[pair.Key].ToString(), pair => pair.Value with { Side = null, OutsideZone = false })
             });
         }
-        var occupiedSlots = proposal.Tables.Select(t => (t.Side, t.Row, t.Column)).ToHashSet();
+        else plan.CanvasLayout = JsonSerializer.SerializeToDocument(new CanvasLayout(false, new(), new(), null, [], input.ReceptionMode));
         var generatedTables = proposal.Tables.Select(t => new PlanningTable { Id = ids[t.Code], WeddingId = weddingId,
             Name = input.Draft?.Tables?.Single(d => d.Code == t.Code).Name.Trim() ?? t.Code,
             Capacity = t.Capacity, Group = t.Group, Side = t.Side, Row = t.Row, Column = t.Column }).ToArray();
-        foreach (var t in proposal.Tables)
-        {
-            if (input.CanvasLayout?.Tables.GetValueOrDefault(t.Code)?.Side is not { } side || side == t.Side) continue;
-            var width = side == "BRIDE" ? rows.Bride : rows.Groom;
-            var slot = Enumerable.Range(0, 100 * width).FirstOrDefault(
-                n => occupiedSlots.Add((side, n / width + 1, n % width + 1)), -1);
-            if (slot < 0) throw Rule("INVALID_TABLE_SLOT", "No slot is available in the destination zone.");
-            occupiedSlots.Remove((t.Side, t.Row, t.Column));
-            var table = generatedTables.Single(table => table.Id == ids[t.Code]);
-            table.Side = side; table.Row = slot / width + 1; table.Column = slot % width + 1;
-        }
         db.AddRange(generatedTables);
         db.AddRange(proposal.Assignments.Select(a => new PlanningSeatAssignment { PlaceId = a.PlaceId, TableId = ids[a.TableCode], SeatNumber = a.SeatNumber }));
         await db.SaveChangesAsync(ct);
@@ -302,6 +289,12 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
         return result;
     }
 
+    private static CanvasLayout WithoutZones(CanvasLayout canvas) => canvas with
+    {
+        SplitZones = false, Zones = new(),
+        Tables = canvas.Tables.ToDictionary(pair => pair.Key, pair => pair.Value with { Side = null, OutsideZone = false })
+    };
+
     private static CanvasLayout? ReadCanvas(PlanningSeatingPlan? plan) =>
         plan?.CanvasLayout?.Deserialize<CanvasLayout>();
 
@@ -309,10 +302,15 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
     {
         static bool Coordinate(double value) => double.IsFinite(value) && Math.Abs(value) <= 1000000;
         static bool Point(double x, double y) => Coordinate(x) && Coordinate(y);
-        if ((canvas.Stage is { } stage && !Point(stage.X, stage.Y)) ||
+        static bool Size(double? width, double? height) =>
+            (width is null && height is null) ||
+            (width is > 0 && height is > 0 && Coordinate(width.Value) && Coordinate(height.Value));
+        if (canvas.ReceptionMode is not (null or "JOINT" or "GROOM" or "BRIDE") ||
+            (canvas.Stage is { } stage && (!Point(stage.X, stage.Y) || !Size(stage.Width, stage.Height))) ||
             canvas.Tables is null || canvas.Tables.Count > tableIds.Count ||
             canvas.Tables.Any(entry => !tableIds.Contains(entry.Key) || entry.Value is null ||
                 !Point(entry.Value.X, entry.Value.Y) || entry.Value.Side is not (null or "BRIDE" or "GROOM") ||
+                entry.Value.Shape is not (null or "round" or "twoSided" or "fourSided") ||
                 (entry.Value.OutsideZone && entry.Value.Side is not null)) ||
             canvas.Zones is null || canvas.Zones.Count > 2 ||
             canvas.Zones.Any(entry => entry.Key is not ("BRIDE" or "GROOM") || entry.Value is null ||
@@ -320,7 +318,8 @@ public sealed class PlanningSeatingStore(InviteMeDbContext db, ISeatingDragLease
                 !Point(entry.Value.Width, entry.Value.Height)) ||
             canvas.Objects is null || canvas.Objects.Length > 200 ||
             canvas.Objects.Any(item => item is null || string.IsNullOrWhiteSpace(item.Id) || item.Id.Length > 100 ||
-                item.Type is not ("danceFloor" or "giftTable" or "entrance" or "aisle" or "stage") || !Point(item.X, item.Y)) ||
+                item.Type is not ("danceFloor" or "giftTable" or "entrance" or "aisle" or "stage") || !Point(item.X, item.Y) ||
+                !Size(item.Width, item.Height)) ||
             canvas.Objects.Select(item => item.Id).Distinct().Count() != canvas.Objects.Length)
             throw Rule("INVALID_CANVAS_LAYOUT", "Canvas layout is invalid.");
         return canvas;

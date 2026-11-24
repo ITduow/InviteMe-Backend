@@ -115,6 +115,6 @@ public sealed class InvitationDesignStore(InviteMeDbContext db, IWeddingMediaSto
         var snapshot = JsonSerializer.Deserialize<JsonElement>(row.InvitationPublishedSnapshotJson);
         var presets = snapshot.GetProperty("wording").Deserialize<WordingPreset[]>()!;
         var wording = InvitationWording.Render(presets, new(row.Id, row.RecipientName, row.Honorific));
-        return new(snapshot.GetProperty("document").Clone(), wording.Content, Music: InvitationMusicPersistence.Published(snapshot));
+        return new(snapshot.GetProperty("document").Clone(), wording.Content, Music: InvitationMusicPersistence.Published(snapshot), RecipientLabel: wording.RecipientLabel);
     }
 }
