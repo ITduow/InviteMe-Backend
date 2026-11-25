@@ -27,7 +27,7 @@ public static class MusicTrackValidation
 {
     public static bool AudioUrl(string? value) => value is not null && value.Trim().Length is > 0 and <= 2048 &&
         !value.Any(char.IsControl) && Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri) &&
-        uri.Scheme == "https" && uri.Host.Length > 0 && uri.UserInfo.Length == 0 && uri.Fragment.Length == 0;
+        (uri.Scheme == "https" || uri.Scheme == "http" && uri.IsLoopback && uri.AbsolutePath.StartsWith("/media/music/", StringComparison.Ordinal)) && uri.Host.Length > 0 && uri.UserInfo.Length == 0 && uri.Fragment.Length == 0;
 
     public static InvitationMusicSettings? ReadSettings(JsonElement document)
     {

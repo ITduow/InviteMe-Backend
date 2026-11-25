@@ -137,6 +137,7 @@ public static class DependencyInjection
             configuration["InvitationMessaging:PublicApiUrl"] ?? "http://localhost:5000"));
         services.AddScoped<InviteMe.Application.Features.Invitations.IInvitationDesignStore, InvitationDesignStore>();
         services.AddScoped<InviteMe.Application.Features.Music.IMusicTrackStore, MusicTrackStore>();
+        services.AddHttpClient<InviteMe.Application.Features.Music.IMusicFileStorage, MusicFileStorage>();
         services.AddScoped<InviteMe.Application.Features.Weddings.Website.IWeddingWebsiteStore, WeddingWebsiteStore>();
         services.AddScoped<InviteMe.Application.Features.Weddings.Website.IWeddingEventStore, WeddingEventStore>();
         services.AddScoped<InviteMe.Application.Features.Weddings.Website.IStoryWishStore, StoryWishStore>();
